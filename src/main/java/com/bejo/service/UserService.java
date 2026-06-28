@@ -1,6 +1,7 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.ChangePasswordRequest;
+import com.bejo.dto.request.UpdateBankRequest;
 import com.bejo.dto.request.UpdateProfileRequest;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.UserRepository;
@@ -30,12 +31,27 @@ public class UserService {
         var user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        if (request.name() != null)  user.setName(request.name());
+        user.setName(request.name());
         user.setEmail(request.email());
         user.setPhone(request.phone());
 
         userRepository.save(user);
         log.info("[PROFILE] Updated for username={}", username);
+    }
+
+    @Transactional
+    public void updateBank(String username, UpdateBankRequest request) {
+        log.info("[BANK] username={}", username);
+
+        var user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        user.setBankName(request.bankName());
+        user.setBankNumber(request.bankNumber());
+        user.setBankAccountName(request.bankAccountName());
+
+        userRepository.save(user);
+        log.info("[BANK] Updated for username={}", username);
     }
 
     @Transactional
@@ -49,15 +65,7 @@ public class UserService {
             throw new IllegalArgumentException("Password saat ini tidak sesuai");
         }
 
-        String newPw = request.newPassword();
-        if (newPw == null || newPw.length() < 8) {
-            throw new IllegalArgumentException("Password baru minimal 8 karakter");
-        }
-        if (!newPw.matches("^(?=.*[a-zA-Z])(?=.*\\d).+$")) {
-            throw new IllegalArgumentException("Password baru harus mengandung minimal 1 huruf dan 1 angka");
-        }
-
-        user.setPasswordHash(passwordEncoder.encode(newPw));
+        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         userRepository.save(user);
         log.info("[PASSWORD] Changed for username={}", username);
     }

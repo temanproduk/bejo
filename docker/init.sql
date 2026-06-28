@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS cuan_history (
     id               BIGSERIAL PRIMARY KEY,
     transaction_id   VARCHAR(255) NOT NULL,
     transaction_date TIMESTAMP,
-    amount           NUMERIC(15, 2),
+    amount           BIGINT,
     status           VARCHAR(100),
     invoice_id       VARCHAR(255),
     settlement_date  TIMESTAMP,
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS cuan_history (
 -- Idempotent migrations for existing databases
 ALTER TABLE cuan_history ADD COLUMN IF NOT EXISTS merchant_pan VARCHAR(50);
 ALTER TABLE cuan_history ADD COLUMN IF NOT EXISTS customer_pan VARCHAR(50);
+ALTER TABLE cuan_history ALTER COLUMN amount TYPE BIGINT USING amount::BIGINT;
 
 CREATE TABLE IF NOT EXISTS token_blacklist (
     jti        VARCHAR(36) PRIMARY KEY,

@@ -1,12 +1,12 @@
 package com.bejo.dto.request;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-
-import java.util.Map;
+import jakarta.validation.constraints.NotNull;
 
 public record SendNotificationRequest(
         @NotBlank(message = "deviceId is required") String deviceId,
         @NotBlank(message = "title is required") String title,
         @NotBlank(message = "body is required") String body,
-        Map<String, String> data
+        @Valid @NotNull(message = "data wajib diisi") NotificationTransactionData data
 ) {}

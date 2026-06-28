@@ -12,7 +12,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -141,7 +140,7 @@ public class DataSeeder implements ApplicationRunner {
             Transaction t = new Transaction();
             t.setTransactionId("TXN-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase());
             t.setTransactionDate(now.minusDays(daysAgo).withHour(hour).withMinute(minute).withSecond(0).withNano(0));
-            t.setAmount(BigDecimal.valueOf(amount));
+            t.setAmount((long) amount);
             t.setSource(issuer);
             t.setUsername(username);
             t.setRrn(String.format("%012d", (long) (Math.random() * 1_000_000_000_000L)));

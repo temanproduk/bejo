@@ -6,6 +6,7 @@ services:
       POSTGRES_DB: bejo
       POSTGRES_USER: bejo
       POSTGRES_PASSWORD: bejo
+      TZ: Asia/Jakarta
     ports:
       - "5432:5432"
     volumes:
@@ -38,6 +39,7 @@ services:
       FIREBASE_CREDENTIALS_BASE64: ${FIREBASE_CREDENTIALS_BASE64:-}
       FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-default}
+      TZ: Asia/Jakarta
     ports:
       - "8080:8080"
     healthcheck:

@@ -1,6 +1,7 @@
 package com.bejo.controller;
 
 import com.bejo.dto.request.ChangePasswordRequest;
+import com.bejo.dto.request.UpdateBankRequest;
 import com.bejo.dto.request.UpdateProfileRequest;
 import com.bejo.dto.response.ApiResponse;
 import com.bejo.service.UserService;
@@ -25,6 +26,14 @@ public class UserController {
             Authentication authentication) {
         userService.updateProfile(authentication.getName(), request);
         return ResponseEntity.ok(ApiResponse.success("Profile updated successfully", null));
+    }
+
+    @PatchMapping("/bank")
+    public ResponseEntity<ApiResponse<Void>> updateBank(
+            @Valid @RequestBody UpdateBankRequest request,
+            Authentication authentication) {
+        userService.updateBank(authentication.getName(), request);
+        return ResponseEntity.ok(ApiResponse.success("Informasi rekening berhasil diperbarui", null));
     }
 
     @PatchMapping("/password")

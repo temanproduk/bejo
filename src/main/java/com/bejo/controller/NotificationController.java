@@ -6,6 +6,7 @@ import com.bejo.service.NotificationService;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,8 +24,9 @@ public class NotificationController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<Void>> sendNotification(
-            @Valid @RequestBody SendNotificationRequest request) throws FirebaseMessagingException {
-        notificationService.send(request);
+            @Valid @RequestBody SendNotificationRequest request,
+            Authentication authentication) throws FirebaseMessagingException {
+        notificationService.send(authentication.getName(), request);
         return ResponseEntity.ok(ApiResponse.success("Notification sent", null));
     }
 }

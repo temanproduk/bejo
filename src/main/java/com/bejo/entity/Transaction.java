@@ -1,7 +1,6 @@
 package com.bejo.entity;
 
 import jakarta.persistence.*;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
@@ -18,8 +17,7 @@ public class Transaction {
     @Column(name = "transaction_date")
     private LocalDateTime transactionDate;
 
-    @Column(precision = 15, scale = 2)
-    private BigDecimal amount;
+    private Long amount;
 
     private String status;
 
@@ -55,8 +53,8 @@ public class Transaction {
     public void setTransactionId(String transactionId) { this.transactionId = transactionId; }
     public LocalDateTime getTransactionDate() { return transactionDate; }
     public void setTransactionDate(LocalDateTime transactionDate) { this.transactionDate = transactionDate; }
-    public BigDecimal getAmount() { return amount; }
-    public void setAmount(BigDecimal amount) { this.amount = amount; }
+    public Long getAmount() { return amount; }
+    public void setAmount(Long amount) { this.amount = amount; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getInvoiceId() { return invoiceId; }

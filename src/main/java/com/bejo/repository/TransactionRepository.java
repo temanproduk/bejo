@@ -22,4 +22,6 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
             String username, LocalDateTime start, LocalDateTime end);
 
     boolean existsByUsername(String username);
+
+    boolean existsByTransactionId(String transactionId);
 }
