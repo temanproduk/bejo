@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: bejo
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/bejo}
+    username: ${DB_USERNAME:bejo}
+    password: ${DB_PASSWORD:bejo}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  threads:
+    virtual:
+      enabled: true
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus,info
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+
+app:
+  api-token: ${API_TOKEN:change-me-in-production}
+  jwt:
+    # Base64-encoded secret, minimum 256 bits. Generate with: openssl rand -base64 32
+    secret: ${JWT_SECRET:YmVqby1kZXYtc2VjcmV0LWtleS1tdXN0LWJlLWNoYW5nZWQtaW4tcHJvZHVjdGlvbi1taW4tMjU2Yml0cw==}
+  seed:
+    username: ${SEED_USERNAME:admin}
+    password: ${SEED_PASSWORD:}
+    name: ${SEED_NAME:Admin}
+    business-name: ${SEED_BUSINESS_NAME:My Business}
+    business-address: ${SEED_BUSINESS_ADDRESS:}
+  firebase:
+    credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
+    credentials-base64: ${FIREBASE_CREDENTIALS_BASE64:}
+
+logging:
+  level:
+    com.bejo: INFO
+    org.hibernate.SQL: WARN

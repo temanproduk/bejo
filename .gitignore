@@ -1,0 +1,17 @@
+target/
+*.class
+*.jar
+*.war
+
+.env
+*.json
+!package.json
+
+.idea/
+*.iml
+.vscode/
+
+*.log
+logs/
+
+.DS_Store
