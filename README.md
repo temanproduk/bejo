@@ -7,7 +7,7 @@ REST API built with Java 25 and Spring Boot. Provides user authentication, trans
 - **Java 25** + **Spring Boot 3.5**
 - **PostgreSQL 17** — persistent storage
 - **Firebase Admin SDK** — FCM push notifications
-- **JWT (JJWT)** — stateless authentication
+- **JWT (JJWT)** — stateless authentication, no expiry
 - **Prometheus** — metrics scraping via `/actuator/prometheus`
 
 ---
@@ -91,11 +91,14 @@ Null fields are omitted from the response.
 | Field | Editable | Description |
 |---|---|---|
 | `username` | No | Login identifier |
-| `name` | Yes | Display name |
+| `name` | Yes (optional) | Display name |
+| `email` | Yes (required) | Email address |
+| `phone` | Yes (required) | Phone number |
 | `businessName` | No | Set once at account creation |
 | `businessAddress` | No | Set once at account creation |
-| `email` | Yes | |
-| `phone` | Yes | |
+| `bankName` | No | Bank name |
+| `bankNumber` | No | Bank account number |
+| `bankAccountName` | No | Bank account holder name |
 
 ---
 
@@ -104,8 +107,8 @@ Null fields are omitted from the response.
 Users are not self-registered. Insert directly into the database with a BCrypt-hashed password:
 
 ```sql
-INSERT INTO users (username, password_hash, name, business_name, business_address, qris_code)
-VALUES ('alice', '$2a$10$...', 'Alice', 'Alice Shop', 'Jl. Contoh No. 1', gen_random_uuid()::text);
+INSERT INTO users (username, password_hash, name, business_name, business_address, email, phone, bank_name, bank_number, bank_account_name)
+VALUES ('alice', '$2a$10$...', 'Alice', 'Alice Shop', 'Jl. Contoh No. 1', 'alice@example.com', '+628100000000', 'Bank BCA', '1234567890', 'Alice');
 ```
 
 Generate a hash:
@@ -122,7 +125,7 @@ Or set `SEED_USERNAME`, `SEED_PASSWORD`, `SEED_NAME`, `SEED_BUSINESS_NAME`, and 
 
 ### POST /api/auth/login
 
-Authenticates a user and returns a JWT. Also registers or updates the device's FCM push token.
+Authenticates a user and returns a permanent JWT. Also registers or updates the device's FCM push token.
 
 **Headers**
 
@@ -155,11 +158,15 @@ Content-Type: application/json
 |---|---|---|
 | `username` | string | |
 | `name` | string | Display name |
+| `email` | string | |
+| `phone` | string | |
 | `businessName` | string | |
 | `businessAddress` | string | |
-| `token` | string | JWT for subsequent requests |
+| `bankName` | string | |
+| `bankNumber` | string | |
+| `bankAccountName` | string | |
+| `token` | string | JWT for subsequent requests (permanent, no expiry) |
 | `tokenType` | string | Always `"Bearer"` |
-| `expiresIn` | number | Token lifetime in seconds (default 86400) |
 
 ```json
 {
@@ -168,11 +175,15 @@ Content-Type: application/json
   "data": {
     "username": "alice",
     "name": "Alice",
+    "email": "alice@example.com",
+    "phone": "+628100000000",
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
+    "bankName": "Bank BCA",
+    "bankNumber": "1234567890",
+    "bankAccountName": "Alice",
     "token": "eyJhbGciOiJIUzI1NiJ9...",
-    "tokenType": "Bearer",
-    "expiresIn": 86400
+    "tokenType": "Bearer"
   }
 }
 ```
@@ -181,8 +192,29 @@ Content-Type: application/json
 
 | HTTP | `message` | Cause |
 |---|---|---|
-| 400 | `username is required` | Missing required field |
+| 400 | `username is required` | Missing field |
+| 400 | `password is required` | Missing field |
+| 400 | `deviceId is required` | Missing field |
 | 400 | `Invalid credentials` | Wrong username or password |
+
+---
+
+### POST /api/auth/logout
+
+Invalidates the current JWT by adding it to a server-side blacklist. The token cannot be used again after logout.
+
+**Headers**
+
+```
+X-API-TOKEN: <token>
+Authorization: Bearer <jwt>
+```
+
+**Success response — HTTP 200**
+
+```json
+{ "status": 1, "message": "Logged out successfully" }
+```
 
 ---
 
@@ -197,6 +229,13 @@ X-API-TOKEN: <token>
 Authorization: Bearer <jwt>
 ```
 
+**Query parameters**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `dateStart` | `yyyy-MM-dd` | no | Filter from this date (inclusive) |
+| `dateEnd` | `yyyy-MM-dd` | no | Filter to this date (inclusive) |
+
 **Success response — HTTP 200**
 
 ```json
@@ -204,23 +243,27 @@ Authorization: Bearer <jwt>
   "status": 1,
   "data": [
     {
-      "transactionId": "TRX-001",
-      "transactionDate": "2024-08-01T10:30:00",
-      "amount": 50000.00,
-      "status": "SUCCESS",
-      "invoiceId": "INV-001",
-      "settlementDate": "2024-08-01T11:00:00",
-      "source": "BNI",
-      "customerName": "Budi Santoso",
-      "rrn": "123456789012",
-      "info": "",
-      "username": "alice",
-      "scrapeDate": "2024-08-01T10:35:00"
+      "transactionId": "TXN-A1B2C3D4",
+      "transactionDate": "2026-06-28T09:14:00",
+      "amount": 25000.00,
+      "issuerName": "BNI",
+      "merchantName": "Alice Shop",
+      "merchantPan": "936009XXXXXX0001",
+      "customerPan": "401177XXXXXX5678",
+      "rrn": "000100000002"
     }
   ],
   "count": 1
 }
 ```
+
+`merchantPan`, `customerPan`, and `rrn` are omitted when null.
+
+**Error responses**
+
+| HTTP | `message` | Cause |
+|---|---|---|
+| 400 | `Format parameter tidak valid: dateStart` | Invalid date format |
 
 ---
 
@@ -269,7 +312,7 @@ Content-Type: application/json
 
 | HTTP | `message` | Cause |
 |---|---|---|
-| 400 | `pushToken is required` | Empty body |
+| 400 | `pushToken is required` | Missing or blank field |
 | 404 | `Device ID not found: device-001` | Unknown device |
 
 ---
@@ -301,7 +344,7 @@ Content-Type: application/json
   "title": "Uang masuk Rp 50.000",
   "body": "Ada transaksi masuk sejumlah Rp 50.000",
   "data": {
-    "transactionId": "TRX-001",
+    "transactionId": "TXN-A1B2C3D4",
     "amount": "50000"
   }
 }
@@ -310,10 +353,7 @@ Content-Type: application/json
 **Success response — HTTP 200**
 
 ```json
-{
-  "status": 1,
-  "message": "Notification sent"
-}
+{ "status": 1, "message": "Notification sent" }
 ```
 
 **Error responses**
@@ -321,6 +361,8 @@ Content-Type: application/json
 | HTTP | `message` | Cause |
 |---|---|---|
 | 400 | `deviceId is required` | Missing field |
+| 400 | `title is required` | Missing field |
+| 400 | `body is required` | Missing field |
 | 404 | `Device not found: device-001` | Unknown device |
 | 404 | `No FCM token registered for device: device-001` | Device exists but has no push token |
 | 503 | `Firebase is not configured` | Firebase credentials not set |
@@ -330,9 +372,9 @@ Content-Type: application/json
 
 ### PATCH /api/users/me
 
-Updates the authenticated user's name, email, and/or phone number. All fields are optional — include only what you want to change. At least one field must be provided.
+Updates the authenticated user's profile. `email` and `phone` are required; `name` is optional.
 
-Business name and business address are not editable via this endpoint.
+Business name, business address, and bank info are not editable via this endpoint.
 
 **Headers**
 
@@ -347,8 +389,8 @@ Content-Type: application/json
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` | string | no | Display name |
-| `email` | string | no | Email address |
-| `phone` | string | no | Phone number |
+| `email` | string | yes | Email address |
+| `phone` | string | yes | Phone number |
 
 ```json
 {
@@ -361,17 +403,15 @@ Content-Type: application/json
 **Success response — HTTP 200**
 
 ```json
-{
-  "status": 1,
-  "message": "Profile updated successfully"
-}
+{ "status": 1, "message": "Profile updated successfully" }
 ```
 
 **Error responses**
 
 | HTTP | `message` | Cause |
 |---|---|---|
-| 400 | `At least one field (name, email, phone) must be provided` | Empty request body |
+| 400 | `Email wajib diisi` | `email` missing or blank |
+| 400 | `Nomor telepon wajib diisi` | `phone` missing or blank |
 
 ---
 
@@ -392,7 +432,7 @@ Content-Type: application/json
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `oldPassword` | string | yes | Current password |
-| `newPassword` | string | yes | Must be ≥ 8 characters, contain at least 1 letter and 1 number |
+| `newPassword` | string | yes | Min 8 characters, at least 1 letter and 1 number |
 
 ```json
 {
@@ -404,20 +444,18 @@ Content-Type: application/json
 **Success response — HTTP 200**
 
 ```json
-{
-  "status": 1,
-  "message": "Password changed successfully"
-}
+{ "status": 1, "message": "Password changed successfully" }
 ```
 
 **Error responses**
 
 | HTTP | `message` | Cause |
 |---|---|---|
-| 400 | `oldPassword is required` | Missing field |
-| 400 | `newPassword must be at least 8 characters` | Password too short |
-| 400 | `newPassword must contain at least 1 letter and 1 number` | Password format invalid |
-| 400 | `Current password is incorrect` | `oldPassword` does not match |
+| 400 | `Password saat ini wajib diisi` | `oldPassword` missing or blank |
+| 400 | `Password baru wajib diisi` | `newPassword` missing or blank |
+| 400 | `Password baru minimal 8 karakter` | `newPassword` too short |
+| 400 | `Password baru harus mengandung minimal 1 huruf dan 1 angka` | `newPassword` format invalid |
+| 400 | `Password saat ini tidak sesuai` | `oldPassword` does not match |
 
 ---
 
@@ -449,7 +487,7 @@ Authorization: Bearer <jwt>
 
 ### GET /api/qris/image/{qrisCode}.png
 
-Returns the QRIS placeholder image as a PNG file. This endpoint is **public** — no `X-API-TOKEN` or JWT required. The unique `qrisCode` in the URL serves as the identifier.
+Returns the QRIS placeholder image as a PNG file. This endpoint is **public** — no `X-API-TOKEN` or JWT required.
 
 **Response** — `image/png`, 300×300 pixels
 
@@ -457,23 +495,15 @@ Returns the QRIS placeholder image as a PNG file. This endpoint is **public** �
 
 ## Common error responses
 
-**Validation error — HTTP 400**
-
-```json
-{ "status": 0, "message": "fieldName: error description" }
-```
-
-**Not found — HTTP 404**
-
-```json
-{ "status": 0, "message": "Route not found" }
-```
-
-**Internal server error — HTTP 500**
-
-```json
-{ "status": 0, "message": "Internal server error" }
-```
+| HTTP | `message` | Cause |
+|---|---|---|
+| 400 | `Request body tidak valid atau tidak ditemukan` | Malformed or missing JSON body |
+| 400 | `Format parameter tidak valid: <param>` | Invalid query parameter format |
+| 401 | `Missing or invalid X-API-TOKEN` | Wrong or absent API token |
+| 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing or invalid JWT |
+| 404 | `Route not found` | Unknown path |
+| 405 | `Method not allowed: <METHOD>` | Wrong HTTP method |
+| 500 | `Internal server error` | Unexpected server error |
 
 ---
 
@@ -503,7 +533,6 @@ Prometheus is available at `http://localhost:9090` when running via Docker Compo
 |---|---|---|
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
 | `JWT_SECRET` | yes | Base64-encoded signing key (min 256 bits). Generate: `openssl rand -base64 32` |
-| `JWT_EXPIRATION_MS` | no | Token lifetime in ms. Default: `86400000` (24 h) |
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | |
 | `DB_PASSWORD` | yes | |
