@@ -211,14 +211,9 @@ Authenticates a user and returns a permanent JWT. Also registers or updates the 
     "isPhoneVerified": false,
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
-    "initialBusinessName": "Alice Shop",
-    "initialBusinessAddress": "Jl. Contoh No. 1",
     "bankName": "Bank BCA",
     "bankNumber": "1234567890",
     "bankAccountName": "Alice",
-    "initialBankName": "Bank BCA",
-    "initialBankNumber": "1234567890",
-    "initialBankAccountName": "Alice",
     "token": "eyJhbGciOiJIUzI1NiJ9...",
     "tokenType": "Bearer"
   }

@@ -80,7 +80,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "auth", "login"]
             },
-            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse includes: username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessName, businessAddress, initialBusinessName, initialBusinessAddress, bankName, bankNumber, bankAccountName, initialBankName, initialBankNumber, initialBankAccountName, token, tokenType."
+            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse includes: username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessName, businessAddress, bankName, bankNumber, bankAccountName, token, tokenType."
           }
         },
         {

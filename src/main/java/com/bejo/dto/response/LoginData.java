@@ -10,14 +10,9 @@ public record LoginData(
         boolean isPhoneVerified,
         String businessName,
         String businessAddress,
-        String initialBusinessName,
-        String initialBusinessAddress,
         String bankName,
         String bankNumber,
         String bankAccountName,
-        String initialBankName,
-        String initialBankNumber,
-        String initialBankAccountName,
         String token,
         String tokenType
 ) {}

@@ -77,14 +77,9 @@ public class AuthService {
                 user.isPhoneVerified(),
                 user.getBusinessName(),
                 user.getBusinessAddress(),
-                user.getInitialBusinessName(),
-                user.getInitialBusinessAddress(),
                 user.getBankName(),
                 user.getBankNumber(),
                 user.getBankAccountName(),
-                user.getInitialBankName(),
-                user.getInitialBankNumber(),
-                user.getInitialBankAccountName(),
                 token, "Bearer");
     }
 
