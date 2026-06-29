@@ -6,6 +6,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
@@ -24,4 +25,6 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     boolean existsByUsername(String username);
 
     boolean existsByTransactionId(String transactionId);
+
+    Optional<Transaction> findByIdempotencyKeyAndUsername(String idempotencyKey, String username);
 }

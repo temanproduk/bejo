@@ -63,12 +63,19 @@ public class DataSeeder implements ApplicationRunner {
             user.setPasswordHash(passwordEncoder.encode(seedPassword));
             user.setName(seedName);
             user.setBusinessName(seedBusinessName);
+            user.setInitialBusinessName(seedBusinessName);
+            String addr = seedBusinessAddress.isBlank() ? null : seedBusinessAddress;
+            user.setBusinessAddress(addr);
+            user.setInitialBusinessAddress(addr);
             user.setEmail("admin@bejo.id");
             user.setPhone("+6281234567890");
             user.setBankName("Bank Central Asia");
             user.setBankNumber("1234567890");
             user.setBankAccountName("Admin Bejo");
-            if (!seedBusinessAddress.isBlank()) user.setBusinessAddress(seedBusinessAddress);
+            user.setInitialBankName("Bank Central Asia");
+            user.setInitialBankNumber("1234567890");
+            user.setInitialBankAccountName("Admin Bejo");
+            user.setAccountType("MANAGED");
             userRepository.save(user);
             log.info("[SEED] Created default user '{}' ({})", seedUsername, seedBusinessName);
         }
@@ -146,6 +153,8 @@ public class DataSeeder implements ApplicationRunner {
             t.setRrn(String.format("%012d", (long) (Math.random() * 1_000_000_000_000L)));
             t.setMerchantPan(merchantPan);
             t.setCustomerPan(customerPan);
+            t.setType("MANAGED");
+            t.setAcquirer("AstraPay");
             t.setStatus("SUCCESS");
             t.setScrapeDate(now);
             txns.add(t);

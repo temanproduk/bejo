@@ -1,8 +1,10 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.LoginRequest;
+import com.bejo.dto.request.RegisterRequest;
 import com.bejo.dto.response.LoginData;
 import com.bejo.entity.Session;
+import com.bejo.entity.User;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
@@ -67,15 +69,60 @@ public class AuthService {
         log.info("[LOGIN] Success for username={}", request.username());
         return new LoginData(
                 request.username(),
+                user.getAccountType(),
                 user.getName(),
                 user.getEmail(),
+                user.isEmailVerified(),
                 user.getPhone(),
+                user.isPhoneVerified(),
                 user.getBusinessName(),
                 user.getBusinessAddress(),
+                user.getInitialBusinessName(),
+                user.getInitialBusinessAddress(),
                 user.getBankName(),
                 user.getBankNumber(),
                 user.getBankAccountName(),
+                user.getInitialBankName(),
+                user.getInitialBankNumber(),
+                user.getInitialBankAccountName(),
                 token, "Bearer");
+    }
+
+    @Transactional
+    public void register(RegisterRequest request) {
+        log.info("[REGISTER] username={}", request.username());
+
+        if (userRepository.existsByUsername(request.username())) {
+            throw new IllegalArgumentException("Username sudah digunakan");
+        }
+
+        User user = new User();
+        user.setUsername(request.username());
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setName(request.name());
+        user.setEmail(request.email());
+        user.setPhone(request.phone());
+        String bizName = request.businessName() != null ? request.businessName() : "";
+        String bizAddress = request.businessAddress();
+        user.setBusinessName(bizName);
+        user.setBusinessAddress(bizAddress);
+        user.setInitialBusinessName(bizName);
+        user.setInitialBusinessAddress(bizAddress);
+        String bankName = request.bankName() != null ? request.bankName() : "";
+        String bankNumber = request.bankNumber() != null ? request.bankNumber() : "";
+        String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";
+        user.setBankName(bankName);
+        user.setBankNumber(bankNumber);
+        user.setBankAccountName(bankAccountName);
+        user.setInitialBankName(bankName);
+        user.setInitialBankNumber(bankNumber);
+        user.setInitialBankAccountName(bankAccountName);
+        user.setAccountType("MANAGED");
+        user.setEmailVerified(false);
+        user.setPhoneVerified(false);
+
+        userRepository.save(user);
+        log.info("[REGISTER] Created user username={}", request.username());
     }
 
     @Transactional

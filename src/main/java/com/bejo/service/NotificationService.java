@@ -115,6 +115,8 @@ public class NotificationService {
         t.setMerchantPan(txData.merchantPan());
         t.setCustomerPan(txData.customerPan());
         t.setRrn(txData.rrn());
+        t.setType("MANAGED");
+        t.setAcquirer("AstraPay");
         t.setStatus("SUCCESS");
         t.setScrapeDate(LocalDateTime.now());
         transactionRepository.save(t);

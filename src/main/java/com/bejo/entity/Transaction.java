@@ -48,6 +48,13 @@ public class Transaction {
     @Column(name = "scrape_date")
     private LocalDateTime scrapeDate;
 
+    private String type;
+
+    private String acquirer;
+
+    @Column(name = "idempotency_key", unique = true)
+    private String idempotencyKey;
+
     public Long getId() { return id; }
     public String getTransactionId() { return transactionId; }
     public void setTransactionId(String transactionId) { this.transactionId = transactionId; }
@@ -77,4 +84,10 @@ public class Transaction {
     public void setUsername(String username) { this.username = username; }
     public LocalDateTime getScrapeDate() { return scrapeDate; }
     public void setScrapeDate(LocalDateTime scrapeDate) { this.scrapeDate = scrapeDate; }
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
+    public String getAcquirer() { return acquirer; }
+    public void setAcquirer(String acquirer) { this.acquirer = acquirer; }
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
 }

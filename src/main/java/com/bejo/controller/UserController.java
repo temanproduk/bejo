@@ -2,6 +2,7 @@ package com.bejo.controller;
 
 import com.bejo.dto.request.ChangePasswordRequest;
 import com.bejo.dto.request.UpdateBankRequest;
+import com.bejo.dto.request.UpdateBusinessRequest;
 import com.bejo.dto.request.UpdateProfileRequest;
 import com.bejo.dto.response.ApiResponse;
 import com.bejo.service.UserService;
@@ -34,6 +35,26 @@ public class UserController {
             Authentication authentication) {
         userService.updateBank(authentication.getName(), request);
         return ResponseEntity.ok(ApiResponse.success("Informasi rekening berhasil diperbarui", null));
+    }
+
+    @PostMapping("/bank/reset")
+    public ResponseEntity<ApiResponse<Void>> resetBank(Authentication authentication) {
+        userService.resetBank(authentication.getName());
+        return ResponseEntity.ok(ApiResponse.success("Informasi rekening berhasil direset ke data awal", null));
+    }
+
+    @PatchMapping("/business")
+    public ResponseEntity<ApiResponse<Void>> updateBusiness(
+            @Valid @RequestBody UpdateBusinessRequest request,
+            Authentication authentication) {
+        userService.updateBusiness(authentication.getName(), request);
+        return ResponseEntity.ok(ApiResponse.success("Informasi bisnis berhasil diperbarui", null));
+    }
+
+    @PostMapping("/business/reset")
+    public ResponseEntity<ApiResponse<Void>> resetBusiness(Authentication authentication) {
+        userService.resetBusiness(authentication.getName());
+        return ResponseEntity.ok(ApiResponse.success("Informasi bisnis berhasil direset ke data awal", null));
     }
 
     @PatchMapping("/password")

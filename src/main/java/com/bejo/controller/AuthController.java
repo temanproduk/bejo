@@ -1,12 +1,14 @@
 package com.bejo.controller;
 
 import com.bejo.dto.request.LoginRequest;
+import com.bejo.dto.request.RegisterRequest;
 import com.bejo.dto.response.ApiResponse;
 import com.bejo.dto.response.LoginData;
 import com.bejo.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,6 +23,13 @@ public class AuthController {
 
     public AuthController(AuthService authService) {
         this.authService = authService;
+    }
+
+    @PostMapping("/register")
+    public ResponseEntity<ApiResponse<Void>> register(@Valid @RequestBody RegisterRequest request) {
+        authService.register(request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Registrasi berhasil", null));
     }
 
     @PostMapping("/login")

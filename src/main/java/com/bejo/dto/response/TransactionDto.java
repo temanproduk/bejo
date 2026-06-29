@@ -9,6 +9,8 @@ public record TransactionDto(
         String transactionId,
         LocalDateTime transactionDate,
         Long amount,
+        String type,
+        String acquirer,
         String issuerName,
         String merchantName,
         String merchantPan,

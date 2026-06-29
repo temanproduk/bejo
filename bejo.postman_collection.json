@@ -1,0 +1,456 @@
+{
+  "info": {
+    "name": "Bejo API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiToken",
+      "value": "temanproduk-api",
+      "type": "string",
+      "description": "Matches API_TOKEN in .env — sent as X-API-TOKEN header on every request"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string",
+      "description": "JWT Bearer token — auto-populated by the Login request test script"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "register"]
+            },
+            "description": "Creates a new user account. No JWT required — only X-API-TOKEN.\n\nMandatory: username, password, name, email, phone.\nOptional: businessName, businessAddress, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success. businessName/businessAddress and bankName/bankNumber/bankAccountName are stored as both the display and initial (regulatory) values."
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.status === 1 && res.data && res.data.token) {",
+                  "    pm.collectionVariables.set('token', res.data.token);",
+                  "    console.log('JWT saved to {{token}}');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"password\",\n  \"deviceId\": \"device-001\",\n  \"pushToken\": \"fcm-token-here\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse includes: username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessName, businessAddress, initialBusinessName, initialBusinessAddress, bankName, bankNumber, bankAccountName, initialBankName, initialBankNumber, initialBankAccountName, token, tokenType."
+          }
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    pm.collectionVariables.set('token', '');",
+                  "    console.log('Token cleared from {{token}}');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "logout"]
+            },
+            "description": "Invalidates the current JWT — it cannot be used again after logout. The test script clears `{{token}}` from the collection variables."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {
+          "name": "Get Transaction History",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"],
+              "query": [
+                {
+                  "key": "dateStart",
+                  "value": "",
+                  "description": "Filter start date (inclusive), format: yyyy-MM-dd. Optional.",
+                  "disabled": true
+                },
+                {
+                  "key": "dateEnd",
+                  "value": "",
+                  "description": "Filter end date (inclusive), format: yyyy-MM-dd. Optional.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Returns transaction history for the authenticated user, ordered by date descending.\n\nEach transaction includes: transactionId, transactionDate, amount (integer), type (MANAGED/MANUAL/PARSED), acquirer, issuerName, merchantName, merchantPan (optional), customerPan (optional), rrn (optional).\n\nOptional date filter: dateStart and/or dateEnd (format yyyy-MM-dd, both inclusive)."
+          }
+        },
+        {
+          "name": "Add Transaction (Manual)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}", "description": "UUID per request attempt. Sending the same key again returns the existing transactionId without inserting a duplicate." }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"MANUAL\",\n  \"transactionDate\": \"2026-06-29T10:00:00\",\n  \"amount\": 50000,\n  \"issuerName\": \"Cash\",\n  \"rrn\": \"000100000099\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"]
+            },
+            "description": "Manually records a transaction. The server generates transactionId.\n\nIdempotency-Key header is required — use a UUID per request attempt. Resubmitting the same key returns the same transactionId without inserting a duplicate.\n\nFor MANUAL type, acquirer is automatically set to 'Cash'.\nMandatory: type, transactionDate, amount.\nOptional: issuerName, merchantPan, customerPan, rrn.\n\nReturns HTTP 201 with { transactionId }."
+          }
+        },
+        {
+          "name": "Add Transaction (Parsed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}", "description": "UUID per request attempt. Sending the same key again returns the existing transactionId without inserting a duplicate." }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PARSED\",\n  \"transactionDate\": \"2026-06-29T09:14:00\",\n  \"amount\": 75000,\n  \"issuerName\": \"GoPay\",\n  \"acquirer\": \"Midtrans\",\n  \"merchantPan\": \"936009XXXXXX0001\",\n  \"customerPan\": \"401177XXXXXX5678\",\n  \"rrn\": \"000100000001\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions"]
+            },
+            "description": "Records a transaction from an external acquirer. The server generates transactionId.\n\nIdempotency-Key header is required. For PARSED type, acquirer is required.\n\nReturns HTTP 201 with { transactionId }."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "Send Push Notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"da8221950b5d5c15\",\n  \"title\": \"Uang masuk Rp 50.000\",\n  \"body\": \"Ada transaksi masuk sejumlah Rp 50.000\",\n  \"data\": {\n    \"transactionId\": \"TXN-A1B2C3D4\",\n    \"transactionDate\": \"2026-06-29T09:14:00\",\n    \"amount\": 50000,\n    \"issuerName\": \"GoPay\",\n    \"merchantPan\": \"936009XXXXXX0001\",\n    \"customerPan\": \"401177XXXXXX5678\",\n    \"rrn\": \"000100000001\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notifications"]
+            },
+            "description": "Sends an FCM push notification to the specified device AND inserts a MANAGED transaction record (acquirer: AstraPay).\n\nAll validation runs before the notification is sent — if any field is invalid or transactionId is a duplicate, neither the notification nor the transaction insertion occurs.\n\ndata.transactionId, data.transactionDate, data.amount, and data.issuerName are required. merchantPan, customerPan, and rrn are optional.\n\nRequires Firebase to be configured."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Devices",
+      "item": [
+        {
+          "name": "Update FCM Token",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pushToken\": \"new-fcm-token-here\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/device-001/fcm-token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices", "device-001", "fcm-token"]
+            },
+            "description": "Updates the FCM push token for a device. Replace `device-001` in the path with the actual device ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Alice Wonderland\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me"]
+            },
+            "description": "Updates name, email, and phone. All three fields are required.\n\nPhone must be in international format, e.g. +628123456789."
+          }
+        },
+        {
+          "name": "Update Business Info",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessName\": \"Alice Shop New\",\n  \"businessAddress\": \"Jl. Baru No. 2\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/business",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "business"]
+            },
+            "description": "Updates the display business name and address. businessName is required.\n\nDoes NOT change the initial (regulatory) values. Use Reset Business Info to revert."
+          }
+        },
+        {
+          "name": "Reset Business Info",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/business/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "business", "reset"]
+            },
+            "description": "Reverts businessName and businessAddress to the values recorded at registration (initialBusinessName / initialBusinessAddress).\n\nNo request body needed."
+          }
+        },
+        {
+          "name": "Update Bank Info",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/bank",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "bank"]
+            },
+            "description": "Updates bank account information. All three fields are required.\n\nbankNumber must be digits only, 6–20 digits.\n\nDoes NOT change the initial (regulatory) values. Use Reset Bank Info to revert."
+          }
+        },
+        {
+          "name": "Reset Bank Info",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/bank/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "bank", "reset"]
+            },
+            "description": "Reverts bankName, bankNumber, and bankAccountName to the values recorded at registration (initialBankName / initialBankNumber / initialBankAccountName).\n\nNo request body needed."
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"oldPassword\": \"Secret1\",\n  \"newPassword\": \"NewSecret2\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/password",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "password"]
+            },
+            "description": "Changes the authenticated user's password. Requires the current password for verification.\n\nnewPassword rules: minimum 8 characters, at least 1 letter and 1 number."
+          }
+        }
+      ]
+    },
+    {
+      "name": "QRIS",
+      "item": [
+        {
+          "name": "Get QRIS",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/qris",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "qris"]
+            },
+            "description": "Returns the QRIS image as base64 and business info for the authenticated user.\n\nResponse includes: type (MANAGED or UPLOADED), image (base64-encoded PNG), businessName, businessAddress.\n\nIf no image has been generated yet, one is created and stored on the first call.\n\ntype=MANAGED means the Bejo-generated QRIS. type=UPLOADED means the user has uploaded their own QRIS image which takes precedence."
+          }
+        },
+        {
+          "name": "Upload QRIS",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image\": \"<base64-encoded image string>\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/qris/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "qris", "upload"]
+            },
+            "description": "Uploads a custom QRIS image. After uploading, GET /api/qris returns this image with type=UPLOADED.\n\nThe generated QRIS is preserved and can be restored with Reset QRIS.\n\nimage must be a valid base64-encoded string."
+          }
+        },
+        {
+          "name": "Reset QRIS",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/qris/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "qris", "reset"]
+            },
+            "description": "Clears the uploaded QRIS image and reverts to the Bejo-generated one (type=MANAGED).\n\nNo request body needed."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "health"]
+            },
+            "description": "Health check — no X-API-TOKEN or JWT required."
+          }
+        }
+      ]
+    }
+  ]
+}

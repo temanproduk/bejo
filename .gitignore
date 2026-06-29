@@ -6,6 +6,7 @@ target/
 .env
 *.json
 !package.json
+!bejo.postman_collection.json
 
 .idea/
 *.iml

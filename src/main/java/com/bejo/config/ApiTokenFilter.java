@@ -30,7 +30,7 @@ public class ApiTokenFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
         String uri = request.getRequestURI();
-        if (uri.startsWith("/actuator") || uri.startsWith("/api/qris/image/")) {
+        if (uri.startsWith("/actuator")) {
             chain.doFilter(request, response);
             return;
         }

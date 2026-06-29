@@ -26,6 +26,12 @@ public class User {
     @Column(name = "business_address")
     private String businessAddress;
 
+    @Column(name = "initial_business_name")
+    private String initialBusinessName;
+
+    @Column(name = "initial_business_address")
+    private String initialBusinessAddress;
+
     private String email;
 
     private String phone;
@@ -39,8 +45,32 @@ public class User {
     @Column(name = "bank_account_name", nullable = false)
     private String bankAccountName;
 
+    @Column(name = "initial_bank_name")
+    private String initialBankName;
+
+    @Column(name = "initial_bank_number")
+    private String initialBankNumber;
+
+    @Column(name = "initial_bank_account_name")
+    private String initialBankAccountName;
+
     @Column(name = "qris_code", unique = true)
     private String qrisCode;
+
+    @Column(name = "qris_image", columnDefinition = "TEXT")
+    private String qrisImage;
+
+    @Column(name = "uploaded_qris_image", columnDefinition = "TEXT")
+    private String uploadedQrisImage;
+
+    @Column(name = "is_email_verified", nullable = false)
+    private boolean isEmailVerified = false;
+
+    @Column(name = "is_phone_verified", nullable = false)
+    private boolean isPhoneVerified = false;
+
+    @Column(name = "account_type", nullable = false)
+    private String accountType = "MANAGED";
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -62,6 +92,10 @@ public class User {
     public void setBusinessName(String businessName) { this.businessName = businessName; }
     public String getBusinessAddress() { return businessAddress; }
     public void setBusinessAddress(String businessAddress) { this.businessAddress = businessAddress; }
+    public String getInitialBusinessName() { return initialBusinessName; }
+    public void setInitialBusinessName(String initialBusinessName) { this.initialBusinessName = initialBusinessName; }
+    public String getInitialBusinessAddress() { return initialBusinessAddress; }
+    public void setInitialBusinessAddress(String initialBusinessAddress) { this.initialBusinessAddress = initialBusinessAddress; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
     public String getPhone() { return phone; }
@@ -72,8 +106,24 @@ public class User {
     public void setBankNumber(String bankNumber) { this.bankNumber = bankNumber; }
     public String getBankAccountName() { return bankAccountName; }
     public void setBankAccountName(String bankAccountName) { this.bankAccountName = bankAccountName; }
+    public String getInitialBankName() { return initialBankName; }
+    public void setInitialBankName(String initialBankName) { this.initialBankName = initialBankName; }
+    public String getInitialBankNumber() { return initialBankNumber; }
+    public void setInitialBankNumber(String initialBankNumber) { this.initialBankNumber = initialBankNumber; }
+    public String getInitialBankAccountName() { return initialBankAccountName; }
+    public void setInitialBankAccountName(String initialBankAccountName) { this.initialBankAccountName = initialBankAccountName; }
     public String getQrisCode() { return qrisCode; }
     public void setQrisCode(String qrisCode) { this.qrisCode = qrisCode; }
+    public String getQrisImage() { return qrisImage; }
+    public void setQrisImage(String qrisImage) { this.qrisImage = qrisImage; }
+    public String getUploadedQrisImage() { return uploadedQrisImage; }
+    public void setUploadedQrisImage(String uploadedQrisImage) { this.uploadedQrisImage = uploadedQrisImage; }
+    public boolean isEmailVerified() { return isEmailVerified; }
+    public void setEmailVerified(boolean emailVerified) { isEmailVerified = emailVerified; }
+    public boolean isPhoneVerified() { return isPhoneVerified; }
+    public void setPhoneVerified(boolean phoneVerified) { isPhoneVerified = phoneVerified; }
+    public String getAccountType() { return accountType; }
+    public void setAccountType(String accountType) { this.accountType = accountType; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
