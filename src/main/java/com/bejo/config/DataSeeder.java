@@ -12,6 +12,8 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -76,11 +78,25 @@ public class DataSeeder implements ApplicationRunner {
             user.setInitialBankNumber("1234567890");
             user.setInitialBankAccountName("Admin Bejo");
             user.setAccountType("MANAGED");
+            user.setUploadedQrisImage(loadSeedQrisImage());
             userRepository.save(user);
             log.info("[SEED] Created default user '{}' ({})", seedUsername, seedBusinessName);
         }
 
         seedTransactions(seedUsername);
+    }
+
+    private String loadSeedQrisImage() {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("seed-qris.b64")) {
+            if (is == null) {
+                log.warn("[SEED] seed-qris.b64 not found in classpath — skipping QRIS image");
+                return null;
+            }
+            return new String(is.readAllBytes());
+        } catch (IOException e) {
+            log.warn("[SEED] Failed to load seed-qris.b64: {}", e.getMessage());
+            return null;
+        }
     }
 
     private void seedTransactions(String username) {
