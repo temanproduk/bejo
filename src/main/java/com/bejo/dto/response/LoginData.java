@@ -10,6 +10,7 @@ public record LoginData(
         boolean isPhoneVerified,
         String businessName,
         String businessAddress,
+        String nmid,
         String bankName,
         String bankNumber,
         String bankAccountName,

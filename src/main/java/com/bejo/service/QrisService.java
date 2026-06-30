@@ -31,7 +31,7 @@ public class QrisService {
 
         if (user.getUploadedQrisImage() != null) {
             return new QrisData("UPLOADED", user.getUploadedQrisImage(),
-                    user.getBusinessName(), user.getBusinessAddress());
+                    user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
         }
 
         String generatedImage = user.getQrisImage();
@@ -42,7 +42,7 @@ public class QrisService {
         }
 
         return new QrisData("MANAGED", generatedImage,
-                user.getBusinessName(), user.getBusinessAddress());
+                user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
     }
 
     @Transactional

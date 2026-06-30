@@ -80,6 +80,7 @@ public class UserService {
 
         user.setBusinessName(request.businessName());
         user.setBusinessAddress(request.businessAddress());
+        user.setNmid(request.nmid());
 
         userRepository.save(user);
         log.info("[BUSINESS] Updated for username={}", username);
@@ -117,6 +118,7 @@ public class UserService {
 
         user.setBusinessName(user.getInitialBusinessName());
         user.setBusinessAddress(user.getInitialBusinessAddress());
+        user.setNmid(user.getInitialNmid());
 
         userRepository.save(user);
         log.info("[BUSINESS RESET] Reverted for username={}", username);

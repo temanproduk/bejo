@@ -37,6 +37,9 @@ public record RegisterRequest(
 
         String businessAddress,
 
+        @Size(max = 50, message = "nmid maksimal 50 karakter")
+        String nmid,
+
         @Size(max = 100, message = "bankName maksimal 100 karakter")
         String bankName,
 

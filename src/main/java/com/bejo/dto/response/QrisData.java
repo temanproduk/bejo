@@ -4,5 +4,6 @@ public record QrisData(
         String type,
         String image,
         String businessName,
-        String businessAddress
+        String businessAddress,
+        String nmid
 ) {}

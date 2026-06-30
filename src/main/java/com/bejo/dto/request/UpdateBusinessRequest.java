@@ -8,5 +8,8 @@ public record UpdateBusinessRequest(
         @Size(max = 255, message = "businessName maksimal 255 karakter")
         String businessName,
 
-        String businessAddress
+        String businessAddress,
+
+        @Size(max = 50, message = "nmid maksimal 50 karakter")
+        String nmid
 ) {}

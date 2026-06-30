@@ -77,6 +77,7 @@ public class AuthService {
                 user.isPhoneVerified(),
                 user.getBusinessName(),
                 user.getBusinessAddress(),
+                user.getNmid(),
                 user.getBankName(),
                 user.getBankNumber(),
                 user.getBankAccountName(),
@@ -99,8 +100,10 @@ public class AuthService {
         user.setPhone(request.phone());
         user.setBusinessName(request.businessName());
         user.setBusinessAddress(request.businessAddress());
+        user.setNmid(request.nmid());
         user.setInitialBusinessName(request.businessName());
         user.setInitialBusinessAddress(request.businessAddress());
+        user.setInitialNmid(request.nmid());
         String bankName = request.bankName() != null ? request.bankName() : "";
         String bankNumber = request.bankNumber() != null ? request.bankNumber() : "";
         String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";

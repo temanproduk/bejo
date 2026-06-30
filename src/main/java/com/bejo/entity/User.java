@@ -27,11 +27,17 @@ public class User {
     @Column(name = "business_address")
     private String businessAddress;
 
+    @Column(name = "nmid")
+    private String nmid;
+
     @Column(name = "initial_business_name")
     private String initialBusinessName;
 
     @Column(name = "initial_business_address")
     private String initialBusinessAddress;
+
+    @Column(name = "initial_nmid")
+    private String initialNmid;
 
     @Column(nullable = false)
     private String email;
@@ -95,10 +101,14 @@ public class User {
     public void setBusinessName(String businessName) { this.businessName = businessName; }
     public String getBusinessAddress() { return businessAddress; }
     public void setBusinessAddress(String businessAddress) { this.businessAddress = businessAddress; }
+    public String getNmid() { return nmid; }
+    public void setNmid(String nmid) { this.nmid = nmid; }
     public String getInitialBusinessName() { return initialBusinessName; }
     public void setInitialBusinessName(String initialBusinessName) { this.initialBusinessName = initialBusinessName; }
     public String getInitialBusinessAddress() { return initialBusinessAddress; }
     public void setInitialBusinessAddress(String initialBusinessAddress) { this.initialBusinessAddress = initialBusinessAddress; }
+    public String getInitialNmid() { return initialNmid; }
+    public void setInitialNmid(String initialNmid) { this.initialNmid = initialNmid; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
     public String getPhone() { return phone; }
