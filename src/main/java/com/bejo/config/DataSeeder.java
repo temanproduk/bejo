@@ -78,7 +78,9 @@ public class DataSeeder implements ApplicationRunner {
             user.setInitialBankNumber("1234567890");
             user.setInitialBankAccountName("Admin Bejo");
             user.setAccountType("MANAGED");
-            user.setUploadedQrisImage(loadSeedQrisImage());
+            String seedQrisImage = loadSeedQrisImage();
+            user.setQrisImage(seedQrisImage);
+            user.setUploadedQrisImage(seedQrisImage);
             userRepository.save(user);
             log.info("[SEED] Created default user '{}' ({})", seedUsername, seedBusinessName);
         }
