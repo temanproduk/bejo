@@ -36,7 +36,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\"\n}",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"nmid\": \"ID1026540778978\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -44,7 +44,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "auth", "register"]
             },
-            "description": "Creates a new user account. No JWT required — only X-API-TOKEN.\n\nMandatory: username, password, name, email, phone.\nOptional: businessName, businessAddress, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success. businessName/businessAddress and bankName/bankNumber/bankAccountName are stored as both the display and initial (regulatory) values."
+            "description": "Creates a new user account. No JWT required — only X-API-TOKEN.\n\nMandatory: username, password, name, email, phone, businessName.\nOptional: businessAddress, nmid, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success. businessName/businessAddress/nmid and bankName/bankNumber/bankAccountName are stored as both the display and initial (regulatory) values."
           }
         },
         {
@@ -80,7 +80,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "auth", "login"]
             },
-            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse includes: username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessName, businessAddress, bankName, bankNumber, bankAccountName, token, tokenType."
+            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse includes: username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessName, businessAddress, nmid, bankName, bankNumber, bankAccountName, token, tokenType."
           }
         },
         {
@@ -286,7 +286,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"businessName\": \"Alice Shop New\",\n  \"businessAddress\": \"Jl. Baru No. 2\"\n}",
+              "raw": "{\n  \"businessName\": \"Alice Shop New\",\n  \"businessAddress\": \"Jl. Baru No. 2\",\n  \"nmid\": \"ID1026540778978\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -294,7 +294,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "users", "me", "business"]
             },
-            "description": "Updates the display business name and address. businessName is required.\n\nDoes NOT change the initial (regulatory) values. Use Reset Business Info to revert."
+            "description": "Updates the display business name, address, and NMID. businessName is required; businessAddress and nmid are optional.\n\nDoes NOT change the initial (regulatory) values. Use Reset Business Info to revert."
           }
         },
         {
@@ -310,7 +310,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "users", "me", "business", "reset"]
             },
-            "description": "Reverts businessName and businessAddress to the values recorded at registration (initialBusinessName / initialBusinessAddress).\n\nNo request body needed."
+            "description": "Reverts businessName, businessAddress, and nmid to the values recorded at registration.\n\nNo request body needed."
           }
         },
         {
@@ -391,7 +391,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "qris"]
             },
-            "description": "Returns the QRIS image as base64 and business info for the authenticated user.\n\nResponse includes: type (MANAGED or UPLOADED), image (base64-encoded PNG), businessName, businessAddress.\n\nIf no image has been generated yet, one is created and stored on the first call.\n\ntype=MANAGED means the Bejo-generated QRIS. type=UPLOADED means the user has uploaded their own QRIS image which takes precedence."
+            "description": "Returns the QRIS image as base64 and business info for the authenticated user.\n\nResponse includes: type (MANAGED or UPLOADED), image (base64-encoded PNG), businessName, businessAddress, nmid.\n\nIf no image has been generated yet, one is created and stored on the first call.\n\ntype=MANAGED means the Bejo-generated QRIS. type=UPLOADED means the user has uploaded their own QRIS image which takes precedence."
           }
         },
         {
