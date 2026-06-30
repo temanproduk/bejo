@@ -35,6 +35,7 @@ docker compose up --build app
 | `DB_USERNAME` / `DB_PASSWORD` | PostgreSQL credentials |
 | `FIREBASE_CREDENTIALS_BASE64` | Base64-encoded Firebase service account JSON |
 | `FIREBASE_CREDENTIALS_PATH` | Alternative: path to service account JSON file |
+| `SEED_NMID` | (Optional) National Merchant ID for the seed user |
 
 Set via a `.env` file alongside `docker-compose.yml` — Docker Compose picks it up automatically.
 

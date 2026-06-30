@@ -2,7 +2,6 @@ package com.bejo.entity;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 @Entity
 @Table(name = "users")
@@ -45,33 +44,6 @@ public class User {
     @Column(nullable = false)
     private String phone;
 
-    @Column(name = "bank_name", nullable = false)
-    private String bankName;
-
-    @Column(name = "bank_number", nullable = false)
-    private String bankNumber;
-
-    @Column(name = "bank_account_name", nullable = false)
-    private String bankAccountName;
-
-    @Column(name = "initial_bank_name")
-    private String initialBankName;
-
-    @Column(name = "initial_bank_number")
-    private String initialBankNumber;
-
-    @Column(name = "initial_bank_account_name")
-    private String initialBankAccountName;
-
-    @Column(name = "qris_code", unique = true)
-    private String qrisCode;
-
-    @Column(name = "qris_image", columnDefinition = "TEXT")
-    private String qrisImage;
-
-    @Column(name = "uploaded_qris_image", columnDefinition = "TEXT")
-    private String uploadedQrisImage;
-
     @Column(name = "is_email_verified", nullable = false)
     private boolean isEmailVerified = false;
 
@@ -86,7 +58,6 @@ public class User {
 
     @PrePersist
     void prePersist() {
-        if (qrisCode == null) qrisCode = UUID.randomUUID().toString();
         if (createdAt == null) createdAt = LocalDateTime.now();
     }
 
@@ -104,33 +75,15 @@ public class User {
     public String getNmid() { return nmid; }
     public void setNmid(String nmid) { this.nmid = nmid; }
     public String getInitialBusinessName() { return initialBusinessName; }
-    public void setInitialBusinessName(String initialBusinessName) { this.initialBusinessName = initialBusinessName; }
+    public void setInitialBusinessName(String v) { this.initialBusinessName = v; }
     public String getInitialBusinessAddress() { return initialBusinessAddress; }
-    public void setInitialBusinessAddress(String initialBusinessAddress) { this.initialBusinessAddress = initialBusinessAddress; }
+    public void setInitialBusinessAddress(String v) { this.initialBusinessAddress = v; }
     public String getInitialNmid() { return initialNmid; }
     public void setInitialNmid(String initialNmid) { this.initialNmid = initialNmid; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
-    public String getBankName() { return bankName; }
-    public void setBankName(String bankName) { this.bankName = bankName; }
-    public String getBankNumber() { return bankNumber; }
-    public void setBankNumber(String bankNumber) { this.bankNumber = bankNumber; }
-    public String getBankAccountName() { return bankAccountName; }
-    public void setBankAccountName(String bankAccountName) { this.bankAccountName = bankAccountName; }
-    public String getInitialBankName() { return initialBankName; }
-    public void setInitialBankName(String initialBankName) { this.initialBankName = initialBankName; }
-    public String getInitialBankNumber() { return initialBankNumber; }
-    public void setInitialBankNumber(String initialBankNumber) { this.initialBankNumber = initialBankNumber; }
-    public String getInitialBankAccountName() { return initialBankAccountName; }
-    public void setInitialBankAccountName(String initialBankAccountName) { this.initialBankAccountName = initialBankAccountName; }
-    public String getQrisCode() { return qrisCode; }
-    public void setQrisCode(String qrisCode) { this.qrisCode = qrisCode; }
-    public String getQrisImage() { return qrisImage; }
-    public void setQrisImage(String qrisImage) { this.qrisImage = qrisImage; }
-    public String getUploadedQrisImage() { return uploadedQrisImage; }
-    public void setUploadedQrisImage(String uploadedQrisImage) { this.uploadedQrisImage = uploadedQrisImage; }
     public boolean isEmailVerified() { return isEmailVerified; }
     public void setEmailVerified(boolean emailVerified) { isEmailVerified = emailVerified; }
     public boolean isPhoneVerified() { return isPhoneVerified; }

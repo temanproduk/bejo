@@ -405,7 +405,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"image\": \"<base64-encoded image string>\"\n}",
+              "raw": "{\n  \"qrisImage\": \"<base64-encoded image string>\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -413,7 +413,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "qris", "upload"]
             },
-            "description": "Uploads a custom QRIS image. After uploading, GET /api/qris returns this image with type=UPLOADED.\n\nThe generated QRIS is preserved and can be restored with Reset QRIS.\n\nimage must be a valid base64-encoded string."
+            "description": "Uploads a custom QRIS image. After uploading, GET /api/qris returns this image with type=UPLOADED.\n\nThe generated QRIS is preserved and can be restored with Reset QRIS.\n\nqrisImage must be a valid base64-encoded string."
           }
         },
         {

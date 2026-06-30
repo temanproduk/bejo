@@ -2,7 +2,11 @@ package com.bejo.config;
 
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
+import com.bejo.entity.UserBank;
+import com.bejo.entity.UserQris;
 import com.bejo.repository.TransactionRepository;
+import com.bejo.repository.UserBankRepository;
+import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,14 +42,23 @@ public class DataSeeder implements ApplicationRunner {
     @Value("${app.seed.business-address:}")
     private String seedBusinessAddress;
 
+    @Value("${app.seed.nmid:}")
+    private String seedNmid;
+
     private final UserRepository userRepository;
+    private final UserBankRepository userBankRepository;
+    private final UserQrisRepository userQrisRepository;
     private final TransactionRepository transactionRepository;
     private final PasswordEncoder passwordEncoder;
 
     public DataSeeder(UserRepository userRepository,
+                      UserBankRepository userBankRepository,
+                      UserQrisRepository userQrisRepository,
                       TransactionRepository transactionRepository,
                       PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
+        this.userBankRepository = userBankRepository;
+        this.userQrisRepository = userQrisRepository;
         this.transactionRepository = transactionRepository;
         this.passwordEncoder = passwordEncoder;
     }
@@ -69,19 +82,31 @@ public class DataSeeder implements ApplicationRunner {
             String addr = seedBusinessAddress.isBlank() ? null : seedBusinessAddress;
             user.setBusinessAddress(addr);
             user.setInitialBusinessAddress(addr);
+            String nmid = seedNmid.isBlank() ? null : seedNmid;
+            user.setNmid(nmid);
+            user.setInitialNmid(nmid);
             user.setEmail("admin@bejo.id");
             user.setPhone("+6281234567890");
-            user.setBankName("Bank Central Asia");
-            user.setBankNumber("1234567890");
-            user.setBankAccountName("Admin Bejo");
-            user.setInitialBankName("Bank Central Asia");
-            user.setInitialBankNumber("1234567890");
-            user.setInitialBankAccountName("Admin Bejo");
             user.setAccountType("MANAGED");
-            String seedQrisImage = loadSeedQrisImage();
-            user.setQrisImage(seedQrisImage);
-            user.setUploadedQrisImage(seedQrisImage);
             userRepository.save(user);
+
+            UserBank bank = new UserBank();
+            bank.setUsername(seedUsername);
+            bank.setBankName("Bank Central Asia");
+            bank.setBankNumber("1234567890");
+            bank.setBankAccountName("Admin Bejo");
+            bank.setInitialBankName("Bank Central Asia");
+            bank.setInitialBankNumber("1234567890");
+            bank.setInitialBankAccountName("Admin Bejo");
+            userBankRepository.save(bank);
+
+            String seedQrisImage = loadSeedQrisImage();
+            UserQris qris = new UserQris();
+            qris.setUsername(seedUsername);
+            qris.setInitialQrisImage(seedQrisImage);
+            qris.setQrisImage(seedQrisImage);
+            userQrisRepository.save(qris);
+
             log.info("[SEED] Created default user '{}' ({})", seedUsername, seedBusinessName);
         }
 

@@ -27,7 +27,7 @@ The API is available at `http://localhost:8080`.
 
 ### Local development
 
-Requires a PostgreSQL instance. Apply `docker/init.sql` to create the schema, then:
+Requires a PostgreSQL instance. Run Flyway migrations (applied automatically on startup), then:
 
 ```bash
 export API_TOKEN=dev-token
@@ -531,7 +531,7 @@ Returns the QRIS image (base64) and business info for the authenticated user. If
   "status": 1,
   "data": {
     "type": "MANAGED",
-    "image": "<base64-encoded PNG>",
+    "qrisImage": "<base64-encoded PNG>",
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
     "nmid": "ID1026540778978"
@@ -556,7 +556,7 @@ Uploads a custom QRIS image. Once uploaded, `GET /api/qris` returns this image i
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `image` | string | yes | Base64-encoded image |
+| `qrisImage` | string | yes | Base64-encoded image |
 
 **Success response — HTTP 200**
 
@@ -568,8 +568,8 @@ Uploads a custom QRIS image. Once uploaded, `GET /api/qris` returns this image i
 
 | HTTP | `message` | Cause |
 |---|---|---|
-| 400 | `image wajib diisi` | Missing or blank field |
-| 400 | `image bukan format base64 yang valid` | Invalid base64 |
+| 400 | `qrisImage wajib diisi` | Missing or blank field |
+| 400 | `qrisImage bukan format base64 yang valid` | Invalid base64 |
 
 ---
 
@@ -634,6 +634,7 @@ Prometheus is available at `http://localhost:9090` when running via Docker Compo
 | `SEED_NAME` | no | Default user display name. Default: `Admin` |
 | `SEED_BUSINESS_NAME` | no | Default user business name. Default: `My Business` |
 | `SEED_BUSINESS_ADDRESS` | no | Default user business address |
+| `SEED_NMID` | no | Default user National Merchant ID (NMID) |
 | `FIREBASE_CREDENTIALS_BASE64` | no* | Base64-encoded Firebase service account JSON |
 | `FIREBASE_CREDENTIALS_PATH` | no* | Path to Firebase service account JSON file |
 

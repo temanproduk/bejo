@@ -2,7 +2,9 @@ package com.bejo.service;
 
 import com.bejo.dto.response.QrisData;
 import com.bejo.entity.User;
+import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,55 +21,59 @@ import java.util.Random;
 public class QrisService {
 
     private final UserRepository userRepository;
+    private final UserQrisRepository userQrisRepository;
 
-    public QrisService(UserRepository userRepository) {
+    public QrisService(UserRepository userRepository, UserQrisRepository userQrisRepository) {
         this.userRepository = userRepository;
+        this.userQrisRepository = userQrisRepository;
     }
 
     @Transactional
     public QrisData getQrisData(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        UserQris qris = userQrisRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
-        if (user.getUploadedQrisImage() != null) {
-            return new QrisData("UPLOADED", user.getUploadedQrisImage(),
+        if (qris.getQrisImage() != null) {
+            return new QrisData("UPLOADED", qris.getQrisImage(),
                     user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
         }
 
-        String generatedImage = user.getQrisImage();
-        if (generatedImage == null) {
-            generatedImage = generateBase64Image(user.getQrisCode());
-            user.setQrisImage(generatedImage);
-            userRepository.save(user);
+        String initialImage = qris.getInitialQrisImage();
+        if (initialImage == null) {
+            initialImage = generateBase64Image(qris.getQrisCode());
+            qris.setInitialQrisImage(initialImage);
+            userQrisRepository.save(qris);
         }
 
-        return new QrisData("MANAGED", generatedImage,
+        return new QrisData("MANAGED", initialImage,
                 user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
     }
 
     @Transactional
     public void uploadQris(String username, String base64Image) {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        UserQris qris = userQrisRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
         validateBase64Image(base64Image);
 
-        user.setUploadedQrisImage(base64Image);
-        userRepository.save(user);
+        qris.setQrisImage(base64Image);
+        userQrisRepository.save(qris);
     }
 
     @Transactional
     public void resetQris(String username) {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        UserQris qris = userQrisRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
-        user.setUploadedQrisImage(null);
+        qris.setQrisImage(null);
 
-        if (user.getQrisImage() == null) {
-            user.setQrisImage(generateBase64Image(user.getQrisCode()));
+        if (qris.getInitialQrisImage() == null) {
+            qris.setInitialQrisImage(generateBase64Image(qris.getQrisCode()));
         }
 
-        userRepository.save(user);
+        userQrisRepository.save(qris);
     }
 
     public String generateBase64Image(String qrisCode) {
@@ -83,7 +89,7 @@ public class QrisService {
         try {
             Base64.getDecoder().decode(value);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("image bukan format base64 yang valid");
+            throw new IllegalArgumentException("qrisImage bukan format base64 yang valid");
         }
     }
 

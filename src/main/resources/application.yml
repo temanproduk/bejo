@@ -62,6 +62,7 @@ app:
     name: ${SEED_NAME:Admin}
     business-name: ${SEED_BUSINESS_NAME:My Business}
     business-address: ${SEED_BUSINESS_ADDRESS:}
+    nmid: ${SEED_NMID:}
   firebase:
     credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
     credentials-base64: ${FIREBASE_CREDENTIALS_BASE64:}

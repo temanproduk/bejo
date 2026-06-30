@@ -5,7 +5,12 @@ import com.bejo.dto.request.RegisterRequest;
 import com.bejo.dto.response.LoginData;
 import com.bejo.entity.Session;
 import com.bejo.entity.User;
+import com.bejo.entity.UserBank;
+import com.bejo.entity.UserQris;
+import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.SessionRepository;
+import com.bejo.repository.UserBankRepository;
+import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -23,6 +28,8 @@ public class AuthService {
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository userRepository;
+    private final UserBankRepository userBankRepository;
+    private final UserQrisRepository userQrisRepository;
     private final SessionRepository sessionRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
@@ -31,12 +38,16 @@ public class AuthService {
     private final Counter loginFailureCounter;
 
     public AuthService(UserRepository userRepository,
+                       UserBankRepository userBankRepository,
+                       UserQrisRepository userQrisRepository,
                        SessionRepository sessionRepository,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
                        TokenBlacklistService tokenBlacklistService,
                        MeterRegistry meterRegistry) {
         this.userRepository = userRepository;
+        this.userBankRepository = userBankRepository;
+        this.userQrisRepository = userQrisRepository;
         this.sessionRepository = sessionRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
@@ -61,6 +72,9 @@ public class AuthService {
             throw new IllegalArgumentException("Invalid credentials");
         }
 
+        UserBank bank = userBankRepository.findByUsername(request.username())
+                .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
+
         upsertSession(request);
 
         String token = jwtService.generateToken(request.username());
@@ -78,9 +92,9 @@ public class AuthService {
                 user.getBusinessName(),
                 user.getBusinessAddress(),
                 user.getNmid(),
-                user.getBankName(),
-                user.getBankNumber(),
-                user.getBankAccountName(),
+                bank.getBankName(),
+                bank.getBankNumber(),
+                bank.getBankAccountName(),
                 token, "Bearer");
     }
 
@@ -104,20 +118,28 @@ public class AuthService {
         user.setInitialBusinessName(request.businessName());
         user.setInitialBusinessAddress(request.businessAddress());
         user.setInitialNmid(request.nmid());
-        String bankName = request.bankName() != null ? request.bankName() : "";
-        String bankNumber = request.bankNumber() != null ? request.bankNumber() : "";
-        String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";
-        user.setBankName(bankName);
-        user.setBankNumber(bankNumber);
-        user.setBankAccountName(bankAccountName);
-        user.setInitialBankName(bankName);
-        user.setInitialBankNumber(bankNumber);
-        user.setInitialBankAccountName(bankAccountName);
         user.setAccountType("MANAGED");
         user.setEmailVerified(false);
         user.setPhoneVerified(false);
-
         userRepository.save(user);
+
+        String bankName        = request.bankName()        != null ? request.bankName()        : "";
+        String bankNumber      = request.bankNumber()      != null ? request.bankNumber()      : "";
+        String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";
+        UserBank bank = new UserBank();
+        bank.setUsername(request.username());
+        bank.setBankName(bankName);
+        bank.setBankNumber(bankNumber);
+        bank.setBankAccountName(bankAccountName);
+        bank.setInitialBankName(bankName);
+        bank.setInitialBankNumber(bankNumber);
+        bank.setInitialBankAccountName(bankAccountName);
+        userBankRepository.save(bank);
+
+        UserQris qris = new UserQris();
+        qris.setUsername(request.username());
+        userQrisRepository.save(qris);
+
         log.info("[REGISTER] Created user username={}", request.username());
     }
 

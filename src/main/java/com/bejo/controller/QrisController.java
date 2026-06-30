@@ -29,7 +29,7 @@ public class QrisController {
     public ResponseEntity<ApiResponse<Void>> uploadQris(
             @Valid @RequestBody UploadQrisRequest request,
             Authentication authentication) {
-        qrisService.uploadQris(authentication.getName(), request.image());
+        qrisService.uploadQris(authentication.getName(), request.qrisImage());
         return ResponseEntity.ok(ApiResponse.success("QRIS berhasil diupload", null));
     }
 

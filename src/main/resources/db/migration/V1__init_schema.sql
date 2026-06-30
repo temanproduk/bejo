@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id                        BIGSERIAL     PRIMARY KEY,
     username                  VARCHAR(50)   NOT NULL,
     password_hash             VARCHAR(255)  NOT NULL,
@@ -11,24 +11,38 @@ CREATE TABLE IF NOT EXISTS users (
     initial_business_name     VARCHAR(255),
     initial_business_address  TEXT,
     initial_nmid              VARCHAR(50),
+    account_type              VARCHAR(50)   NOT NULL DEFAULT 'MANAGED',
+    is_email_verified         BOOLEAN       NOT NULL DEFAULT FALSE,
+    is_phone_verified         BOOLEAN       NOT NULL DEFAULT FALSE,
+    created_at                TIMESTAMP     NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_username UNIQUE (username)
+);
+
+CREATE TABLE user_banks (
+    id                        BIGSERIAL     PRIMARY KEY,
+    username                  VARCHAR(50)   NOT NULL,
     bank_name                 VARCHAR(100)  NOT NULL DEFAULT '',
     bank_number               VARCHAR(20)   NOT NULL DEFAULT '',
     bank_account_name         VARCHAR(100)  NOT NULL DEFAULT '',
     initial_bank_name         VARCHAR(100),
     initial_bank_number       VARCHAR(20),
     initial_bank_account_name VARCHAR(100),
-    qris_code                 VARCHAR(36),
-    qris_image                TEXT,
-    uploaded_qris_image       TEXT,
-    account_type              VARCHAR(50)   NOT NULL DEFAULT 'MANAGED',
-    is_email_verified         BOOLEAN       NOT NULL DEFAULT FALSE,
-    is_phone_verified         BOOLEAN       NOT NULL DEFAULT FALSE,
-    created_at                TIMESTAMP     NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_username  UNIQUE (username),
-    CONSTRAINT uq_qris_code UNIQUE (qris_code)
+    CONSTRAINT uq_bank_username UNIQUE (username),
+    CONSTRAINT fk_bank_user FOREIGN KEY (username) REFERENCES users (username)
 );
 
-CREATE TABLE IF NOT EXISTS cuan_sessions (
+CREATE TABLE user_qris (
+    id                   BIGSERIAL   PRIMARY KEY,
+    username             VARCHAR(50) NOT NULL,
+    qris_code            VARCHAR(36) NOT NULL,
+    qris_image           TEXT,
+    initial_qris_image   TEXT,
+    CONSTRAINT uq_qris_username UNIQUE (username),
+    CONSTRAINT uq_qris_code     UNIQUE (qris_code),
+    CONSTRAINT fk_qris_user FOREIGN KEY (username) REFERENCES users (username)
+);
+
+CREATE TABLE cuan_sessions (
     id             BIGSERIAL    PRIMARY KEY,
     username       VARCHAR(50)  NOT NULL,
     device_id      VARCHAR(255) NOT NULL,
@@ -42,7 +56,7 @@ CREATE TABLE IF NOT EXISTS cuan_sessions (
     CONSTRAINT fk_session_user FOREIGN KEY (username) REFERENCES users (username)
 );
 
-CREATE TABLE IF NOT EXISTS cuan_history (
+CREATE TABLE cuan_history (
     id               BIGSERIAL    PRIMARY KEY,
     transaction_id   VARCHAR(255) NOT NULL,
     username         VARCHAR(50)  NOT NULL,
@@ -65,12 +79,12 @@ CREATE TABLE IF NOT EXISTS cuan_history (
     CONSTRAINT uq_idempotency_key UNIQUE (idempotency_key)
 );
 
-CREATE TABLE IF NOT EXISTS token_blacklist (
+CREATE TABLE token_blacklist (
     jti        VARCHAR(36) PRIMARY KEY,
     expires_at TIMESTAMP   NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_cuan_history_username         ON cuan_history (username);
-CREATE INDEX IF NOT EXISTS idx_cuan_history_transaction_date ON cuan_history (transaction_date DESC);
-CREATE INDEX IF NOT EXISTS idx_cuan_sessions_device_id       ON cuan_sessions (device_id);
-CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at    ON token_blacklist (expires_at);
+CREATE INDEX idx_cuan_history_username         ON cuan_history (username);
+CREATE INDEX idx_cuan_history_transaction_date ON cuan_history (transaction_date DESC);
+CREATE INDEX idx_cuan_sessions_device_id       ON cuan_sessions (device_id);
+CREATE INDEX idx_token_blacklist_expires_at    ON token_blacklist (expires_at);
