@@ -100,14 +100,12 @@ Null fields are omitted from the response.
 | `isPhoneVerified` | System | Always `false` until verification is implemented |
 | `businessName` | Yes | Current display business name |
 | `businessAddress` | Yes | Current display business address |
-| `initialBusinessName` | No | Business name as registered (regulatory record) |
-| `initialBusinessAddress` | No | Business address as registered (regulatory record) |
+| `nmid` | Yes | National Merchant ID (NMID) from QRIS registration |
 | `bankName` | Yes | Bank name |
 | `bankNumber` | Yes | Bank account number (digits only) |
 | `bankAccountName` | Yes | Bank account holder name |
-| `initialBankName` | No | Bank name as registered (regulatory record) |
-| `initialBankNumber` | No | Bank number as registered (regulatory record) |
-| `initialBankAccountName` | No | Bank account holder name as registered (regulatory record) |
+
+The `initialBusinessName`, `initialBusinessAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, and `initialBankAccountName` fields are stored server-side as regulatory records set at registration and are used by the reset endpoints. They are not returned in API responses.
 
 ---
 
@@ -145,8 +143,9 @@ Creates a new user account. Public endpoint — X-API-TOKEN required, no JWT.
 | `name` | string | yes | 2–100 chars |
 | `email` | string | yes | Valid email format |
 | `phone` | string | yes | International format e.g. `+628123456789` |
-| `businessName` | string | no | Max 255 chars |
+| `businessName` | string | yes | Max 255 chars |
 | `businessAddress` | string | no | Free text |
+| `nmid` | string | no | National Merchant ID, max 50 chars |
 | `bankName` | string | no | Max 100 chars |
 | `bankNumber` | string | no | Digits only, 6–20 digits |
 | `bankAccountName` | string | no | Max 100 chars |
@@ -159,7 +158,8 @@ Creates a new user account. Public endpoint — X-API-TOKEN required, no JWT.
   "email": "alice@example.com",
   "phone": "+628100000000",
   "businessName": "Alice Shop",
-  "businessAddress": "Jl. Contoh No. 1"
+  "businessAddress": "Jl. Contoh No. 1",
+  "nmid": "ID1026540778978"
 }
 ```
 
@@ -178,7 +178,8 @@ Creates a new user account. Public endpoint — X-API-TOKEN required, no JWT.
 | 400 | `password harus mengandung minimal 1 huruf dan 1 angka` | Weak password |
 | 400 | `format email tidak valid` | Invalid email |
 | 400 | `format nomor telepon tidak valid` | Invalid phone format |
-| 400 | `Username sudah digunakan` | Duplicate username |
+| 400 | `businessName wajib diisi` | Missing business name |
+| 409 | `Username sudah digunakan` | Duplicate username |
 
 ---
 
@@ -211,6 +212,7 @@ Authenticates a user and returns a permanent JWT. Also registers or updates the 
     "isPhoneVerified": false,
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
+    "nmid": "ID1026540778978",
     "bankName": "Bank BCA",
     "bankNumber": "1234567890",
     "bankAccountName": "Alice",
@@ -276,7 +278,7 @@ Returns the transaction history for the authenticated user, ordered by date desc
 }
 ```
 
-`type`, `acquirer`, `merchantPan`, `customerPan`, and `rrn` are omitted when null.
+`issuerName`, `merchantPan`, `customerPan`, and `rrn` are omitted when null.
 
 ---
 
@@ -435,7 +437,7 @@ Updates the authenticated user's personal info. All fields are required.
 
 ### PATCH /api/users/me/business
 
-Updates the authenticated user's business display name and address. Does not affect the regulatory initial values.
+Updates the authenticated user's business display info. Does not affect the regulatory initial values.
 
 **Request body**
 
@@ -443,6 +445,7 @@ Updates the authenticated user's business display name and address. Does not aff
 |---|---|---|---|
 | `businessName` | string | yes | Max 255 chars |
 | `businessAddress` | string | no | Free text |
+| `nmid` | string | no | Max 50 chars |
 
 **Success response — HTTP 200**
 
@@ -454,7 +457,7 @@ Updates the authenticated user's business display name and address. Does not aff
 
 ### POST /api/users/me/business/reset
 
-Reverts `businessName` and `businessAddress` to the values recorded at registration (`initialBusinessName` / `initialBusinessAddress`).
+Reverts `businessName`, `businessAddress`, and `nmid` to the values recorded at registration.
 
 **Success response — HTTP 200**
 
@@ -486,7 +489,7 @@ Updates the authenticated user's bank account information. Does not affect the r
 
 ### POST /api/users/me/bank/reset
 
-Reverts `bankName`, `bankNumber`, and `bankAccountName` to the values recorded at registration (`initialBankName` / `initialBankNumber` / `initialBankAccountName`).
+Reverts `bankName`, `bankNumber`, and `bankAccountName` to the values recorded at registration.
 
 **Success response — HTTP 200**
 
@@ -530,7 +533,8 @@ Returns the QRIS image (base64) and business info for the authenticated user. If
     "type": "MANAGED",
     "image": "<base64-encoded PNG>",
     "businessName": "Alice Shop",
-    "businessAddress": "Jl. Contoh No. 1"
+    "businessAddress": "Jl. Contoh No. 1",
+    "nmid": "ID1026540778978"
   }
 }
 ```
