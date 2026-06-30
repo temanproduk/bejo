@@ -97,12 +97,10 @@ public class AuthService {
         user.setName(request.name());
         user.setEmail(request.email());
         user.setPhone(request.phone());
-        String bizName = request.businessName() != null ? request.businessName() : "";
-        String bizAddress = request.businessAddress();
-        user.setBusinessName(bizName);
-        user.setBusinessAddress(bizAddress);
-        user.setInitialBusinessName(bizName);
-        user.setInitialBusinessAddress(bizAddress);
+        user.setBusinessName(request.businessName());
+        user.setBusinessAddress(request.businessAddress());
+        user.setInitialBusinessName(request.businessName());
+        user.setInitialBusinessAddress(request.businessAddress());
         String bankName = request.bankName() != null ? request.bankName() : "";
         String bankNumber = request.bankNumber() != null ? request.bankNumber() : "";
         String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";

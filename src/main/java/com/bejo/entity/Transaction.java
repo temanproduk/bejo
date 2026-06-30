@@ -14,9 +14,10 @@ public class Transaction {
     @Column(name = "transaction_id", unique = true, nullable = false)
     private String transactionId;
 
-    @Column(name = "transaction_date")
+    @Column(name = "transaction_date", nullable = false)
     private LocalDateTime transactionDate;
 
+    @Column(nullable = false)
     private Long amount;
 
     private String status;
@@ -43,13 +44,16 @@ public class Transaction {
     @Column(columnDefinition = "TEXT")
     private String info;
 
+    @Column(nullable = false)
     private String username;
 
     @Column(name = "scrape_date")
     private LocalDateTime scrapeDate;
 
+    @Column(nullable = false)
     private String type;
 
+    @Column(nullable = false)
     private String acquirer;
 
     @Column(name = "idempotency_key", unique = true)

@@ -31,7 +31,7 @@ public record RegisterRequest(
                  message = "format nomor telepon tidak valid (contoh: +628123456789)")
         String phone,
 
-        // Optional fields
+        @NotBlank(message = "businessName wajib diisi")
         @Size(max = 255, message = "businessName maksimal 255 karakter")
         String businessName,
 

@@ -70,10 +70,20 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataIntegrity(DataIntegrityViolationException ex) {
-        if (ex.getCause() instanceof ConstraintViolationException cve
-                && "uq_transaction_id".equals(cve.getConstraintName())) {
-            return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(ApiResponse.error("transactionId sudah terdaftar"));
+        if (ex.getCause() instanceof ConstraintViolationException cve) {
+            String constraint = cve.getConstraintName();
+            if ("uq_transaction_id".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponse.error("transactionId sudah terdaftar"));
+            }
+            if ("uq_username".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponse.error("Username sudah digunakan"));
+            }
+            if ("uq_idempotency_key".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponse.error("Permintaan dengan Idempotency-Key ini sedang diproses, coba lagi sebentar"));
+            }
         }
         log.error("Data integrity violation", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)

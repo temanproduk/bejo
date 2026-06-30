@@ -61,7 +61,7 @@ public class NotificationService {
             throw new IllegalArgumentException("transactionId sudah terdaftar: " + txData.transactionId());
         }
 
-        String pushToken = sessionRepository.findByDeviceId(request.deviceId())
+        String pushToken = sessionRepository.findByUsernameAndDeviceId(username, request.deviceId())
                 .map(s -> s.getPushToken())
                 .orElseThrow(() -> new ResourceNotFoundException("Device not found: " + request.deviceId()));
 

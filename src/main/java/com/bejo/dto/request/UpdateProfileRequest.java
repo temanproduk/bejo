@@ -16,6 +16,6 @@ public record UpdateProfileRequest(
 
         @NotBlank(message = "Nomor telepon wajib diisi")
         @Pattern(regexp = "^\\+[1-9][0-9]{6,14}$",
-                 message = "Format nomor telepon invalid (contoh: +628123456789 atau 08123456789)")
+                 message = "Format nomor telepon tidak valid (contoh: +628123456789)")
         String phone
 ) {}

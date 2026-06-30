@@ -18,9 +18,10 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    @Column(nullable = false)
     private String name;
 
-    @Column(name = "business_name")
+    @Column(name = "business_name", nullable = false)
     private String businessName;
 
     @Column(name = "business_address")
@@ -32,8 +33,10 @@ public class User {
     @Column(name = "initial_business_address")
     private String initialBusinessAddress;
 
+    @Column(nullable = false)
     private String email;
 
+    @Column(nullable = false)
     private String phone;
 
     @Column(name = "bank_name", nullable = false)
