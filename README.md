@@ -15,7 +15,23 @@ REST API built with Java 25 and Spring Boot. Provides user registration and auth
 
 ## Running
 
-### Docker Compose (recommended)
+### Production — Google Cloud Run
+
+Production is served at `https://api.bejo.temanproduk.com`.
+
+Deployments are triggered automatically by pushing to the `release` branch via GitHub Actions. The workflow builds the JAR, builds and pushes a Docker image to Artifact Registry, and deploys to Cloud Run.
+
+**First-time infrastructure setup:**
+
+```bash
+cp .env.gcp.example .env.gcp
+# Fill in all values in .env.gcp
+bash scripts/init-gcp.sh
+```
+
+The script provisions Cloud SQL (PostgreSQL 17), Artifact Registry, Secret Manager secrets, service accounts, and the Cloud Run service, then maps the custom domain. Requires `gcloud auth login` and domain ownership verified in [Google Search Console](https://search.google.com/search-console).
+
+### Local — Docker Compose
 
 ```bash
 cp .env.example .env
@@ -25,9 +41,9 @@ docker compose up --build -d
 
 The API is available at `http://localhost:8080`.
 
-### Local development
+### Local — Maven
 
-Requires a PostgreSQL instance. Run Flyway migrations (applied automatically on startup), then:
+Requires a running PostgreSQL instance. Flyway migrations run automatically on startup.
 
 ```bash
 export API_TOKEN=dev-token
@@ -622,6 +638,8 @@ Prometheus is available at `http://localhost:9090` when running via Docker Compo
 
 ## Environment variables
 
+### App (local `.env` / Docker Compose)
+
 | Variable | Required | Description |
 |---|---|---|
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
@@ -639,3 +657,24 @@ Prometheus is available at `http://localhost:9090` when running via Docker Compo
 | `FIREBASE_CREDENTIALS_PATH` | no* | Path to Firebase service account JSON file |
 
 \* One of the two Firebase options is required to use the notifications endpoint.
+
+### GCP deployment (`.env.gcp` + GitHub Actions)
+
+Sensitive values (`DB_PASSWORD`, `JWT_SECRET`, `API_TOKEN`, `FIREBASE_CREDENTIALS_BASE64`, `SEED_PASSWORD`) are stored in Secret Manager and never passed as plain variables. Everything else is set via GitHub Actions variables.
+
+| GitHub Actions variable | Description |
+|---|---|
+| `GCP_PROJECT_ID` | GCP project ID |
+| `GCP_REGION` | Deployment region e.g. `asia-southeast2` |
+| `ARTIFACT_REGISTRY_REPO` | Artifact Registry repo name |
+| `GCP_SERVICE_NAME` | Cloud Run service name |
+| `CLOUD_SQL_INSTANCE_CONNECTION_NAME` | Full connection name e.g. `project:region:instance` |
+| `CLOUD_SQL_DB_NAME` | Database name |
+| `CLOUD_SQL_DB_USER` | Database user |
+| `CLOUD_RUN_SA` | Cloud Run service account name (without `@...`) |
+| `CUSTOM_DOMAIN` | Custom domain e.g. `api.bejo.temanproduk.com` |
+| `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` | Seed user values |
+
+| GitHub Actions secret | Description |
+|---|---|
+| `GCP_SA_KEY` | Base64-encoded GitHub Actions service account JSON key (printed by `init-gcp.sh`) |
