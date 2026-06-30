@@ -1,49 +1,72 @@
 # Bejo API
 
-REST API built with Java 25 and Spring Boot. Provides user registration and authentication, transaction management, FCM push notification delivery, QRIS code management, and business profile management.
+REST API for QRIS payment management. Built with Java 25 and Spring Boot — handles authentication, transaction history, FCM push notifications, QRIS code management, and business profile management.
+
+**Production:** `https://api.bejo.temanproduk.com`
+
+---
+
+## Contents
+
+- [Stack](#stack)
+- [Running](#running)
+- [Authentication](#authentication)
+- [Response format](#response-format)
+- [Data model](#data-model)
+- [Endpoints](#endpoints)
+  - [Auth](#auth)
+  - [Transactions](#transactions)
+  - [Notifications](#notifications)
+  - [Devices](#devices)
+  - [User profile](#user-profile)
+  - [QRIS](#qris)
+- [Error reference](#error-reference)
+- [Observability](#observability)
+- [Configuration](#configuration)
+
+---
 
 ## Stack
 
-- **Java 25** + **Spring Boot 3.5**
-- **PostgreSQL 17** — persistent storage
-- **Firebase Admin SDK** — FCM push notifications
-- **JWT (JJWT)** — stateless authentication, no expiry
-- **Prometheus** — metrics scraping via `/actuator/prometheus`
-- **Timezone** — all datetimes are UTC+7 (Asia/Jakarta)
+| | |
+|---|---|
+| **Runtime** | Java 25 + Spring Boot 3.5 |
+| **Database** | PostgreSQL 17 via Cloud SQL (prod) / Docker (local) |
+| **Auth** | JWT (JJWT) + shared API token |
+| **Push** | Firebase Admin SDK (FCM) |
+| **Migrations** | Flyway |
+| **Metrics** | Micrometer + Prometheus |
+| **Timezone** | UTC+7 (Asia/Jakarta) |
 
 ---
 
 ## Running
 
-### Production — Google Cloud Run
+### Production
 
-Production is served at `https://api.bejo.temanproduk.com`.
-
-Deployments are triggered automatically by pushing to the `release` branch via GitHub Actions. The workflow builds the JAR, builds and pushes a Docker image to Artifact Registry, and deploys to Cloud Run.
+Deployments trigger automatically on push to the `release` branch via GitHub Actions — builds the JAR, pushes a Docker image to Artifact Registry, and deploys to Cloud Run.
 
 **First-time infrastructure setup:**
 
 ```bash
-cp .env.gcp.example .env.gcp
-# Fill in all values in .env.gcp
+cp .env.gcp.example .env.gcp   # fill in all values
 bash scripts/init-gcp.sh
 ```
 
-The script provisions Cloud SQL (PostgreSQL 17), Artifact Registry, Secret Manager secrets, service accounts, and the Cloud Run service, then maps the custom domain. Requires `gcloud auth login` and domain ownership verified in [Google Search Console](https://search.google.com/search-console).
+Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
 
 ### Local — Docker Compose
 
 ```bash
-cp .env.example .env
-# Edit .env — set API_TOKEN, JWT_SECRET, seed user info, and Firebase credentials
+cp .env.example .env            # fill in API_TOKEN, JWT_SECRET, Firebase creds
 docker compose up --build -d
 ```
 
-The API is available at `http://localhost:8080`.
+Available at `http://localhost:8080`. Prometheus at `http://localhost:9090`.
 
 ### Local — Maven
 
-Requires a running PostgreSQL instance. Flyway migrations run automatically on startup.
+Requires a running PostgreSQL instance. Flyway migrations run on startup.
 
 ```bash
 export API_TOKEN=dev-token
@@ -58,113 +81,104 @@ mvn spring-boot:run
 
 ## Authentication
 
-Every request must include two headers:
+Every request requires:
 
-| Header | Required on | Description |
+| Header | Endpoints | Value |
 |---|---|---|
-| `X-API-TOKEN` | All endpoints | Static shared secret matching `API_TOKEN` in `.env` |
-| `Authorization: Bearer <token>` | All protected endpoints | JWT returned by the login endpoint |
+| `X-API-TOKEN` | All | Shared secret — `API_TOKEN` env var |
+| `Authorization` | Protected only | `Bearer <JWT>` returned by login |
 
-Public endpoints (X-API-TOKEN required, no JWT): `/api/auth/login`, `/api/auth/register`.
-
-Exempt from all checks: `/actuator/**`.
-
-**Missing or invalid `X-API-TOKEN`:**
-```json
-{ "status": 0, "message": "Missing or invalid X-API-TOKEN" }
-```
-
-**Missing or invalid JWT:**
-```json
-{ "status": 0, "message": "Unauthorized — include Authorization: Bearer <token> header" }
-```
+Public (no JWT): `POST /api/auth/register`, `POST /api/auth/login`  
+Exempt entirely: `/actuator/**`
 
 ---
 
-## Response envelope
+## Response format
 
-All responses use a consistent envelope:
+All responses share the same envelope:
 
 ```json
 {
   "status": 1,
-  "message": "optional message string",
-  "data": {},
+  "message": "...",
+  "data": { },
   "count": 0
 }
 ```
 
-- `status` — `1` for success, `0` for error
-- `message` — present on success actions and all errors
-- `data` — present on success; omitted on errors
-- `count` — present on list responses only
+| Field | Present when |
+|---|---|
+| `status` | Always — `1` success, `0` error |
+| `message` | Always on errors; on success for action endpoints |
+| `data` | Success responses with a payload |
+| `count` | List responses only |
 
-Null fields are omitted from the response.
+Null fields are omitted.
 
 ---
 
-## User model
+## Data model
+
+### User fields
 
 | Field | Editable | Description |
 |---|---|---|
-| `username` | No | Login identifier, alphanumeric + underscore, 3–50 chars |
-| `accountType` | No | `MANAGED` (Bejo-managed QRIS) or `EXTERNAL` (own acquirer) |
+| `username` | No | 3–50 chars, alphanumeric + underscore |
+| `accountType` | No | `MANAGED` or `EXTERNAL` — see below |
 | `name` | Yes | Display name |
 | `email` | Yes | Email address |
-| `isEmailVerified` | System | Always `false` until verification is implemented |
-| `phone` | Yes | Phone in international format e.g. `+628123456789` |
-| `isPhoneVerified` | System | Always `false` until verification is implemented |
-| `businessName` | Yes | Current display business name |
-| `businessAddress` | Yes | Current display business address |
-| `nmid` | Yes | National Merchant ID (NMID) from QRIS registration |
+| `isEmailVerified` | System | Always `false` (verification not yet implemented) |
+| `phone` | Yes | International format e.g. `+628123456789` |
+| `isPhoneVerified` | System | Always `false` (verification not yet implemented) |
+| `businessName` | Yes | Current business name |
+| `businessAddress` | Yes | Current business address |
+| `nmid` | Yes | National Merchant ID from QRIS registration |
 | `bankName` | Yes | Bank name |
-| `bankNumber` | Yes | Bank account number (digits only) |
-| `bankAccountName` | Yes | Bank account holder name |
+| `bankNumber` | Yes | Account number (digits only) |
+| `bankAccountName` | Yes | Account holder name |
 
-The `initialBusinessName`, `initialBusinessAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, and `initialBankAccountName` fields are stored server-side as regulatory records set at registration and are used by the reset endpoints. They are not returned in API responses.
+Initial values (`initialBusinessName`, `initialBusinessAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored server-side and used by reset endpoints — not returned in responses.
 
----
-
-## Account types
+### Account types
 
 | Value | Description |
 |---|---|
-| `MANAGED` | QRIS managed by Bejo — full service including push notification and ring notification |
-| `EXTERNAL` | QRIS on another acquirer — Bejo only stores and tracks transactions |
+| `MANAGED` | QRIS managed by Bejo — includes push notification and ring sound |
+| `EXTERNAL` | Own acquirer — Bejo stores and tracks transactions only |
 
----
-
-## Transaction types
+### Transaction types
 
 | `type` | `acquirer` | Description |
 |---|---|---|
 | `MANAGED` | `AstraPay` | Pushed from Bejo server via FCM |
-| `MANUAL` | `Cash` | Manually entered by the user from the mobile app |
+| `MANUAL` | `Cash` | Manually entered from the mobile app |
 | `PARSED` | *(from request)* | Received from another acquirer's push notification |
 
 ---
 
 ## Endpoints
 
-### POST /api/auth/register
+### Auth
 
-Creates a new user account. Public endpoint — X-API-TOKEN required, no JWT.
+#### `POST /api/auth/register`
+
+Creates a new user account. `X-API-TOKEN` required, no JWT.
 
 **Request body**
 
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `username` | string | yes | 3–50 chars, alphanumeric + underscore, unique |
-| `password` | string | yes | Min 8 chars, at least 1 letter and 1 digit |
-| `name` | string | yes | 2–100 chars |
-| `email` | string | yes | Valid email format |
-| `phone` | string | yes | International format e.g. `+628123456789` |
-| `businessName` | string | yes | Max 255 chars |
-| `businessAddress` | string | no | Free text |
-| `nmid` | string | no | National Merchant ID, max 50 chars |
-| `bankName` | string | no | Max 100 chars |
-| `bankNumber` | string | no | Digits only, 6–20 digits |
-| `bankAccountName` | string | no | Max 100 chars |
+| Field | Required | Validation |
+|---|---|---|
+| `username` | yes | 3–50 chars, alphanumeric + underscore, unique |
+| `password` | yes | Min 8 chars, at least 1 letter and 1 digit |
+| `name` | yes | 2–100 chars |
+| `email` | yes | Valid email format |
+| `phone` | yes | International format e.g. `+628123456789` |
+| `businessName` | yes | Max 255 chars |
+| `businessAddress` | no | Free text |
+| `nmid` | no | Max 50 chars |
+| `bankName` | no | Max 100 chars |
+| `bankNumber` | no | Digits only, 6–20 digits |
+| `bankAccountName` | no | Max 100 chars |
 
 ```json
 {
@@ -179,40 +193,30 @@ Creates a new user account. Public endpoint — X-API-TOKEN required, no JWT.
 }
 ```
 
-**Success response — HTTP 201**
+**Responses**
 
-```json
-{ "status": 1, "message": "Registrasi berhasil" }
-```
-
-**Error responses**
-
-| HTTP | `message` | Cause |
-|---|---|---|
-| 400 | `username wajib diisi` | Missing field |
-| 400 | `username hanya boleh mengandung huruf, angka, dan underscore` | Invalid characters |
-| 400 | `password harus mengandung minimal 1 huruf dan 1 angka` | Weak password |
-| 400 | `format email tidak valid` | Invalid email |
-| 400 | `format nomor telepon tidak valid` | Invalid phone format |
-| 400 | `businessName wajib diisi` | Missing business name |
-| 409 | `Username sudah digunakan` | Duplicate username |
+| HTTP | Result |
+|---|---|
+| 201 | `{ "status": 1, "message": "Registrasi berhasil" }` |
+| 400 | Validation error — `username wajib diisi`, `password harus mengandung minimal 1 huruf dan 1 angka`, `format email tidak valid`, etc. |
+| 409 | `Username sudah digunakan` |
 
 ---
 
-### POST /api/auth/login
+#### `POST /api/auth/login`
 
-Authenticates a user and returns a permanent JWT. Also registers or updates the device's FCM push token.
+Authenticates and returns a JWT. Registers or updates the device's FCM push token.
 
 **Request body**
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `username` | string | yes | |
-| `password` | string | yes | |
-| `deviceId` | string | yes | Unique identifier for the calling device |
-| `pushToken` | string | no | FCM token for push notifications |
+| Field | Required | Description |
+|---|---|---|
+| `username` | yes | |
+| `password` | yes | |
+| `deviceId` | yes | Unique device identifier |
+| `pushToken` | no | FCM token for push notifications |
 
-**Success response — HTTP 200**
+**Success — HTTP 200**
 
 ```json
 {
@@ -238,40 +242,32 @@ Authenticates a user and returns a permanent JWT. Also registers or updates the 
 }
 ```
 
-**Error responses**
-
-| HTTP | `message` | Cause |
-|---|---|---|
-| 400 | `username is required` | Missing field |
-| 400 | `deviceId is required` | Missing field |
-| 400 | `Invalid credentials` | Wrong username or password |
+**Errors:** `400 Invalid credentials`, `400 username/deviceId is required`
 
 ---
 
-### POST /api/auth/logout
+#### `POST /api/auth/logout`
 
-Invalidates the current JWT by adding it to a server-side blacklist.
+Blacklists the current JWT server-side.
 
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "Logged out successfully" }
-```
+**Success — HTTP 200:** `{ "status": 1, "message": "Logged out successfully" }`
 
 ---
 
-### GET /api/transactions
+### Transactions
 
-Returns the transaction history for the authenticated user, ordered by date descending.
+#### `GET /api/transactions`
+
+Returns the authenticated user's transaction history, newest first.
 
 **Query parameters**
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `dateStart` | `yyyy-MM-dd` | no | Filter from this date (inclusive) |
-| `dateEnd` | `yyyy-MM-dd` | no | Filter to this date (inclusive) |
+| Parameter | Format | Description |
+|---|---|---|
+| `dateStart` | `yyyy-MM-dd` | Filter from this date (inclusive) |
+| `dateEnd` | `yyyy-MM-dd` | Filter to this date (inclusive) |
 
-**Success response — HTTP 200**
+**Success — HTTP 200**
 
 ```json
 {
@@ -284,7 +280,6 @@ Returns the transaction history for the authenticated user, ordered by date desc
       "type": "MANAGED",
       "acquirer": "AstraPay",
       "issuerName": "BNI",
-      "merchantName": "Alice Shop",
       "merchantPan": "936009XXXXXX0001",
       "customerPan": "401177XXXXXX5678",
       "rrn": "000100000002"
@@ -294,45 +289,30 @@ Returns the transaction history for the authenticated user, ordered by date desc
 }
 ```
 
-`issuerName`, `merchantPan`, `customerPan`, and `rrn` are omitted when null.
+`issuerName`, `merchantPan`, `customerPan`, `rrn` are omitted when null.
 
 ---
 
-### POST /api/transactions
+#### `POST /api/transactions`
 
-Adds a new transaction manually or from an external acquirer's notification. The server generates `transactionId`.
+Adds a transaction manually or from an external acquirer. The server generates `transactionId`.
 
-**Headers**
-
-| Header | Required | Description |
-|---|---|---|
-| `Idempotency-Key` | yes | Client-generated UUID per request attempt. Resubmitting the same key returns the previously created `transactionId` without inserting a duplicate. |
+**Required header:** `Idempotency-Key: <uuid>` — resubmitting the same key returns the existing `transactionId` without inserting a duplicate.
 
 **Request body**
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `type` | string | yes | `MANUAL` or `PARSED` |
-| `transactionDate` | datetime | yes | ISO 8601 e.g. `2026-06-28T09:14:00` |
-| `amount` | integer | yes | Amount in smallest currency unit, must be > 0 |
-| `issuerName` | string | no | Payment issuer name, max 255 chars |
-| `merchantPan` | string | no | Max 50 chars |
-| `customerPan` | string | no | Max 50 chars |
-| `rrn` | string | no | Max 255 chars |
-| `acquirer` | string | PARSED only | Name of the acquirer; required when `type` is `PARSED` |
+| Field | Required | Description |
+|---|---|---|
+| `type` | yes | `MANUAL` or `PARSED` |
+| `transactionDate` | yes | ISO 8601 e.g. `2026-06-28T09:14:00` |
+| `amount` | yes | Amount in IDR, must be > 0 |
+| `acquirer` | PARSED only | Acquirer name; required when `type` is `PARSED` |
+| `issuerName` | no | Payment issuer name, max 255 chars |
+| `merchantPan` | no | Max 50 chars |
+| `customerPan` | no | Max 50 chars |
+| `rrn` | no | Max 255 chars |
 
-```json
-{
-  "type": "PARSED",
-  "transactionDate": "2026-06-28T09:14:00",
-  "amount": 50000,
-  "issuerName": "GoPay",
-  "acquirer": "Midtrans",
-  "rrn": "000100000099"
-}
-```
-
-**Success response — HTTP 201**
+**Success — HTTP 201**
 
 ```json
 {
@@ -342,35 +322,30 @@ Adds a new transaction manually or from an external acquirer's notification. The
 }
 ```
 
-**Error responses**
-
-| HTTP | `message` | Cause |
-|---|---|---|
-| 400 | `Idempotency-Key header wajib diisi` | Missing `Idempotency-Key` header |
-| 400 | `type harus MANUAL atau PARSED` | Invalid type value |
-| 400 | `acquirer wajib diisi untuk type PARSED` | Missing acquirer for PARSED |
-| 400 | `amount harus lebih dari 0` | Non-positive amount |
+**Errors:** `400 Idempotency-Key header wajib diisi`, `400 type harus MANUAL atau PARSED`, `400 acquirer wajib diisi untuk type PARSED`, `400 amount harus lebih dari 0`
 
 ---
 
-### POST /api/notifications
+### Notifications
 
-Sends an FCM push notification to a registered device **and** inserts a `MANAGED` transaction record. All validation runs before the notification is sent — if any check fails, neither the notification nor the transaction insertion occurs.
+#### `POST /api/notifications`
+
+Sends an FCM push notification to a registered device **and** inserts a `MANAGED` transaction. All validation runs first — if any check fails, nothing is sent or recorded.
 
 **Request body**
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `deviceId` | string | yes | Target device |
-| `title` | string | yes | Notification title |
-| `body` | string | yes | Notification body text |
-| `data.transactionId` | string | yes | Unique transaction ID, max 255 chars |
-| `data.transactionDate` | datetime | yes | ISO 8601 e.g. `2026-06-28T09:14:00` |
-| `data.amount` | integer | yes | Amount > 0 |
-| `data.issuerName` | string | yes | Payment issuer name, max 255 chars |
-| `data.merchantPan` | string | no | Max 50 chars |
-| `data.customerPan` | string | no | Max 50 chars |
-| `data.rrn` | string | no | Max 255 chars |
+| Field | Required | Description |
+|---|---|---|
+| `deviceId` | yes | Target device |
+| `title` | yes | Notification title |
+| `body` | yes | Notification body text |
+| `data.transactionId` | yes | Unique transaction ID, max 255 chars |
+| `data.transactionDate` | yes | ISO 8601 datetime |
+| `data.amount` | yes | Amount > 0 |
+| `data.issuerName` | yes | Payment issuer name, max 255 chars |
+| `data.merchantPan` | no | Max 50 chars |
+| `data.customerPan` | no | Max 50 chars |
+| `data.rrn` | no | Max 255 chars |
 
 ```json
 {
@@ -387,39 +362,31 @@ Sends an FCM push notification to a registered device **and** inserts a `MANAGED
 }
 ```
 
-**Success response — HTTP 200**
+**Success — HTTP 200:** `{ "status": 1, "message": "Notification sent" }`
 
-```json
-{ "status": 1, "message": "Notification sent" }
-```
+**Errors**
 
-**Error responses**
-
-| HTTP | `message` | Cause |
+| HTTP | Message | Cause |
 |---|---|---|
 | 400 | `transactionId wajib diisi` | Missing field |
 | 400 | `amount harus lebih dari 0` | Non-positive amount |
-| 400 | `transactionId sudah terdaftar: <id>` | Duplicate transaction ID |
+| 400 | `transactionId sudah terdaftar: <id>` | Duplicate transaction |
 | 404 | `Device not found: <deviceId>` | Unknown device |
-| 404 | `No FCM token registered for device: <deviceId>` | Device has no FCM token |
-| 503 | `Firebase is not configured` | Firebase credentials not set |
+| 404 | `No FCM token registered for device: <deviceId>` | No FCM token on device |
+| 503 | `Firebase is not configured` | Firebase credentials missing |
 | 502 | `Failed to send notification: ...` | FCM delivery error |
 
 ---
 
-### PUT /api/devices/{deviceId}/fcm-token
+### Devices
 
-Updates the Firebase Cloud Messaging token for a device.
+#### `PUT /api/devices/{deviceId}/fcm-token`
 
-**Path parameter** — `deviceId`: the device to update
+Updates the FCM push token for a device.
 
-**Request body**
+**Request body:** `{ "pushToken": "fcm-token-string" }`
 
-| Field | Type | Required |
-|---|---|---|
-| `pushToken` | string | yes |
-
-**Success response — HTTP 200**
+**Success — HTTP 200**
 
 ```json
 {
@@ -431,122 +398,90 @@ Updates the Firebase Cloud Messaging token for a device.
 
 ---
 
-### PATCH /api/users/me
+### User profile
 
-Updates the authenticated user's personal info. All fields are required.
+All endpoints below require JWT.
 
-**Request body**
+#### `PATCH /api/users/me` — Update personal info
 
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `name` | string | yes | 2–100 chars |
-| `email` | string | yes | Valid email format |
-| `phone` | string | yes | International format e.g. `+628123456789` |
-
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "Profile updated successfully" }
-```
-
----
-
-### PATCH /api/users/me/business
-
-Updates the authenticated user's business display info. Does not affect the regulatory initial values.
-
-**Request body**
-
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `businessName` | string | yes | Max 255 chars |
-| `businessAddress` | string | no | Free text |
-| `nmid` | string | no | Max 50 chars |
-
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "Informasi bisnis berhasil diperbarui" }
-```
-
----
-
-### POST /api/users/me/business/reset
-
-Reverts `businessName`, `businessAddress`, and `nmid` to the values recorded at registration.
-
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "Informasi bisnis berhasil direset ke data awal" }
-```
-
----
-
-### PATCH /api/users/me/bank
-
-Updates the authenticated user's bank account information. Does not affect the regulatory initial values.
-
-**Request body**
-
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `bankName` | string | yes | Max 100 chars |
-| `bankNumber` | string | yes | Digits only, 6–20 digits |
-| `bankAccountName` | string | yes | 2–100 chars |
-
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "Informasi rekening berhasil diperbarui" }
-```
-
----
-
-### POST /api/users/me/bank/reset
-
-Reverts `bankName`, `bankNumber`, and `bankAccountName` to the values recorded at registration.
-
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "Informasi rekening berhasil direset ke data awal" }
-```
-
----
-
-### PATCH /api/users/me/password
-
-Changes the authenticated user's password.
-
-**Request body**
-
-| Field | Type | Required | Validation |
-|---|---|---|---|
-| `oldPassword` | string | yes | Current password |
-| `newPassword` | string | yes | Min 8 chars, at least 1 letter and 1 digit |
-
-**Error responses**
-
-| HTTP | `message` | Cause |
+| Field | Required | Validation |
 |---|---|---|
-| 400 | `Password baru minimal 8 karakter` | New password too short |
-| 400 | `Password baru harus mengandung minimal 1 huruf dan 1 angka` | Weak new password |
-| 400 | `Password saat ini tidak sesuai` | Wrong current password |
+| `name` | yes | 2–100 chars |
+| `email` | yes | Valid email |
+| `phone` | yes | International format e.g. `+628123456789` |
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Profile updated successfully" }`
 
 ---
 
-### GET /api/qris
+#### `PATCH /api/users/me/business` — Update business info
 
-Returns the QRIS image (base64) and business info for the authenticated user. If no image has been generated yet, one is created and stored on the first call.
+Does not affect the initial values stored at registration.
 
-**Success response — HTTP 200**
+| Field | Required | Validation |
+|---|---|---|
+| `businessName` | yes | Max 255 chars |
+| `businessAddress` | no | Free text |
+| `nmid` | no | Max 50 chars |
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Informasi bisnis berhasil diperbarui" }`
+
+---
+
+#### `POST /api/users/me/business/reset` — Reset business info
+
+Reverts `businessName`, `businessAddress`, and `nmid` to registration values.
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Informasi bisnis berhasil direset ke data awal" }`
+
+---
+
+#### `PATCH /api/users/me/bank` — Update bank info
+
+Does not affect the initial values stored at registration.
+
+| Field | Required | Validation |
+|---|---|---|
+| `bankName` | yes | Max 100 chars |
+| `bankNumber` | yes | Digits only, 6–20 digits |
+| `bankAccountName` | yes | 2–100 chars |
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Informasi rekening berhasil diperbarui" }`
+
+---
+
+#### `POST /api/users/me/bank/reset` — Reset bank info
+
+Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values.
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Informasi rekening berhasil direset ke data awal" }`
+
+---
+
+#### `PATCH /api/users/me/password` — Change password
+
+| Field | Required | Validation |
+|---|---|---|
+| `oldPassword` | yes | Current password |
+| `newPassword` | yes | Min 8 chars, at least 1 letter and 1 digit |
+
+**Errors:** `400 Password saat ini tidak sesuai`, `400 Password baru minimal 8 karakter`, `400 Password baru harus mengandung minimal 1 huruf dan 1 angka`
+
+---
+
+### QRIS
+
+#### `GET /api/qris` — Get QRIS image
+
+Returns the QRIS image and business info. `type` indicates whether the image is Bejo-generated or user-uploaded.
+
+**Success — HTTP 200**
 
 ```json
 {
   "status": 1,
   "data": {
-    "type": "MANAGED",
+    "type": "UPLOADED",
     "qrisImage": "<base64-encoded PNG>",
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
@@ -555,60 +490,43 @@ Returns the QRIS image (base64) and business info for the authenticated user. If
 }
 ```
 
-**`type` values:**
-
-| Value | Description |
+| `type` | Description |
 |---|---|
-| `MANAGED` | Bejo-generated QRIS image |
-| `UPLOADED` | User-uploaded QRIS image (overrides MANAGED) |
+| `MANAGED` | Auto-generated placeholder image |
+| `UPLOADED` | User-uploaded image (overrides MANAGED) |
 
 ---
 
-### POST /api/qris/upload
+#### `POST /api/qris/upload` — Upload custom QRIS image
 
-Uploads a custom QRIS image. Once uploaded, `GET /api/qris` returns this image instead of the generated one.
+Once uploaded, `GET /api/qris` returns this image with `type: UPLOADED`.
 
-**Request body**
+**Request body:** `{ "qrisImage": "<base64-encoded image>" }`
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `qrisImage` | string | yes | Base64-encoded image |
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS berhasil diupload" }`
 
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "QRIS berhasil diupload" }
-```
-
-**Error responses**
-
-| HTTP | `message` | Cause |
-|---|---|---|
-| 400 | `qrisImage wajib diisi` | Missing or blank field |
-| 400 | `qrisImage bukan format base64 yang valid` | Invalid base64 |
+**Errors:** `400 qrisImage wajib diisi`, `400 qrisImage bukan format base64 yang valid`
 
 ---
 
-### POST /api/qris/reset
+#### `POST /api/qris/reset` — Reset QRIS image
 
-Clears the uploaded QRIS image and reverts to the Bejo-generated one.
+Clears the uploaded image and reverts to the initial QRIS image.
 
-**Success response — HTTP 200**
-
-```json
-{ "status": 1, "message": "QRIS berhasil direset ke versi generated" }
-```
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS berhasil direset ke versi generated" }`
 
 ---
 
-## Common error responses
+## Error reference
 
-| HTTP | `message` | Cause |
+Errors shared across all endpoints:
+
+| HTTP | Message | Cause |
 |---|---|---|
 | 400 | `Request body tidak valid atau tidak ditemukan` | Malformed or missing JSON body |
 | 400 | `Format parameter tidak valid: <param>` | Invalid query parameter type |
 | 401 | `Missing or invalid X-API-TOKEN` | Wrong or absent API token |
-| 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing or invalid JWT |
+| 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing or expired JWT |
 | 404 | `Route not found` | Unknown path |
 | 405 | `Method not allowed: <METHOD>` | Wrong HTTP method |
 | 409 | `Data tidak valid atau sudah terdaftar` | Database constraint violation |
@@ -620,61 +538,65 @@ Clears the uploaded QRIS image and reverts to the Bejo-generated one.
 
 | Endpoint | Description |
 |---|---|
-| `GET /actuator/health` | Application health |
+| `GET /actuator/health` | Liveness / readiness |
 | `GET /actuator/metrics` | Micrometer metrics |
 | `GET /actuator/prometheus` | Prometheus scrape endpoint |
-
-Prometheus is available at `http://localhost:9090` when running via Docker Compose.
 
 **Custom metrics**
 
 | Metric | Tags | Description |
 |---|---|---|
-| `login.attempts_total` | `result=success\|failure` | Login attempt outcomes |
+| `login.attempts_total` | `result=success\|failure` | Login outcomes |
 | `transactions.fetched_total` | — | Total transaction records returned |
 | `notifications.sent_total` | `result=success\|failure` | FCM notification outcomes |
 
 ---
 
-## Environment variables
+## Configuration
 
-### App (local `.env` / Docker Compose)
+### App environment variables
+
+Used locally via `.env` (Docker Compose) or exported directly (Maven).
 
 | Variable | Required | Description |
 |---|---|---|
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
-| `JWT_SECRET` | yes | Base64-encoded signing key (min 256 bits). Generate: `openssl rand -base64 32` |
+| `JWT_SECRET` | yes | Base64-encoded signing key, min 256 bits — `openssl rand -base64 32` |
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | PostgreSQL username |
 | `DB_PASSWORD` | yes | PostgreSQL password |
-| `SEED_USERNAME` | no | Default user username. Default: `admin` |
-| `SEED_PASSWORD` | no | Default user password. Seeding skipped if blank |
-| `SEED_NAME` | no | Default user display name. Default: `Admin` |
-| `SEED_BUSINESS_NAME` | no | Default user business name. Default: `My Business` |
-| `SEED_BUSINESS_ADDRESS` | no | Default user business address |
-| `SEED_NMID` | no | Default user National Merchant ID (NMID) |
 | `FIREBASE_CREDENTIALS_BASE64` | no* | Base64-encoded Firebase service account JSON |
 | `FIREBASE_CREDENTIALS_PATH` | no* | Path to Firebase service account JSON file |
+| `SEED_PASSWORD` | no | Seed user password — seeding skipped if blank |
+| `SEED_USERNAME` | no | Default: `admin` |
+| `SEED_NAME` | no | Default: `Admin` |
+| `SEED_BUSINESS_NAME` | no | Default: `My Business` |
+| `SEED_BUSINESS_ADDRESS` | no | |
+| `SEED_NMID` | no | National Merchant ID for seed user |
 
-\* One of the two Firebase options is required to use the notifications endpoint.
+\* One of the two Firebase options is required to use push notifications.
 
-### GCP deployment (`.env.gcp` + GitHub Actions)
+### GCP deployment
 
-Sensitive values (`DB_PASSWORD`, `JWT_SECRET`, `API_TOKEN`, `FIREBASE_CREDENTIALS_BASE64`, `SEED_PASSWORD`) are stored in Secret Manager and never passed as plain variables. Everything else is set via GitHub Actions variables.
+Sensitive values are stored in **Secret Manager** — never passed as plain variables.
 
-| GitHub Actions variable | Description |
+**GitHub Actions variables** (Settings → Variables → Actions)
+
+| Variable | Description |
 |---|---|
 | `GCP_PROJECT_ID` | GCP project ID |
-| `GCP_REGION` | Deployment region e.g. `asia-southeast2` |
-| `ARTIFACT_REGISTRY_REPO` | Artifact Registry repo name |
+| `GCP_REGION` | Region e.g. `asia-southeast2` |
 | `GCP_SERVICE_NAME` | Cloud Run service name |
-| `CLOUD_SQL_INSTANCE_CONNECTION_NAME` | Full connection name e.g. `project:region:instance` |
+| `ARTIFACT_REGISTRY_REPO` | Artifact Registry repository name |
+| `CLOUD_SQL_INSTANCE_CONNECTION_NAME` | e.g. `project:region:instance` |
 | `CLOUD_SQL_DB_NAME` | Database name |
 | `CLOUD_SQL_DB_USER` | Database user |
-| `CLOUD_RUN_SA` | Cloud Run service account name (without `@...`) |
-| `CUSTOM_DOMAIN` | Custom domain e.g. `api.bejo.temanproduk.com` |
+| `CLOUD_RUN_SA` | Cloud Run service account name |
+| `CUSTOM_DOMAIN` | `api.bejo.temanproduk.com` |
 | `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` | Seed user values |
 
-| GitHub Actions secret | Description |
+**GitHub Actions secret** (Settings → Secrets → Actions)
+
+| Secret | Description |
 |---|---|
-| `GCP_SA_KEY` | Base64-encoded GitHub Actions service account JSON key (printed by `init-gcp.sh`) |
+| `GCP_SA_KEY` | Base64-encoded service account JSON key — printed by `scripts/init-gcp.sh` |
