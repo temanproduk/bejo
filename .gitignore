@@ -4,6 +4,8 @@ target/
 *.war
 
 .env
+.env.gcp
+github-actions-key.json
 *.json
 !package.json
 !bejo.postman_collection.json
