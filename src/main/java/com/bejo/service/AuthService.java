@@ -95,7 +95,8 @@ public class AuthService {
                 bank.getBankName(),
                 bank.getBankNumber(),
                 bank.getBankAccountName(),
-                token, "Bearer");
+                token, "Bearer",
+                jwtService.getExpiresInSeconds());
     }
 
     @Transactional
@@ -155,7 +156,10 @@ public class AuthService {
         sessionRepository.findByUsernameAndDeviceId(request.username(), request.deviceId())
                 .ifPresentOrElse(existing -> {
                     existing.setLoginStatus(true);
-                    existing.setPushToken(request.pushToken());
+                    // Keep the stored FCM token when the client logs in without one
+                    if (request.pushToken() != null && !request.pushToken().isBlank()) {
+                        existing.setPushToken(request.pushToken());
+                    }
                     existing.setLoginDate(LocalDateTime.now());
                     existing.setLastUpdated(LocalDateTime.now());
                     sessionRepository.save(existing);

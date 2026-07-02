@@ -22,10 +22,10 @@ public class DeviceService {
     }
 
     @Transactional
-    public UpdateTokenData updateFcmToken(String deviceId, String pushToken) {
-        log.info("[TOKEN] deviceId={}", deviceId);
+    public UpdateTokenData updateFcmToken(String username, String deviceId, String pushToken) {
+        log.info("[TOKEN] username={} deviceId={}", username, deviceId);
 
-        int updated = sessionRepository.updatePushToken(deviceId, pushToken, LocalDateTime.now());
+        int updated = sessionRepository.updatePushToken(username, deviceId, pushToken, LocalDateTime.now());
         if (updated < 1) {
             throw new ResourceNotFoundException("Device ID not found: " + deviceId);
         }

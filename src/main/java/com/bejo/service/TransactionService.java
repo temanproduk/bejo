@@ -44,7 +44,7 @@ public class TransactionService {
                 .orElse(null);
 
         LocalDateTime start = dateStart != null ? dateStart.atStartOfDay() : null;
-        LocalDateTime end   = dateEnd   != null ? dateEnd.atTime(23, 59, 59) : null;
+        LocalDateTime end   = dateEnd   != null ? dateEnd.atTime(java.time.LocalTime.MAX) : null;
 
         List<Transaction> txns;
         if (start == null && end == null) {

@@ -4,6 +4,7 @@ import com.bejo.service.JwtService;
 import com.bejo.service.TokenBlacklistService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
@@ -17,6 +18,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.util.ServletRequestPathUtils;
 
 @Configuration
 @EnableWebSecurity
@@ -28,6 +30,9 @@ public class SecurityConfig {
 
     public SecurityConfig(JwtService jwtService,
                           TokenBlacklistService tokenBlacklistService,
+                          // Qualifier needed: actuator registers a second RequestMappingHandlerMapping
+                          // subclass, and an ambiguous provider silently resolves to null
+                          @Qualifier("requestMappingHandlerMapping")
                           ObjectProvider<RequestMappingHandlerMapping> handlerMappingProvider) {
         this.jwtService = jwtService;
         this.tokenBlacklistService = tokenBlacklistService;
@@ -59,6 +64,11 @@ public class SecurityConfig {
                     res.setContentType(MediaType.APPLICATION_JSON_VALUE);
                     try {
                         RequestMappingHandlerMapping mapping = handlerMappingProvider.getIfAvailable();
+                        // The entry point runs before DispatcherServlet, so the parsed
+                        // request path getHandler() relies on is not cached yet
+                        if (!ServletRequestPathUtils.hasParsedRequestPath(req)) {
+                            ServletRequestPathUtils.parseAndCache(req);
+                        }
                         if (mapping == null || mapping.getHandler(req) == null) {
                             res.setStatus(HttpServletResponse.SC_NOT_FOUND);
                             res.getWriter().write("{\"status\":0,\"message\":\"Route not found\"}");

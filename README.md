@@ -10,6 +10,7 @@ REST API for QRIS payment management. Built with Java 25 and Spring Boot — han
 
 - [Stack](#stack)
 - [Running](#running)
+- [Testing](#testing)
 - [Authentication](#authentication)
 - [Response format](#response-format)
 - [Data model](#data-model)
@@ -36,6 +37,7 @@ REST API for QRIS payment management. Built with Java 25 and Spring Boot — han
 | **Push** | Firebase Admin SDK (FCM) |
 | **Migrations** | Flyway |
 | **Metrics** | Micrometer + Prometheus |
+| **Tests** | JUnit 5 + Mockito + MockMvc with in-memory H2 |
 | **Timezone** | UTC+7 (Asia/Jakarta) |
 
 ---
@@ -79,6 +81,25 @@ mvn spring-boot:run
 
 ---
 
+## Testing
+
+```bash
+mvn test                              # everything
+mvn test -Dtest=JwtServiceTest        # one class
+mvn test -Dtest=ApiIntegrationTest#logoutBlacklistsToken   # one method
+```
+
+No database or other services needed — tests are self-contained:
+
+| Suite | Location | Approach |
+|---|---|---|
+| Unit tests | `src/test/java/com/bejo/service/` | Mockito, no Spring context — service logic in isolation |
+| Functional tests | `src/test/java/com/bejo/web/ApiIntegrationTest.java` | `@SpringBootTest` + MockMvc through the full HTTP stack (API token filter, Spring Security, JWT filter, controllers, JPA) against in-memory H2 in PostgreSQL mode |
+
+Test configuration lives in `src/test/resources/application-test.yml` (profile `test`): Flyway disabled, schema generated from the JPA entities via `ddl-auto: create-drop`.
+
+---
+
 ## Authentication
 
 Every request requires:
@@ -90,6 +111,8 @@ Every request requires:
 
 Public (no JWT): `POST /api/auth/register`, `POST /api/auth/login`  
 Exempt entirely: `/actuator/**`
+
+Tokens expire after `JWT_EXPIRATION_MS` (default 90 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
 
 ---
 
@@ -199,7 +222,7 @@ Creates a new user account. `X-API-TOKEN` required, no JWT.
 |---|---|
 | 201 | `{ "status": 1, "message": "Registrasi berhasil" }` |
 | 400 | Validation error — `username wajib diisi`, `password harus mengandung minimal 1 huruf dan 1 angka`, `format email tidak valid`, etc. |
-| 409 | `Username sudah digunakan` |
+| 400 | `Username sudah digunakan` |
 
 ---
 
@@ -214,7 +237,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
 | `username` | yes | |
 | `password` | yes | |
 | `deviceId` | yes | Unique device identifier |
-| `pushToken` | no | FCM token for push notifications |
+| `pushToken` | no | FCM token for push notifications. When omitted on re-login, the previously stored token for this device is kept |
 
 **Success — HTTP 200**
 
@@ -237,7 +260,8 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "bankNumber": "1234567890",
     "bankAccountName": "Alice",
     "token": "eyJhbGciOiJIUzI1NiJ9...",
-    "tokenType": "Bearer"
+    "tokenType": "Bearer",
+    "expiresIn": 7776000
   }
 }
 ```
@@ -248,9 +272,11 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
 
 #### `POST /api/auth/logout`
 
-Blacklists the current JWT server-side.
+Blacklists the current JWT server-side. The token is rejected on all subsequent requests, even before its natural expiry.
 
 **Success — HTTP 200:** `{ "status": 1, "message": "Logged out successfully" }`
+
+**Errors:** `400 Authorization header tidak valid`
 
 ---
 
@@ -382,7 +408,7 @@ Sends an FCM push notification to a registered device **and** inserts a `MANAGED
 
 #### `PUT /api/devices/{deviceId}/fcm-token`
 
-Updates the FCM push token for a device.
+Updates the FCM push token for a device. Only devices belonging to the authenticated user can be updated — the `(username, deviceId)` session is created at login.
 
 **Request body:** `{ "pushToken": "fcm-token-string" }`
 
@@ -395,6 +421,8 @@ Updates the FCM push token for a device.
   "data": { "deviceId": "device-001", "pushToken": "new-fcm-token" }
 }
 ```
+
+**Errors:** `404 Device ID not found: <deviceId>` — the device doesn't exist or belongs to another user
 
 ---
 
@@ -501,11 +529,11 @@ Returns the QRIS image and business info. `type` indicates whether the image is 
 
 Once uploaded, `GET /api/qris` returns this image with `type: UPLOADED`.
 
-**Request body:** `{ "qrisImage": "<base64-encoded image>" }`
+**Request body:** `{ "qrisImage": "<base64-encoded image>" }` — max ±5 MB
 
 **Success — HTTP 200:** `{ "status": 1, "message": "QRIS berhasil diupload" }`
 
-**Errors:** `400 qrisImage wajib diisi`, `400 qrisImage bukan format base64 yang valid`
+**Errors:** `400 qrisImage wajib diisi`, `400 qrisImage bukan format base64 yang valid`, `400 qrisImage terlalu besar (maksimal ±5MB)`
 
 ---
 
@@ -526,7 +554,7 @@ Errors shared across all endpoints:
 | 400 | `Request body tidak valid atau tidak ditemukan` | Malformed or missing JSON body |
 | 400 | `Format parameter tidak valid: <param>` | Invalid query parameter type |
 | 401 | `Missing or invalid X-API-TOKEN` | Wrong or absent API token |
-| 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing or expired JWT |
+| 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing, expired, or logged-out (blacklisted) JWT |
 | 404 | `Route not found` | Unknown path |
 | 405 | `Method not allowed: <METHOD>` | Wrong HTTP method |
 | 409 | `Data tidak valid atau sudah terdaftar` | Database constraint violation |
@@ -562,6 +590,7 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 |---|---|---|
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
 | `JWT_SECRET` | yes | Base64-encoded signing key, min 256 bits — `openssl rand -base64 32` |
+| `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `7776000000` (90 days); `0` disables expiry |
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | PostgreSQL username |
 | `DB_PASSWORD` | yes | PostgreSQL password |

@@ -39,8 +39,12 @@ public class AuthController {
 
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request) {
-        String token = request.getHeader(HttpHeaders.AUTHORIZATION).substring(7);
-        authService.logout(token);
+        String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("Authorization header tidak valid"));
+        }
+        authService.logout(authHeader.substring(7));
         return ResponseEntity.ok(ApiResponse.success("Logged out successfully", null));
     }
 }

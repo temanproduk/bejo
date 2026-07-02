@@ -56,6 +56,8 @@ app:
   jwt:
     # Base64-encoded secret, minimum 256 bits. Generate with: openssl rand -base64 32
     secret: ${JWT_SECRET:YmVqby1kZXYtc2VjcmV0LWtleS1tdXN0LWJlLWNoYW5nZWQtaW4tcHJvZHVjdGlvbi1taW4tMjU2Yml0cw==}
+    # Token TTL in milliseconds (default 90 days). Set to 0 to disable expiry.
+    expiration-ms: ${JWT_EXPIRATION_MS:7776000000}
   seed:
     username: ${SEED_USERNAME:admin}
     password: ${SEED_PASSWORD:}

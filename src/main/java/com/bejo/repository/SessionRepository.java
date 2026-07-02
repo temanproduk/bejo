@@ -13,13 +13,12 @@ import java.util.Optional;
 @Repository
 public interface SessionRepository extends JpaRepository<Session, Long> {
 
-    Optional<Session> findByDeviceId(String deviceId);
-
     Optional<Session> findByUsernameAndDeviceId(String username, String deviceId);
 
     @Modifying
-    @Query("UPDATE Session s SET s.pushToken = :pushToken, s.lastUpdated = :now WHERE s.deviceId = :deviceId")
-    int updatePushToken(@Param("deviceId") String deviceId,
+    @Query("UPDATE Session s SET s.pushToken = :pushToken, s.lastUpdated = :now WHERE s.username = :username AND s.deviceId = :deviceId")
+    int updatePushToken(@Param("username") String username,
+                        @Param("deviceId") String deviceId,
                         @Param("pushToken") String pushToken,
                         @Param("now") LocalDateTime now);
 }

@@ -14,6 +14,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 1)
@@ -36,7 +38,9 @@ public class ApiTokenFilter extends OncePerRequestFilter {
         }
 
         String provided = request.getHeader(HEADER);
-        if (provided == null || !provided.equals(apiToken)) {
+        if (provided == null || !MessageDigest.isEqual(
+                provided.getBytes(StandardCharsets.UTF_8),
+                apiToken.getBytes(StandardCharsets.UTF_8))) {
             log.warn("Rejected request to {} — missing or invalid X-API-TOKEN", request.getRequestURI());
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);

@@ -15,5 +15,6 @@ public record LoginData(
         String bankNumber,
         String bankAccountName,
         String token,
-        String tokenType
+        String tokenType,
+        Long expiresIn
 ) {}
