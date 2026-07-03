@@ -61,6 +61,7 @@ jobs:
           ENV_VARS="DB_URL=$DB_URL"
           ENV_VARS="$ENV_VARS@DB_USERNAME=${{ env.CLOUD_SQL_DB_USER }}"
           ENV_VARS="$ENV_VARS@SPRING_PROFILES_ACTIVE=prod"
+          ENV_VARS="$ENV_VARS@TZ=Asia/Jakarta"
           ENV_VARS="$ENV_VARS@SEED_USERNAME=${{ vars.SEED_USERNAME }}"
           ENV_VARS="$ENV_VARS@SEED_NAME=${{ vars.SEED_NAME }}"
           ENV_VARS="$ENV_VARS@SEED_BUSINESS_NAME=${{ vars.SEED_BUSINESS_NAME }}"
