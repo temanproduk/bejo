@@ -20,7 +20,9 @@ public record QrMpmNotifyRequest(
         @NotBlank(message = "latestTransactionStatus wajib diisi")
         String latestTransactionStatus,
 
+        @NotBlank(message = "transactionStatusDesc wajib diisi")
         String transactionStatusDesc,
+
         String customerNumber,
         String destinationNumber,
         String destinationAccountName,
@@ -36,6 +38,8 @@ public record QrMpmNotifyRequest(
     public record Amount(
             @NotBlank(message = "amount.value wajib diisi")
             String value,
+
+            @NotBlank(message = "amount.currency wajib diisi")
             String currency
     ) {}
 

@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -124,16 +125,33 @@ class QrisCallbackServiceTest {
     }
 
     @Test
-    void mapsStatusCodes() {
+    void mapsStatusCodesOntoStoredTransaction() {
         User u = new User();
         u.setUsername("alice");
         when(userRepository.findFirstByNmid(any())).thenReturn(Optional.of(u));
         when(transactionRepository.findByIdempotencyKeyAndUsername(any(), any())).thenReturn(Optional.empty());
 
-        assertThat(service.processNotify(request("00"), null).status()).isEqualTo("SUCCESS");
-        assertThat(service.processNotify(request("02"), null).status()).isEqualTo("FAILED");
-        assertThat(service.processNotify(request("03"), null).status()).isEqualTo("REFUNDED");
-        assertThat(service.processNotify(request("05"), null).status()).isEqualTo("EXPIRED");
-        assertThat(service.processNotify(request("99"), null).status()).isEqualTo("UNKNOWN");
+        service.processNotify(request("00"), null);
+        service.processNotify(request("02"), null);
+        service.processNotify(request("03"), null);
+        service.processNotify(request("05"), null);
+        service.processNotify(request("99"), null);
+
+        ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository, times(5)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(Transaction::getStatus)
+                .containsExactly("SUCCESS", "FAILED", "REFUNDED", "EXPIRED", "UNKNOWN");
+    }
+
+    @Test
+    void responseStatusIsAcknowledgmentNotPaymentStatus() {
+        User u = new User();
+        u.setUsername("alice");
+        when(userRepository.findFirstByNmid(any())).thenReturn(Optional.of(u));
+        when(transactionRepository.findByIdempotencyKeyAndUsername(any(), any())).thenReturn(Optional.empty());
+
+        // Payment FAILED (02), but the callback ack is still SUCCESS per the spec
+        QrMpmNotifyResponse res = service.processNotify(request("02"), null);
+        assertThat(res.status()).isEqualTo("SUCCESS");
     }
 }

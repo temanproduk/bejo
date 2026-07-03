@@ -237,18 +237,23 @@ gcloud run deploy "$GCP_SERVICE_NAME" \
 # ---------------------------------------------------------------
 # 9. Custom domain mapping (one-time, persists across deployments)
 # ---------------------------------------------------------------
+# Managed Cloud Run domain mappings live under `gcloud beta run domain-mappings`
+# (the GA `gcloud run domain-mappings` group is Anthos-only and rejects --region).
+# Requires the domain verified in Google Search Console.
 echo "==> Mapping custom domain $CUSTOM_DOMAIN..."
-gcloud run domain-mappings create \
+gcloud beta run domain-mappings create \
   --service="$GCP_SERVICE_NAME" \
   --domain="$CUSTOM_DOMAIN" \
   --region="$GCP_REGION" \
-  --quiet 2>/dev/null || echo "    (already mapped, skipping)"
+  --platform=managed \
+  --quiet 2>/dev/null || echo "    (not mapped — domain unverified or already mapped; see note below)"
 
 echo ""
 echo "==> DNS records to add at your registrar for $CUSTOM_DOMAIN:"
-gcloud run domain-mappings describe \
+gcloud beta run domain-mappings describe \
   --domain="$CUSTOM_DOMAIN" \
   --region="$GCP_REGION" \
+  --platform=managed \
   --format="table(status.resourceRecords[].name,status.resourceRecords[].rrdata,status.resourceRecords[].type)" \
   || echo "    (domain mapping not created — verify $CUSTOM_DOMAIN ownership in Search Console, then re-run this script)"
 

@@ -28,7 +28,7 @@ public class QrisCallbackController {
 
     @PostMapping(path = "/snap/v1.0/qr/qr-mpm-notify", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<QrMpmNotifyResponse> notify(
-            @RequestHeader(value = "X-TIMESTAMP", required = false) String xTimestamp,
+            @RequestHeader("X-TIMESTAMP") String xTimestamp,
             @Valid @RequestBody QrMpmNotifyRequest request) {
         return ResponseEntity.ok(callbackService.processNotify(request, xTimestamp));
     }

@@ -661,7 +661,7 @@ This endpoint does **not** use the standard `{ status, message, data }` envelope
 | Header | Mandatory | Description |
 |---|---|---|
 | `Content-Type: application/json` | ✅ | |
-| `X-TIMESTAMP` | ⬜ | ISO-8601 transaction time; accepts an offset (`2020-12-23T08:46:11+07:00`), `Z`, or none. Recorded as the transaction date; a missing/invalid value falls back to now. |
+| `X-TIMESTAMP` | ✅ | ISO-8601 transaction time; accepts an offset (`2020-12-23T08:46:11+07:00`), `Z`, or none. Recorded as the transaction date; an *unparseable* value falls back to now, but a *missing* header is a `400`. |
 
 **Request body** (unknown fields are ignored)
 
@@ -683,7 +683,7 @@ This endpoint does **not** use the standard `{ status, message, data }` envelope
 }
 ```
 
-`originalReferenceNo`, `originalPartnerReferenceNo`, `latestTransactionStatus`, and `amount.value` are required.
+Required fields: `originalReferenceNo`, `originalPartnerReferenceNo`, `latestTransactionStatus`, `transactionStatusDesc`, `amount.value`, `amount.currency`.
 
 **Behavior**
 
@@ -706,7 +706,9 @@ This endpoint does **not** use the standard `{ status, message, data }` envelope
 }
 ```
 
-**Errors:** `400` invalid/missing required fields, `404` no merchant match and no default user
+`status` is the **acknowledgment** status (processing succeeded) — always `SUCCESS` on `200`, independent of the payment's own status, which is derived from `latestTransactionStatus` and stored on the transaction.
+
+**Errors:** `400` invalid body, missing required field, or missing `X-TIMESTAMP`; `404` no merchant match and no default user
 
 ---
 

@@ -639,11 +639,21 @@ class ApiIntegrationTest {
     @Test
     void qrisCallbackRejectsMissingAmount() throws Exception {
         mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                        .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
                         .contentType(APPLICATION_JSON)
                         .content("""
                                 { "originalReferenceNo": "A", "originalPartnerReferenceNo": "B",
-                                  "latestTransactionStatus": "00" }
+                                  "latestTransactionStatus": "00", "transactionStatusDesc": "OK" }
                                 """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void qrisCallbackRequiresTimestampHeader() throws Exception {
+        // X-TIMESTAMP is mandatory per the spec — missing header is a 400, not a 500
+        mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                        .contentType(APPLICATION_JSON)
+                        .content(callbackBody("9360082232504524231", "NOTS01", "NOTS02", "INV-NOTS")))
                 .andExpect(status().isBadRequest());
     }
 

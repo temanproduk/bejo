@@ -74,7 +74,7 @@ public class QrisCallbackService {
         if (existing.isPresent()) {
             Transaction t = existing.get();
             log.info("[CALLBACK] Idempotent replay key={} transactionId={}", idempotencyKey, t.getTransactionId());
-            return response(t.getId(), req, amount, tip, t.getStatus());
+            return response(t.getId(), req, amount, tip);
         }
 
         String status = mapStatus(req.latestTransactionStatus());
@@ -100,17 +100,19 @@ public class QrisCallbackService {
         transactionRepository.save(t);
 
         log.info("[CALLBACK] Recorded transactionId={} username={} status={}", transactionId, username, status);
-        return response(t.getId(), req, amount, tip, status);
+        return response(t.getId(), req, amount, tip);
     }
 
-    private QrMpmNotifyResponse response(Long id, QrMpmNotifyRequest req, BigDecimal amount, BigDecimal tip, String status) {
+    // Per the spec, response.status is the acknowledgment status (processing
+    // succeeded), not the payment's status — its example hardcodes "SUCCESS".
+    private QrMpmNotifyResponse response(Long id, QrMpmNotifyRequest req, BigDecimal amount, BigDecimal tip) {
         return new QrMpmNotifyResponse(
                 id,
                 req.originalReferenceNo(),
                 req.originalPartnerReferenceNo(),
                 amount,
                 tip,
-                status,
+                "SUCCESS",
                 LocalDateTime.now());
     }
 

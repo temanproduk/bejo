@@ -6,8 +6,21 @@
   "variable": [
     {
       "key": "baseUrl",
+      "value": "{{prodUrl}}",
+      "type": "string",
+      "description": "Active base URL used by every request. Switch environments by setting this to {{prodUrl}} or {{localUrl}}."
+    },
+    {
+      "key": "localUrl",
       "value": "http://localhost:8080",
-      "type": "string"
+      "type": "string",
+      "description": "Local dev server (docker compose / mvn spring-boot:run)."
+    },
+    {
+      "key": "prodUrl",
+      "value": "https://api.bejo.temanproduk.com",
+      "type": "string",
+      "description": "Production (Cloud Run, us-central1). Until the custom domain's DNS/SSL is live, use the direct Cloud Run URL https://bejo-7d3jwuvixa-uc.a.run.app instead."
     },
     {
       "key": "apiToken",
