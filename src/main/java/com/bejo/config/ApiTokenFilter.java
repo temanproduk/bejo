@@ -32,7 +32,7 @@ public class ApiTokenFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
         String uri = request.getRequestURI();
-        if (uri.startsWith("/actuator")) {
+        if (uri.startsWith("/actuator") || uri.equals("/api/static")) {
             chain.doFilter(request, response);
             return;
         }

@@ -48,7 +48,7 @@ jobs:
         id: image
         run: |
           IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.GCP_SERVICE_NAME }}:${{ github.sha }}"
-          docker build -t "$IMAGE" .
+          docker build --platform=linux/amd64 -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
@@ -56,9 +56,16 @@ jobs:
         run: |
           DB_URL="jdbc:postgresql:///${{ env.CLOUD_SQL_DB_NAME }}?cloudSqlInstance=${{ env.CLOUD_SQL_INSTANCE }}&socketFactory=com.google.cloud.sql.postgres.SocketFactory"
 
-          SEED_ENV="SEED_USERNAME=${{ vars.SEED_USERNAME }},SEED_NAME=${{ vars.SEED_NAME }},SEED_BUSINESS_NAME=${{ vars.SEED_BUSINESS_NAME }}"
-          [ -n "${{ vars.SEED_BUSINESS_ADDRESS }}" ] && SEED_ENV="$SEED_ENV,SEED_BUSINESS_ADDRESS=${{ vars.SEED_BUSINESS_ADDRESS }}"
-          [ -n "${{ vars.SEED_NMID }}" ]             && SEED_ENV="$SEED_ENV,SEED_NMID=${{ vars.SEED_NMID }}"
+          # Single --set-env-vars with gcloud's alternate delimiter (^@^) so
+          # values may contain commas (e.g. "Jl. Contoh No. 1, Jakarta").
+          ENV_VARS="DB_URL=$DB_URL"
+          ENV_VARS="$ENV_VARS@DB_USERNAME=${{ env.CLOUD_SQL_DB_USER }}"
+          ENV_VARS="$ENV_VARS@SPRING_PROFILES_ACTIVE=prod"
+          ENV_VARS="$ENV_VARS@SEED_USERNAME=${{ vars.SEED_USERNAME }}"
+          ENV_VARS="$ENV_VARS@SEED_NAME=${{ vars.SEED_NAME }}"
+          ENV_VARS="$ENV_VARS@SEED_BUSINESS_NAME=${{ vars.SEED_BUSINESS_NAME }}"
+          [ -n "${{ vars.SEED_BUSINESS_ADDRESS }}" ] && ENV_VARS="$ENV_VARS@SEED_BUSINESS_ADDRESS=${{ vars.SEED_BUSINESS_ADDRESS }}"
+          [ -n "${{ vars.SEED_NMID }}" ]             && ENV_VARS="$ENV_VARS@SEED_NMID=${{ vars.SEED_NMID }}"
 
           gcloud run deploy "${{ env.GCP_SERVICE_NAME }}" \
             --image="${{ steps.image.outputs.image }}" \
@@ -66,10 +73,7 @@ jobs:
             --platform=managed \
             --service-account="${{ env.CLOUD_RUN_SA }}@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
             --add-cloudsql-instances="${{ env.CLOUD_SQL_INSTANCE }}" \
-            --set-env-vars="DB_URL=$DB_URL" \
-            --set-env-vars="DB_USERNAME=${{ env.CLOUD_SQL_DB_USER }}" \
-            --set-env-vars="SPRING_PROFILES_ACTIVE=prod" \
-            --set-env-vars="$SEED_ENV" \
+            --set-env-vars="^@^$ENV_VARS" \
             --set-secrets="DB_PASSWORD=bejo-db-password:latest" \
             --set-secrets="JWT_SECRET=bejo-jwt-secret:latest" \
             --set-secrets="API_TOKEN=bejo-api-token:latest" \

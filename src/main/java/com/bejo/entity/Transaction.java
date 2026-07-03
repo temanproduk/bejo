@@ -59,6 +59,10 @@ public class Transaction {
     @Column(name = "idempotency_key", unique = true)
     private String idempotencyKey;
 
+    // Soft delete: NULL = active, non-NULL = when the user deleted it
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
     public Long getId() { return id; }
     public String getTransactionId() { return transactionId; }
     public void setTransactionId(String transactionId) { this.transactionId = transactionId; }
@@ -94,4 +98,6 @@ public class Transaction {
     public void setAcquirer(String acquirer) { this.acquirer = acquirer; }
     public String getIdempotencyKey() { return idempotencyKey; }
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
+    public LocalDateTime getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
 }

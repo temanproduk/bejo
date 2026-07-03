@@ -193,6 +193,50 @@
             },
             "description": "Records a transaction from an external acquirer. The server generates transactionId.\n\nIdempotency-Key header is required. For PARSED type, acquirer is required.\n\nReturns HTTP 201 with { transactionId }."
           }
+        },
+        {
+          "name": "Edit Transaction",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 60000,\n  \"issuerName\": \"OVO\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/:transactionId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", ":transactionId"],
+              "variable": [
+                { "key": "transactionId", "value": "TXN-XXXXXXXXXXXX", "description": "transactionId returned by Add Transaction / history" }
+              ]
+            },
+            "description": "Edits the authenticated user's transaction. Partial update — only fields present in the body are changed; type cannot be changed. Only MANUAL/PARSED transactions can be edited — MANAGED ones are immutable.\n\nOptional fields (send at least one): transactionDate, amount, acquirer, issuerName, merchantPan, customerPan, rrn.\n\nReturns HTTP 200 with the updated transaction.\nErrors: 400 (no fields / MANAGED type / invalid amount / blank acquirer), 404 Transaction not found (unknown, deleted, or another user's transaction)."
+          }
+        },
+        {
+          "name": "Delete Transaction",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/:transactionId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", ":transactionId"],
+              "variable": [
+                { "key": "transactionId", "value": "TXN-XXXXXXXXXXXX", "description": "transactionId returned by Add Transaction / history" }
+              ]
+            },
+            "description": "Soft-deletes the authenticated user's transaction: the row keeps a deleted_at timestamp and disappears from history. Cannot be undone via the API.\n\nReturns HTTP 200.\nErrors: 404 Transaction not found (unknown, already deleted, or another user's transaction)."
+          }
         }
       ]
     },
@@ -430,6 +474,47 @@
               "path": ["api", "qris", "reset"]
             },
             "description": "Clears the uploaded QRIS image and reverts to the Bejo-generated one (type=MANAGED).\n\nNo request body needed."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Static",
+      "item": [
+        {
+          "name": "Static GET",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/static?foo=bar",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "static"],
+              "query": [
+                { "key": "foo", "value": "bar" }
+              ]
+            },
+            "description": "Open test endpoint — no X-API-TOKEN and no JWT required. Accepts any query parameters, logs the full request on the server, and echoes it back.\n\nReturns HTTP 200."
+          }
+        },
+        {
+          "name": "Static POST",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"anything\": true,\n  \"nested\": { \"x\": 1 }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/static",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "static"]
+            },
+            "description": "Open test endpoint — no X-API-TOKEN and no JWT required. Accepts any body and query parameters, logs the full request on the server, and echoes it back.\n\nReturns HTTP 200."
           }
         }
       ]

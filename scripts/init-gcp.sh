@@ -66,16 +66,23 @@ gcloud artifacts repositories create "$ARTIFACT_REGISTRY_REPO" \
 # 3. Cloud SQL — PostgreSQL 17 (minimal / cheapest config)
 # ---------------------------------------------------------------
 echo "==> Creating Cloud SQL instance (this takes ~5 minutes)..."
-gcloud sql instances create "$CLOUD_SQL_INSTANCE_NAME" \
-  --database-version=POSTGRES_17 \
-  --tier=db-f1-micro \
-  --region="$GCP_REGION" \
-  --storage-size=10GB \
-  --storage-type=HDD \
-  --no-storage-auto-increase \
-  --no-backup \
-  --no-assign-ip \
-  --quiet 2>/dev/null || echo "    (already exists, skipping)"
+# Public IP but no authorized networks: only reachable via the Cloud SQL
+# connector (IAM-authenticated); private IP would require VPC peering setup
+if gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" --quiet >/dev/null 2>&1; then
+  echo "    (already exists, skipping)"
+else
+  gcloud sql instances create "$CLOUD_SQL_INSTANCE_NAME" \
+    --database-version=POSTGRES_17 \
+    --edition=enterprise \
+    --tier=db-f1-micro \
+    --region="$GCP_REGION" \
+    --storage-size=10GB \
+    --storage-type=HDD \
+    --no-storage-auto-increase \
+    --no-backup \
+    --assign-ip \
+    --quiet
+fi
 
 # Retrieve full connection name (PROJECT:REGION:INSTANCE)
 INSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" \
@@ -92,13 +99,28 @@ gcloud sql users create "$CLOUD_SQL_DB_USER" \
   --password="$DB_PASSWORD" \
   --quiet 2>/dev/null || echo "    (already exists, skipping)"
 
+# Create a service account (idempotent) and wait until it is readable —
+# add-iam-policy-binding right after create otherwise races the propagation
+# and fails with "Service account ... does not exist".
+ensure_service_account() {
+  local name=$1 display=$2
+  local email="$name@$GCP_PROJECT_ID.iam.gserviceaccount.com"
+  if ! gcloud iam service-accounts describe "$email" --quiet >/dev/null 2>&1; then
+    gcloud iam service-accounts create "$name" --display-name="$display" --quiet
+  fi
+  for _ in $(seq 1 12); do
+    gcloud iam service-accounts describe "$email" --quiet >/dev/null 2>&1 && return 0
+    sleep 5
+  done
+  echo "ERROR: service account $email not visible after creation" >&2
+  return 1
+}
+
 # ---------------------------------------------------------------
 # 4. Service account for Cloud Run (the running app)
 # ---------------------------------------------------------------
 echo "==> Creating Cloud Run service account..."
-gcloud iam service-accounts create "$CLOUD_RUN_SA" \
-  --display-name="Bejo Cloud Run" \
-  --quiet 2>/dev/null || echo "    (already exists, skipping)"
+ensure_service_account "$CLOUD_RUN_SA" "Bejo Cloud Run"
 
 CLOUD_RUN_SA_EMAIL="$CLOUD_RUN_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
 
@@ -113,9 +135,7 @@ done
 # 5. Service account for GitHub Actions (CI/CD)
 # ---------------------------------------------------------------
 echo "==> Creating GitHub Actions service account..."
-gcloud iam service-accounts create "$GITHUB_ACTIONS_SA" \
-  --display-name="Bejo GitHub Actions" \
-  --quiet 2>/dev/null || echo "    (already exists, skipping)"
+ensure_service_account "$GITHUB_ACTIONS_SA" "Bejo GitHub Actions"
 
 GITHUB_ACTIONS_SA_EMAIL="$GITHUB_ACTIONS_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
 
@@ -170,24 +190,42 @@ create_or_update_secret "bejo-seed-password"        "$SEED_PASSWORD"
 # ---------------------------------------------------------------
 IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPO/$GCP_SERVICE_NAME:latest"
 
-echo "==> Configuring Docker auth for Artifact Registry..."
-gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+# docker in CI; podman on this machine (gcloud's configure-docker helper
+# only writes docker config, so podman logs in with an access token instead)
+if command -v docker >/dev/null 2>&1; then
+  CONTAINER_CLI=docker
+  echo "==> Configuring Docker auth for Artifact Registry..."
+  gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+else
+  CONTAINER_CLI=podman
+  echo "==> Logging podman into Artifact Registry..."
+  gcloud auth print-access-token | podman login -u oauth2accesstoken --password-stdin "$GCP_REGION-docker.pkg.dev"
+fi
 
 echo "==> Building and pushing initial Docker image..."
-docker build -t "$IMAGE" "$SCRIPT_DIR/.."
-docker push "$IMAGE"
+# Cloud Run runs amd64 — force the target platform so an arm64 build machine
+# (e.g. Apple Silicon) doesn't produce an image that fails with "exec format error"
+"$CONTAINER_CLI" build --platform=linux/amd64 -t "$IMAGE" "$SCRIPT_DIR/.."
+"$CONTAINER_CLI" push "$IMAGE"
 
 # ---------------------------------------------------------------
 # 8. Initial Cloud Run deployment
 # ---------------------------------------------------------------
 echo "==> Deploying to Cloud Run..."
 
-SEED_ENV_VARS="SEED_USERNAME=${SEED_USERNAME:-admin},SEED_NAME=${SEED_NAME:-Admin User}"
-SEED_ENV_VARS+=",SEED_BUSINESS_NAME=${SEED_BUSINESS_NAME:-My Business}"
-[[ -n "${SEED_BUSINESS_ADDRESS:-}" ]] && SEED_ENV_VARS+=",SEED_BUSINESS_ADDRESS=$SEED_BUSINESS_ADDRESS"
-[[ -n "${SEED_NMID:-}" ]]            && SEED_ENV_VARS+=",SEED_NMID=$SEED_NMID"
-
 DB_URL="jdbc:postgresql:///$CLOUD_SQL_DB_NAME?cloudSqlInstance=$INSTANCE_CONNECTION_NAME&socketFactory=com.google.cloud.sql.postgres.SocketFactory"
+
+# Build all env vars into one flag using gcloud's alternate delimiter (^@^)
+# so individual values may contain commas — e.g. a business address like
+# "Jl. Contoh No. 1, Jakarta" (default comma delimiter would mis-split it).
+ENV_VARS="DB_URL=$DB_URL"
+ENV_VARS+="@DB_USERNAME=$CLOUD_SQL_DB_USER"
+ENV_VARS+="@SPRING_PROFILES_ACTIVE=prod"
+ENV_VARS+="@SEED_USERNAME=${SEED_USERNAME:-admin}"
+ENV_VARS+="@SEED_NAME=${SEED_NAME:-Admin User}"
+ENV_VARS+="@SEED_BUSINESS_NAME=${SEED_BUSINESS_NAME:-My Business}"
+[[ -n "${SEED_BUSINESS_ADDRESS:-}" ]] && ENV_VARS+="@SEED_BUSINESS_ADDRESS=$SEED_BUSINESS_ADDRESS"
+[[ -n "${SEED_NMID:-}" ]]            && ENV_VARS+="@SEED_NMID=$SEED_NMID"
 
 gcloud run deploy "$GCP_SERVICE_NAME" \
   --image="$IMAGE" \
@@ -195,10 +233,7 @@ gcloud run deploy "$GCP_SERVICE_NAME" \
   --platform=managed \
   --service-account="$CLOUD_RUN_SA_EMAIL" \
   --add-cloudsql-instances="$INSTANCE_CONNECTION_NAME" \
-  --set-env-vars="DB_URL=$DB_URL" \
-  --set-env-vars="DB_USERNAME=$CLOUD_SQL_DB_USER" \
-  --set-env-vars="SPRING_PROFILES_ACTIVE=prod" \
-  --set-env-vars="$SEED_ENV_VARS" \
+  --set-env-vars="^@^$ENV_VARS" \
   --set-secrets="DB_PASSWORD=bejo-db-password:latest" \
   --set-secrets="JWT_SECRET=bejo-jwt-secret:latest" \
   --set-secrets="API_TOKEN=bejo-api-token:latest" \
@@ -226,7 +261,8 @@ echo "==> DNS records to add at your registrar for $CUSTOM_DOMAIN:"
 gcloud run domain-mappings describe \
   --domain="$CUSTOM_DOMAIN" \
   --region="$GCP_REGION" \
-  --format="table(status.resourceRecords[].name,status.resourceRecords[].rrdata,status.resourceRecords[].type)"
+  --format="table(status.resourceRecords[].name,status.resourceRecords[].rrdata,status.resourceRecords[].type)" \
+  || echo "    (domain mapping not created — verify $CUSTOM_DOMAIN ownership in Search Console, then re-run this script)"
 
 echo ""
 echo "==> Done!"

@@ -65,17 +65,20 @@ Authorization: Bearer <JWT>
 
 The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` validates signature + expiry and rejects blacklisted (logged-out) tokens; controllers resolve the username via Spring's `Authentication` principal.
 
-`/actuator/**` is exempt from both checks.
+`/actuator/**` and `/api/static` are exempt from both checks.
 
 ## API endpoints
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| `GET`/`POST` | `/api/static` | None | Open test endpoint: accepts any params/body, logs the request, echoes it back |
 | `POST` | `/api/auth/register` | Public | Create user + bank + QRIS rows |
 | `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti) |
 | `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive) |
 | `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header |
+| `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable) |
+| `DELETE` | `/api/transactions/{transactionId}` | JWT | Soft-delete a transaction (sets `deleted_at`) |
 | `PUT` | `/api/devices/{deviceId}/fcm-token` | JWT | Update FCM push token (scoped to the authenticated user's session) |
 | `POST` | `/api/notifications` | JWT | Send FCM push notification + record the transaction |
 | `GET` | `/api/qris` | JWT | QRIS image; `type` = `UPLOADED` (custom) or `MANAGED` (generated) |
@@ -119,6 +122,10 @@ Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by cons
 
 Users are created via `POST /api/auth/register` (creates `users`, `user_banks`, and `user_qris` rows) or by `DataSeeder` at startup when `SEED_PASSWORD` is set.
 
+### Transaction soft delete
+
+`cuan_history.deleted_at = NULL` → active; non-null → deleted (V2 migration). `DELETE /api/transactions/{transactionId}` sets the timestamp; the row is never removed. History/edit/delete queries filter on `deleted_at IS NULL`, but `existsByTransactionId` and the idempotency-key replay lookup deliberately include deleted rows — the DB unique constraints span all rows, so a deleted `transaction_id`/`idempotency_key` still can't be reused.
+
 ### QRIS model
 
 `user_qris.qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
@@ -133,13 +140,13 @@ Users are created via `POST /api/auth/register` (creates `users`, `user_banks`, 
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/V1__init_schema.sql`) at app startup; `ddl-auto: none`. Never edit V1 in place for schema changes — add a new versioned migration.
+Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
 
 Key tables:
 - `users` — credentials + profile + business info (with `initial_*` columns for reset)
 - `user_banks` / `user_qris` — one row per username (unique FK)
 - `cuan_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
-- `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`
+- `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`
 - `token_blacklist` — logged-out JWT jtis, purged hourly after expiry
 
 ## Tests

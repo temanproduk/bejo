@@ -1,6 +1,7 @@
 package com.bejo.controller;
 
 import com.bejo.dto.request.AddTransactionRequest;
+import com.bejo.dto.request.UpdateTransactionRequest;
 import com.bejo.dto.response.ApiResponse;
 import com.bejo.dto.response.TransactionCreatedData;
 import com.bejo.dto.response.TransactionDto;
@@ -33,6 +34,23 @@ public class TransactionController {
         TransactionCreatedData data = transactionService.create(authentication.getName(), idempotencyKey, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Transaksi berhasil ditambahkan", data));
+    }
+
+    @PatchMapping("/{transactionId}")
+    public ResponseEntity<ApiResponse<TransactionDto>> updateTransaction(
+            @PathVariable String transactionId,
+            @Valid @RequestBody UpdateTransactionRequest request,
+            Authentication authentication) {
+        TransactionDto data = transactionService.update(authentication.getName(), transactionId, request);
+        return ResponseEntity.ok(ApiResponse.success("Transaksi berhasil diubah", data));
+    }
+
+    @DeleteMapping("/{transactionId}")
+    public ResponseEntity<ApiResponse<Void>> deleteTransaction(
+            @PathVariable String transactionId,
+            Authentication authentication) {
+        transactionService.delete(authentication.getName(), transactionId);
+        return ResponseEntity.ok(ApiResponse.success("Transaksi berhasil dihapus", null));
     }
 
     @GetMapping

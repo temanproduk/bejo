@@ -1,6 +1,7 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.AddTransactionRequest;
+import com.bejo.dto.request.UpdateTransactionRequest;
 import com.bejo.dto.response.TransactionCreatedData;
 import com.bejo.dto.response.TransactionDto;
 import com.bejo.entity.Transaction;
@@ -114,25 +115,25 @@ class TransactionServiceTest {
     @Test
     void historyWithoutDatesFetchesEverything() {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByUsernameOrderByTransactionDateDesc("alice"))
+        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice"))
                 .thenReturn(List.of());
 
         List<TransactionDto> result = transactionService.getHistory("alice", null, null);
 
         assertThat(result).isEmpty();
-        verify(transactionRepository).findByUsernameOrderByTransactionDateDesc("alice");
+        verify(transactionRepository).findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice");
     }
 
     @Test
     void historyWithBothDatesUsesInclusiveEndOfDay() {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByUsernameAndTransactionDateBetweenOrderByTransactionDateDesc(
+        when(transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
                 eq("alice"), any(), any())).thenReturn(List.of());
 
         transactionService.getHistory("alice", LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 1));
 
         ArgumentCaptor<LocalDateTime> endCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(transactionRepository).findByUsernameAndTransactionDateBetweenOrderByTransactionDateDesc(
+        verify(transactionRepository).findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
                 eq("alice"), eq(LocalDate.of(2026, 7, 1).atStartOfDay()), endCaptor.capture());
         // End bound must cover the entire final day
         assertThat(endCaptor.getValue()).isAfter(LocalDateTime.of(2026, 7, 1, 23, 59, 59));
@@ -152,7 +153,7 @@ class TransactionServiceTest {
         t.setSource("GoPay");
 
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(u));
-        when(transactionRepository.findByUsernameOrderByTransactionDateDesc("alice"))
+        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice"))
                 .thenReturn(List.of(t));
 
         List<TransactionDto> result = transactionService.getHistory("alice", null, null);
@@ -160,5 +161,115 @@ class TransactionServiceTest {
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().merchantName()).isEqualTo("Warung Alice");
         assertThat(result.getFirst().issuerName()).isEqualTo("GoPay");
+    }
+
+    private Transaction activeTransaction() {
+        Transaction t = new Transaction();
+        t.setTransactionId("TXN-1");
+        t.setTransactionDate(LocalDateTime.of(2026, 7, 1, 10, 0));
+        t.setAmount(25_000L);
+        t.setType("MANUAL");
+        t.setAcquirer("Cash");
+        t.setSource("GoPay");
+        t.setUsername("alice");
+        return t;
+    }
+
+    @Test
+    void deleteSetsDeletedAtInsteadOfRemovingRow() {
+        Transaction t = activeTransaction();
+        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+                .thenReturn(Optional.of(t));
+
+        transactionService.delete("alice", "TXN-1");
+
+        ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(captor.capture());
+        assertThat(captor.getValue().getDeletedAt()).isNotNull();
+        verify(transactionRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteUnknownOrForeignTransactionIs404() {
+        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-X", "alice"))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> transactionService.delete("alice", "TXN-X"))
+                .isInstanceOf(com.bejo.exception.ResourceNotFoundException.class);
+    }
+
+    @Test
+    void updateAppliesOnlyProvidedFields() {
+        Transaction t = activeTransaction();
+        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+                .thenReturn(Optional.of(t));
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
+
+        UpdateTransactionRequest req = new UpdateTransactionRequest(
+                null, 99_000L, null, null, null, null, null);
+        TransactionDto dto = transactionService.update("alice", "TXN-1", req);
+
+        assertThat(dto.amount()).isEqualTo(99_000L);
+        // Untouched fields keep their values
+        assertThat(dto.issuerName()).isEqualTo("GoPay");
+        assertThat(dto.acquirer()).isEqualTo("Cash");
+        assertThat(dto.transactionDate()).isEqualTo(LocalDateTime.of(2026, 7, 1, 10, 0));
+        verify(transactionRepository).save(t);
+    }
+
+    @Test
+    void updateWithNoFieldsIsRejected() {
+        UpdateTransactionRequest empty = new UpdateTransactionRequest(
+                null, null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", empty))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Tidak ada field");
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void updateManagedTransactionIsRejected() {
+        Transaction t = activeTransaction();
+        t.setType("MANAGED");
+        t.setAcquirer("AstraPay");
+        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+                .thenReturn(Optional.of(t));
+
+        UpdateTransactionRequest req = new UpdateTransactionRequest(
+                null, 99_000L, null, null, null, null, null);
+
+        assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("MANAGED")
+                .hasMessageContaining("tidak dapat diubah");
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void updateWithBlankAcquirerIsRejected() {
+        Transaction t = activeTransaction();
+        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+                .thenReturn(Optional.of(t));
+
+        UpdateTransactionRequest req = new UpdateTransactionRequest(
+                null, null, null, null, null, null, "  ");
+
+        assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("acquirer");
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void updateUnknownOrDeletedTransactionIs404() {
+        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-X", "alice"))
+                .thenReturn(Optional.empty());
+
+        UpdateTransactionRequest req = new UpdateTransactionRequest(
+                null, 10_000L, null, null, null, null, null);
+
+        assertThatThrownBy(() -> transactionService.update("alice", "TXN-X", req))
+                .isInstanceOf(com.bejo.exception.ResourceNotFoundException.class);
     }
 }

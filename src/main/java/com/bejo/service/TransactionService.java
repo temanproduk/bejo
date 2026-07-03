@@ -1,6 +1,7 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.AddTransactionRequest;
+import com.bejo.dto.request.UpdateTransactionRequest;
 import com.bejo.dto.response.TransactionCreatedData;
 import com.bejo.dto.response.TransactionDto;
 import com.bejo.entity.Transaction;
@@ -48,28 +49,17 @@ public class TransactionService {
 
         List<Transaction> txns;
         if (start == null && end == null) {
-            txns = transactionRepository.findByUsernameOrderByTransactionDateDesc(username);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(username);
         } else if (start != null && end != null) {
-            txns = transactionRepository.findByUsernameAndTransactionDateBetweenOrderByTransactionDateDesc(username, start, end);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(username, start, end);
         } else if (start != null) {
-            txns = transactionRepository.findByUsernameAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(username, start);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(username, start);
         } else {
-            txns = transactionRepository.findByUsernameAndTransactionDateLessThanEqualOrderByTransactionDateDesc(username, end);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(username, end);
         }
 
         List<TransactionDto> result = txns.stream()
-                .map(t -> new TransactionDto(
-                        t.getTransactionId(),
-                        t.getTransactionDate(),
-                        t.getAmount(),
-                        t.getType(),
-                        t.getAcquirer(),
-                        t.getSource(),
-                        merchantName,
-                        t.getMerchantPan(),
-                        t.getCustomerPan(),
-                        t.getRrn()
-                ))
+                .map(t -> toDto(t, merchantName))
                 .toList();
 
         transactionFetchCounter.increment(result.size());
@@ -118,5 +108,64 @@ public class TransactionService {
         transactionRepository.save(t);
         log.info("[TXN] Created type={} acquirer={} transactionId={}", request.type(), acquirer, transactionId);
         return new TransactionCreatedData(transactionId);
+    }
+
+    @Transactional
+    public TransactionDto update(String username, String transactionId, UpdateTransactionRequest request) {
+        if (request.isEmpty()) {
+            throw new IllegalArgumentException("Tidak ada field yang diubah");
+        }
+
+        Transaction t = transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull(transactionId, username)
+                .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
+
+        // MANAGED rows are pushed by the Bejo server and are the payment record
+        // of truth — only MANUAL/PARSED entries are user-editable
+        if (!"MANUAL".equals(t.getType()) && !"PARSED".equals(t.getType())) {
+            throw new IllegalArgumentException("Transaksi bertipe " + t.getType() + " tidak dapat diubah");
+        }
+
+        if (request.acquirer() != null && request.acquirer().isBlank()) {
+            throw new IllegalArgumentException("acquirer tidak boleh kosong");
+        }
+
+        if (request.transactionDate() != null) t.setTransactionDate(request.transactionDate());
+        if (request.amount() != null) t.setAmount(request.amount());
+        if (request.issuerName() != null) t.setSource(request.issuerName());
+        if (request.merchantPan() != null) t.setMerchantPan(request.merchantPan());
+        if (request.customerPan() != null) t.setCustomerPan(request.customerPan());
+        if (request.rrn() != null) t.setRrn(request.rrn());
+        if (request.acquirer() != null) t.setAcquirer(request.acquirer());
+        transactionRepository.save(t);
+        log.info("[TXN] Updated transactionId={} username={}", transactionId, username);
+
+        String merchantName = userRepository.findByUsername(username)
+                .map(u -> u.getBusinessName())
+                .orElse(null);
+        return toDto(t, merchantName);
+    }
+
+    @Transactional
+    public void delete(String username, String transactionId) {
+        Transaction t = transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull(transactionId, username)
+                .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
+        t.setDeletedAt(LocalDateTime.now());
+        transactionRepository.save(t);
+        log.info("[TXN] Soft-deleted transactionId={} username={}", transactionId, username);
+    }
+
+    private TransactionDto toDto(Transaction t, String merchantName) {
+        return new TransactionDto(
+                t.getTransactionId(),
+                t.getTransactionDate(),
+                t.getAmount(),
+                t.getType(),
+                t.getAcquirer(),
+                t.getSource(),
+                merchantName,
+                t.getMerchantPan(),
+                t.getCustomerPan(),
+                t.getRrn()
+        );
     }
 }

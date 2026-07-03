@@ -1,10 +1,57 @@
-# Bejo API
+# Bejo
 
-REST API for QRIS payment management. Built with Java 25 and Spring Boot — handles authentication, transaction history, FCM push notifications, QRIS code management, and business profile management.
+**Real-time payment tracking for Indonesian QRIS merchants.**
 
-**Production:** `https://api.bejo.temanproduk.com`
+Bejo is the backend service behind the Bejo merchant mobile app. It turns a static QRIS code into a live point of sale: the moment a customer pays, the merchant's phone rings with a "payment received" notification, and every transaction is stored, searchable, and reconciled in one place.
+
+## The problem
+
+QRIS ([Quick Response Code Indonesian Standard](https://www.bi.go.id/QRIS)) is Bank Indonesia's unified QR payment standard — a single code accepts money from any Indonesian e-wallet or mobile bank (GoPay, OVO, DANA, ShopeePay, bank apps, and more). But a merchant with a printed QRIS sticker has no idea when a payment actually arrives. They have to open their banking app and check, which is slow, error-prone, and easy to game with fake "payment success" screenshots.
+
+Bejo closes that gap.
+
+## What merchants get
+
+- **Instant payment alerts** — a push notification with an audible chime the moment money lands, so staff never have to trust a customer's screenshot.
+- **Transaction history** — every payment recorded and filterable by date, for daily reconciliation and bookkeeping.
+- **Manual & external entries** — record cash sales, or log transactions from another acquirer, alongside QRIS payments. Entries can be edited or removed.
+- **QRIS management** — display a Bejo-generated code or upload the merchant's own image.
+- **Business & bank profile** — keep merchant name, address, National Merchant ID (NMID), and payout bank details up to date, with one-tap reset back to the officially registered values.
+
+## Account types
+
+| Type | Who it's for | What Bejo does |
+|---|---|---|
+| **MANAGED** | Merchants using a Bejo-issued QRIS | Bejo manages the QR and the payment gateway integration, so alerts and the ring sound are delivered automatically on every payment. |
+| **EXTERNAL** | Merchants who keep their own acquirer / QRIS | Bejo stores and tracks the transactions the merchant submits, but does not manage the QR code itself. |
+
+## How a payment flows
+
+1. A customer scans the merchant's QRIS and pays from any Indonesian e-wallet or bank app.
+2. For MANAGED accounts, the payment gateway notifies Bejo, which sends an FCM push (with a ring sound) to the merchant's registered device and records the transaction.
+3. The transaction appears in the merchant's history, available for filtering, reconciliation, and manual correction.
+
+<br />
 
 ---
+---
+
+<div align="center">
+
+# ⚙️ Technical Documentation
+
+The rest of this document is the developer/operator reference for the REST API — stack, running, endpoints, and configuration.
+
+</div>
+
+---
+---
+
+<br />
+
+REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT), transaction history and manual entry, QRIS image management, bank/business profile management, FCM token management, and push notification delivery.
+
+**Production:** `https://api.bejo.temanproduk.com`
 
 ## Contents
 
@@ -21,6 +68,7 @@ REST API for QRIS payment management. Built with Java 25 and Spring Boot — han
   - [Devices](#devices)
   - [User profile](#user-profile)
   - [QRIS](#qris)
+  - [Static](#static)
 - [Error reference](#error-reference)
 - [Observability](#observability)
 - [Configuration](#configuration)
@@ -110,7 +158,7 @@ Every request requires:
 | `Authorization` | Protected only | `Bearer <JWT>` returned by login |
 
 Public (no JWT): `POST /api/auth/register`, `POST /api/auth/login`  
-Exempt entirely: `/actuator/**`
+Exempt entirely: `/actuator/**`, `/api/static`
 
 Tokens expire after `JWT_EXPIRATION_MS` (default 90 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
 
@@ -284,7 +332,7 @@ Blacklists the current JWT server-side. The token is rejected on all subsequent 
 
 #### `GET /api/transactions`
 
-Returns the authenticated user's transaction history, newest first.
+Returns the authenticated user's transaction history, newest first. Soft-deleted transactions are excluded.
 
 **Query parameters**
 
@@ -349,6 +397,61 @@ Adds a transaction manually or from an external acquirer. The server generates `
 ```
 
 **Errors:** `400 Idempotency-Key header wajib diisi`, `400 type harus MANUAL atau PARSED`, `400 acquirer wajib diisi untuk type PARSED`, `400 amount harus lebih dari 0`
+
+---
+
+#### `PATCH /api/transactions/{transactionId}`
+
+Edits a transaction. Partial update — only the fields present in the body are changed; `type` cannot be changed. Only the authenticated user's own (non-deleted) transactions of type `MANUAL` or `PARSED` can be edited — `MANAGED` transactions are pushed by the Bejo server and are immutable.
+
+**Request body** (all fields optional, at least one required)
+
+| Field | Description |
+|---|---|
+| `transactionDate` | ISO 8601 e.g. `2026-06-28T09:14:00` |
+| `amount` | Amount in IDR, must be > 0 |
+| `acquirer` | Acquirer name, max 255 chars, not blank |
+| `issuerName` | Payment issuer name, max 255 chars |
+| `merchantPan` | Max 50 chars |
+| `customerPan` | Max 50 chars |
+| `rrn` | Max 255 chars |
+
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "message": "Transaksi berhasil diubah",
+  "data": {
+    "transactionId": "TXN-A1B2C3D4E5F6",
+    "transactionDate": "2026-06-28T09:14:00",
+    "amount": 60000,
+    "type": "MANUAL",
+    "acquirer": "Cash",
+    "issuerName": "OVO",
+    "merchantName": "Warung Bejo"
+  }
+}
+```
+
+**Errors:** `400 Tidak ada field yang diubah`, `400 Transaksi bertipe MANAGED tidak dapat diubah`, `400 amount harus lebih dari 0`, `400 acquirer tidak boleh kosong`, `404 Transaction not found` (unknown, deleted, or another user's transaction)
+
+---
+
+#### `DELETE /api/transactions/{transactionId}`
+
+Soft-deletes a transaction: the row is kept in the database with a `deleted_at` timestamp and disappears from history. Deletion cannot be undone via the API. Only the authenticated user's own transactions can be deleted.
+
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "message": "Transaksi berhasil dihapus"
+}
+```
+
+**Errors:** `404 Transaction not found` (unknown, already deleted, or another user's transaction)
 
 ---
 
@@ -545,6 +648,35 @@ Clears the uploaded image and reverts to the initial QRIS image.
 
 ---
 
+### Static
+
+#### `GET | POST /api/static`
+
+Open test endpoint — **no `X-API-TOKEN` and no JWT required**. Accepts any query parameters and (for POST) any request body, logs the full request (method, path, params, headers, body) on the server, and echoes it back. Useful for connectivity checks and webhook/client debugging.
+
+```bash
+curl "https://<host>/api/static?foo=bar"
+curl -X POST "https://<host>/api/static" -H "Content-Type: application/json" -d '{"anything": true}'
+```
+
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "message": "Static endpoint reached",
+  "data": {
+    "method": "POST",
+    "path": "/api/static",
+    "body": "{\"anything\": true}"
+  }
+}
+```
+
+`params` and `body` are included in `data` only when present.
+
+---
+
 ## Error reference
 
 Errors shared across all endpoints:
@@ -557,7 +689,10 @@ Errors shared across all endpoints:
 | 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing, expired, or logged-out (blacklisted) JWT |
 | 404 | `Route not found` | Unknown path |
 | 405 | `Method not allowed: <METHOD>` | Wrong HTTP method |
-| 409 | `Data tidak valid atau sudah terdaftar` | Database constraint violation |
+| 409 | `Username sudah digunakan` | Username already registered |
+| 409 | `transactionId sudah terdaftar` | Duplicate `transaction_id` |
+| 409 | `Permintaan dengan Idempotency-Key ini sedang diproses, coba lagi sebentar` | Concurrent request with the same `Idempotency-Key` |
+| 409 | `Data tidak valid atau sudah terdaftar` | Other database constraint violation |
 | 500 | `Internal server error` | Unexpected server error |
 
 ---

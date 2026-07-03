@@ -31,6 +31,7 @@ class ApiIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private com.bejo.repository.TransactionRepository transactionRepository;
 
     // ---------- helpers ----------
 
@@ -347,6 +348,230 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + tokenB))
                 .andExpect(jsonPath("$.count").value(0));
+    }
+
+    private String createTransaction(String token, String idempotencyKey, long amount) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "type", "MANUAL",
+                                "transactionDate", "2026-07-01T10:30:00",
+                                "amount", amount))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString())
+                .at("/data/transactionId").asText();
+    }
+
+    @Test
+    void deletedTransactionDisappearsFromHistory() throws Exception {
+        String token = registerAndLogin("txn_user7");
+        String keepId = createTransaction(token, "del-key-1", 10000);
+        String deleteId = createTransaction(token, "del-key-2", 20000);
+
+        mockMvc.perform(delete("/api/transactions/" + deleteId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(1));
+
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].transactionId").value(keepId));
+
+        // Deleting the same transaction again is a 404 (already soft-deleted)
+        mockMvc.perform(delete("/api/transactions/" + deleteId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void userCannotDeleteAnotherUsersTransaction() throws Exception {
+        String tokenA = registerAndLogin("txn_user8a");
+        String tokenB = registerAndLogin("txn_user8b");
+        String txnId = createTransaction(tokenA, "del-key-3", 30000);
+
+        mockMvc.perform(delete("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tokenB))
+                .andExpect(status().isNotFound());
+
+        // Still visible to its owner
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tokenA))
+                .andExpect(jsonPath("$.count").value(1));
+    }
+
+    @Test
+    void idempotencyKeyOfDeletedTransactionStillReplays() throws Exception {
+        String token = registerAndLogin("txn_user9");
+        String txnId = createTransaction(token, "del-key-4", 40000);
+
+        mockMvc.perform(delete("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        // Replaying the same key returns the deleted transaction's id
+        // instead of violating the unique constraint with a new insert
+        MvcResult replay = mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "del-key-4")
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "type", "MANUAL",
+                                "transactionDate", "2026-07-01T10:30:00",
+                                "amount", 40000))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String replayId = objectMapper.readTree(replay.getResponse().getContentAsString())
+                .at("/data/transactionId").asText();
+        assertThat(replayId).isEqualTo(txnId);
+
+        // History stays empty — the row remains soft-deleted
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(0));
+    }
+
+    @Test
+    void editTransactionUpdatesOnlyProvidedFields() throws Exception {
+        String token = registerAndLogin("txn_user10");
+        String txnId = createTransaction(token, "edit-key-1", 50000);
+
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "amount", 60000,
+                                "issuerName", "OVO"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.transactionId").value(txnId))
+                .andExpect(jsonPath("$.data.amount").value(60000))
+                .andExpect(jsonPath("$.data.issuerName").value("OVO"))
+                // Untouched fields survive
+                .andExpect(jsonPath("$.data.acquirer").value("Cash"))
+                .andExpect(jsonPath("$.data.type").value("MANUAL"));
+
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data[0].amount").value(60000));
+    }
+
+    @Test
+    void editRejectsEmptyBodyAndInvalidAmount() throws Exception {
+        String token = registerAndLogin("txn_user11");
+        String txnId = createTransaction(token, "edit-key-2", 50000);
+
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", -1))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void managedTransactionCannotBeEditedButCanBeDeleted() throws Exception {
+        String token = registerAndLogin("txn_user13");
+
+        // MANAGED rows are created by the notification flow (needs Firebase),
+        // so seed one directly
+        com.bejo.entity.Transaction t = new com.bejo.entity.Transaction();
+        t.setTransactionId("TXN-MANAGED-1");
+        t.setTransactionDate(java.time.LocalDateTime.of(2026, 7, 1, 10, 0));
+        t.setAmount(15000L);
+        t.setUsername("txn_user13");
+        t.setType("MANAGED");
+        t.setAcquirer("AstraPay");
+        t.setStatus("SUCCESS");
+        transactionRepository.save(t);
+
+        mockMvc.perform(patch("/api/transactions/TXN-MANAGED-1")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Transaksi bertipe MANAGED tidak dapat diubah"));
+
+        // Delete is still allowed for MANAGED
+        mockMvc.perform(delete("/api/transactions/TXN-MANAGED-1")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void editDeletedOrForeignTransactionIs404() throws Exception {
+        String tokenA = registerAndLogin("txn_user12a");
+        String tokenB = registerAndLogin("txn_user12b");
+        String txnId = createTransaction(tokenA, "edit-key-3", 50000);
+
+        // Another user cannot edit it
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tokenB)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", 1))))
+                .andExpect(status().isNotFound());
+
+        // After soft delete the owner cannot edit it either
+        mockMvc.perform(delete("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tokenA))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", 1))))
+                .andExpect(status().isNotFound());
+    }
+
+    // ---------- static ----------
+
+    @Test
+    void staticEndpointAcceptsGetWithoutAnyAuth() throws Exception {
+        mockMvc.perform(get("/api/static")
+                        .param("foo", "bar")
+                        .param("answer", "42"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(1))
+                .andExpect(jsonPath("$.message").value("Static endpoint reached"))
+                .andExpect(jsonPath("$.data.method").value("GET"))
+                .andExpect(jsonPath("$.data.params.foo").value("bar"))
+                .andExpect(jsonPath("$.data.params.answer").value("42"));
+    }
+
+    @Test
+    void staticEndpointAcceptsPostWithArbitraryBody() throws Exception {
+        mockMvc.perform(post("/api/static")
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"anything\":true,\"nested\":{\"x\":1}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(1))
+                .andExpect(jsonPath("$.data.method").value("POST"))
+                .andExpect(jsonPath("$.data.body").value("{\"anything\":true,\"nested\":{\"x\":1}}"));
     }
 
     // ---------- devices ----------
