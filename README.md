@@ -105,6 +105,8 @@ bash scripts/init-gcp.sh
 
 Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
 
+**Runtime scaling (Cloud Run, us-central1):** 1 vCPU / 512 MiB, **0–2 instances** — scales to **zero** when idle so there's no cost between requests, up to 2 under load. CPU is throttled to request time (request-based billing). `spring.main.lazy-initialization` is enabled to keep cold starts (from scale-to-zero) fast. Old images are pruned by an Artifact Registry cleanup policy (keep 5 most recent / delete >30 days).
+
 ### Local — Docker Compose
 
 ```bash
