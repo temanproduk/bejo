@@ -24,9 +24,9 @@
     },
     {
       "key": "apiToken",
-      "value": "temanproduk-api",
+      "value": "REPLACE_WITH_YOUR_API_TOKEN",
       "type": "string",
-      "description": "Matches API_TOKEN in .env — sent as X-API-TOKEN header on every request"
+      "description": "Matches API_TOKEN in .env — set this locally, do NOT commit the real value. Sent as X-API-TOKEN header on every request."
     },
     {
       "key": "token",

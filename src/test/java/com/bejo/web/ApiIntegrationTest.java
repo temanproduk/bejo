@@ -104,6 +104,15 @@ class ApiIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void actuatorMetricsRequiresApiToken() throws Exception {
+        // Non-health actuator endpoints must NOT be public
+        mockMvc.perform(get("/actuator/metrics"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/actuator/metrics").header("X-API-TOKEN", API_TOKEN))
+                .andExpect(status().isOk());
+    }
+
     // ---------- auth ----------
 
     @Test

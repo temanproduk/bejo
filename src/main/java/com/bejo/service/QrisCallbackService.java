@@ -21,6 +21,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -114,7 +115,7 @@ public class QrisCallbackService {
         // Best-effort push to the merchant's devices — must never fail the callback
         try {
             pushNotificationService.sendToUser(username, buildPushData(t, merchant.getBusinessName()));
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             log.error("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
                     transactionId, e.getMessage(), e);
         }
@@ -178,10 +179,10 @@ public class QrisCallbackService {
         if (xTimestamp == null || xTimestamp.isBlank()) return LocalDateTime.now();
         try {
             return OffsetDateTime.parse(xTimestamp).toLocalDateTime();
-        } catch (Exception ignored) {
+        } catch (DateTimeParseException withOffset) {
             try {
                 return LocalDateTime.parse(xTimestamp);
-            } catch (Exception e) {
+            } catch (DateTimeParseException noZone) {
                 log.warn("[CALLBACK] Unparseable X-TIMESTAMP '{}', using now()", xTimestamp);
                 return LocalDateTime.now();
             }

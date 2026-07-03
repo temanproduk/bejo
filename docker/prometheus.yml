@@ -2,6 +2,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# NOTE: /actuator/prometheus now requires the X-API-TOKEN header. Prometheus
+# scrape configs can't send arbitrary headers, so local scraping of this job
+# will 401 until you expose the endpoint differently (e.g. a sidecar proxy that
+# injects the header). Production is unaffected — nothing scrapes it externally.
 scrape_configs:
   - job_name: bejo
     metrics_path: /actuator/prometheus

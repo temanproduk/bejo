@@ -72,8 +72,11 @@ public class PushNotificationService {
                 String messageId = sendToToken(token, data);
                 sent++;
                 log.info("[PUSH] Sent to FCM deviceId={} messageId={}", s.getDeviceId(), messageId);
-            } catch (Exception e) {
-                log.error("[PUSH] Push to FCM FAILED deviceId={}: {}", s.getDeviceId(), e.getMessage(), e);
+            } catch (FirebaseMessagingException e) {
+                log.error("[PUSH] FCM rejected message for deviceId={} errorCode={}: {}",
+                        s.getDeviceId(), e.getMessagingErrorCode(), e.getMessage(), e);
+            } catch (RuntimeException e) {
+                log.error("[PUSH] Unexpected error sending to deviceId={}: {}", s.getDeviceId(), e.getMessage(), e);
             }
         }
         if (withToken == 0) {

@@ -160,9 +160,11 @@ Every request requires:
 | `Authorization` | Protected only | `Bearer <JWT>` returned by login |
 
 Public (no JWT): `POST /api/auth/register`, `POST /api/auth/login`  
-Exempt entirely: `/actuator/**`, `/snap/**` (inbound QRIS payment callbacks — server-to-server)
+Exempt from the API token: `/actuator/health` (for Cloud Run probes) and `/snap/**` (inbound QRIS payment callbacks — server-to-server). All other `/actuator/*` endpoints (metrics, prometheus, info) **require** `X-API-TOKEN`.
 
-Tokens expire after `JWT_EXPIRATION_MS` (default 90 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
+Tokens expire after `JWT_EXPIRATION_MS` (default 7 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
+
+Responses carry standard security headers: HSTS (`max-age` 1 year, `includeSubDomains`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and a locked-down `Content-Security-Policy` (`default-src 'none'`).
 
 ---
 
@@ -210,7 +212,7 @@ Null fields are omitted.
 | `bankNumber` | Yes | Account number (digits only) |
 | `bankAccountName` | Yes | Account holder name |
 
-Initial values (`initialBusinessName`, `initialBusinessAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored server-side and used by reset endpoints — not returned in responses.
+Initial values (`initialBusinessName`, `initialBusinessAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored server-side and used by the reset endpoints. The initial values themselves are never returned directly, but each reset endpoint returns the resulting (reverted) current values so the client can repopulate its form without a re-login.
 
 ### Account types
 
@@ -311,7 +313,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "bankAccountName": "Alice",
     "token": "eyJhbGciOiJIUzI1NiJ9...",
     "tokenType": "Bearer",
-    "expiresIn": 7776000
+    "expiresIn": 604800
   }
 }
 ```
@@ -562,9 +564,23 @@ Does not affect the initial values stored at registration.
 
 #### `POST /api/users/me/business/reset` — Reset business info
 
-Reverts `businessName`, `businessAddress`, and `nmid` to registration values.
+Reverts `businessName`, `businessAddress`, and `nmid` to registration values, and returns the reverted values so the client can repopulate the edit form.
 
-**Success — HTTP 200:** `{ "status": 1, "message": "Informasi bisnis berhasil direset ke data awal" }`
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "message": "Informasi bisnis berhasil direset ke data awal",
+  "data": {
+    "businessName": "Alice Shop",
+    "businessAddress": "Jl. Contoh No. 1",
+    "nmid": "ID1026540778978"
+  }
+}
+```
+
+**Errors:** `400 Data bisnis awal tidak tersedia untuk direset` (no initial values stored)
 
 ---
 
@@ -584,9 +600,23 @@ Does not affect the initial values stored at registration.
 
 #### `POST /api/users/me/bank/reset` — Reset bank info
 
-Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values.
+Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, and returns the reverted values so the client can repopulate the edit form.
 
-**Success — HTTP 200:** `{ "status": 1, "message": "Informasi rekening berhasil direset ke data awal" }`
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "message": "Informasi rekening berhasil direset ke data awal",
+  "data": {
+    "bankName": "Bank BCA",
+    "bankNumber": "1234567890",
+    "bankAccountName": "Alice"
+  }
+}
+```
+
+**Errors:** `400 Data rekening awal tidak tersedia untuk direset` (no initial values stored)
 
 ---
 
@@ -762,7 +792,7 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 |---|---|---|
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
 | `JWT_SECRET` | yes | Base64-encoded signing key, min 256 bits — `openssl rand -base64 32` |
-| `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `7776000000` (90 days); `0` disables expiry |
+| `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `604800000` (7 days); `0` disables expiry |
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | PostgreSQL username |
 | `DB_PASSWORD` | yes | PostgreSQL password |

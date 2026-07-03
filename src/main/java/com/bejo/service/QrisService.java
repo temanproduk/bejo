@@ -6,6 +6,8 @@ import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +21,8 @@ import java.util.Random;
 
 @Service
 public class QrisService {
+
+    private static final Logger log = LoggerFactory.getLogger(QrisService.class);
 
     private final UserRepository userRepository;
     private final UserQrisRepository userQrisRepository;
@@ -36,17 +40,20 @@ public class QrisService {
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
         if (qris.getQrisImage() != null) {
+            log.info("[QRIS] Serving UPLOADED image for username={}", username);
             return new QrisData("UPLOADED", qris.getQrisImage(),
                     user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
         }
 
         String initialImage = qris.getInitialQrisImage();
         if (initialImage == null) {
+            log.info("[QRIS] Generating initial MANAGED image for username={}", username);
             initialImage = generateBase64Image(qris.getQrisCode());
             qris.setInitialQrisImage(initialImage);
             userQrisRepository.save(qris);
         }
 
+        log.info("[QRIS] Serving MANAGED image for username={}", username);
         return new QrisData("MANAGED", initialImage,
                 user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
     }
@@ -60,6 +67,7 @@ public class QrisService {
 
         qris.setQrisImage(base64Image);
         userQrisRepository.save(qris);
+        log.info("[QRIS] Uploaded custom image ({} chars) for username={}", base64Image.length(), username);
     }
 
     @Transactional
@@ -74,6 +82,7 @@ public class QrisService {
         }
 
         userQrisRepository.save(qris);
+        log.info("[QRIS] Reset to MANAGED image for username={}", username);
     }
 
     public String generateBase64Image(String qrisCode) {
@@ -81,6 +90,7 @@ public class QrisService {
             byte[] png = generatePng(qrisCode);
             return Base64.getEncoder().encodeToString(png);
         } catch (IOException e) {
+            log.error("[QRIS] Failed to generate QRIS image: {}", e.getMessage(), e);
             throw new IllegalStateException("Failed to generate QRIS image", e);
         }
     }

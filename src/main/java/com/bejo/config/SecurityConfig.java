@@ -3,6 +3,7 @@ package com.bejo.config;
 import com.bejo.service.JwtService;
 import com.bejo.service.TokenBlacklistService;
 import jakarta.servlet.http.HttpServletResponse;
+import static org.springframework.security.config.Customizer.withDefaults;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -54,6 +55,18 @@ public class SecurityConfig {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .headers(headers -> headers
+                        // HSTS: force HTTPS for a year (TLS terminates at the Cloud Run proxy;
+                        // forward-headers-strategy lets Spring see the original https scheme)
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .maxAgeInSeconds(31_536_000))
+                        .frameOptions(frame -> frame.deny())
+                        .contentTypeOptions(withDefaults())
+                        .referrerPolicy(ref -> ref.policy(
+                                org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        // JSON API returns no HTML/scripts — lock the CSP right down
+                        .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'")))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                         .requestMatchers("/snap/**").permitAll()

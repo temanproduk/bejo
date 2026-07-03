@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.util.StringUtils;
 
 import jakarta.annotation.PostConstruct;
@@ -15,7 +16,11 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Base64;
 
+// @Lazy(false): force eager init despite spring.main.lazy-initialization=true —
+// this bean's only job is the @PostConstruct side effect, and nothing injects it,
+// so under lazy init it would otherwise never be created and Firebase never starts.
 @Configuration
+@Lazy(false)
 public class FirebaseConfig {
 
     private static final Logger log = LoggerFactory.getLogger(FirebaseConfig.class);

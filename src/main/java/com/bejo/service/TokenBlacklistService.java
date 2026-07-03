@@ -4,13 +4,17 @@ import com.bejo.entity.TokenBlacklist;
 import com.bejo.repository.TokenBlacklistRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
+// @Lazy(false): ensure the bean is created at startup so its @Scheduled purge
+// is registered even with spring.main.lazy-initialization=true.
 @Service
+@Lazy(false)
 public class TokenBlacklistService {
 
     private static final Logger log = LoggerFactory.getLogger(TokenBlacklistService.class);

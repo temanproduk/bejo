@@ -37,7 +37,7 @@ podman compose restart app
 |---|---|
 | `API_TOKEN` | Shared secret required in `X-API-TOKEN` on every request |
 | `JWT_SECRET` | Base64-encoded secret, min 256 bits. Generate: `openssl rand -base64 32` |
-| `JWT_EXPIRATION_MS` | Token TTL in milliseconds (default `7776000000` = 90 days; `0` disables expiry) |
+| `JWT_EXPIRATION_MS` | Token TTL in milliseconds (default `604800000` = 7 days; `0` disables expiry) |
 | `DB_URL` | JDBC URL, e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` / `DB_PASSWORD` | PostgreSQL credentials |
 | `FIREBASE_CREDENTIALS_BASE64` | Base64-encoded Firebase service account JSON |
@@ -65,7 +65,7 @@ Authorization: Bearer <JWT>
 
 The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` validates signature + expiry and rejects blacklisted (logged-out) tokens; controllers resolve the username via Spring's `Authentication` principal.
 
-`/actuator/**` and `/snap/**` (inbound QRIS payment callbacks) are exempt from both checks.
+`/actuator/health` (Cloud Run probes) and `/snap/**` (inbound QRIS payment callbacks) are exempt from both checks. Other `/actuator/*` endpoints (metrics, prometheus, info) require `X-API-TOKEN` but not a JWT. Responses include HSTS + hardening headers (`SecurityConfig.headers`); `server.forward-headers-strategy: framework` lets Spring see the Cloud Run proxy's HTTPS scheme so HSTS is emitted.
 
 ## API endpoints
 

@@ -34,6 +34,9 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
+  # Honor X-Forwarded-* from the Cloud Run proxy so Spring sees the original HTTPS
+  # scheme/host (required for correct HSTS emission and redirect URLs).
+  forward-headers-strategy: framework
 
 management:
   endpoints:
@@ -58,8 +61,8 @@ app:
   jwt:
     # Base64-encoded secret, minimum 256 bits. Generate with: openssl rand -base64 32
     secret: ${JWT_SECRET:YmVqby1kZXYtc2VjcmV0LWtleS1tdXN0LWJlLWNoYW5nZWQtaW4tcHJvZHVjdGlvbi1taW4tMjU2Yml0cw==}
-    # Token TTL in milliseconds (default 90 days). Set to 0 to disable expiry.
-    expiration-ms: ${JWT_EXPIRATION_MS:7776000000}
+    # Token TTL in milliseconds (default 7 days). Set to 0 to disable expiry.
+    expiration-ms: ${JWT_EXPIRATION_MS:604800000}
   seed:
     username: ${SEED_USERNAME:admin}
     password: ${SEED_PASSWORD:}

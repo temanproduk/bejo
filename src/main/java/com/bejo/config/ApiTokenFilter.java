@@ -32,7 +32,10 @@ public class ApiTokenFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
         String uri = request.getRequestURI();
-        if (uri.startsWith("/actuator") || uri.startsWith("/snap/")) {
+        // Only /actuator/health (+ liveness/readiness groups) is open — it must be
+        // reachable by Cloud Run probes, which can't send X-API-TOKEN. Metrics,
+        // prometheus and info require the API token like every other endpoint.
+        if (uri.startsWith("/actuator/health") || uri.startsWith("/snap/")) {
             chain.doFilter(request, response);
             return;
         }
