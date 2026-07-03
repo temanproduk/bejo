@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-public record UpdateBankRequest(
+public record UpdateBankRequestDto(
         @NotBlank(message = "Nama bank wajib diisi")
         @Size(max = 100, message = "Nama bank maksimal 100 karakter")
         String bankName,

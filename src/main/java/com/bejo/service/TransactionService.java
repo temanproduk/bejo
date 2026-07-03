@@ -1,9 +1,9 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.AddTransactionRequest;
-import com.bejo.dto.request.UpdateTransactionRequest;
-import com.bejo.dto.response.TransactionCreatedData;
-import com.bejo.dto.response.TransactionDto;
+import com.bejo.dto.request.AddTransactionRequestDto;
+import com.bejo.dto.request.UpdateTransactionRequestDto;
+import com.bejo.dto.response.TransactionCreatedResponseDto;
+import com.bejo.dto.response.TransactionResponseDto;
 import com.bejo.entity.Transaction;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.TransactionRepository;
@@ -37,7 +37,7 @@ public class TransactionService {
         this.transactionFetchCounter = Counter.builder("transactions.fetched").register(meterRegistry);
     }
 
-    public List<TransactionDto> getHistory(String username, LocalDate dateStart, LocalDate dateEnd) {
+    public List<TransactionResponseDto> getHistory(String username, LocalDate dateStart, LocalDate dateEnd) {
         log.info("[HISTORY] username={} dateStart={} dateEnd={}", username, dateStart, dateEnd);
 
         String merchantName = userRepository.findByUsername(username)
@@ -58,7 +58,7 @@ public class TransactionService {
             txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(username, end);
         }
 
-        List<TransactionDto> result = txns.stream()
+        List<TransactionResponseDto> result = txns.stream()
                 .map(t -> toDto(t, merchantName))
                 .toList();
 
@@ -68,7 +68,7 @@ public class TransactionService {
     }
 
     @Transactional
-    public TransactionCreatedData create(String username, String idempotencyKey, AddTransactionRequest request) {
+    public TransactionCreatedResponseDto create(String username, String idempotencyKey, AddTransactionRequestDto request) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new IllegalArgumentException("Idempotency-Key header wajib diisi");
         }
@@ -77,7 +77,7 @@ public class TransactionService {
         var existing = transactionRepository.findByIdempotencyKeyAndUsername(idempotencyKey, username);
         if (existing.isPresent()) {
             log.info("[TXN] Idempotent replay key={} username={} transactionId={}", idempotencyKey, username, existing.get().getTransactionId());
-            return new TransactionCreatedData(existing.get().getTransactionId());
+            return new TransactionCreatedResponseDto(existing.get().getTransactionId());
         }
 
         userRepository.findByUsername(username)
@@ -107,11 +107,11 @@ public class TransactionService {
         t.setScrapeDate(LocalDateTime.now());
         transactionRepository.save(t);
         log.info("[TXN] Created type={} acquirer={} transactionId={}", request.type(), acquirer, transactionId);
-        return new TransactionCreatedData(transactionId);
+        return new TransactionCreatedResponseDto(transactionId);
     }
 
     @Transactional
-    public TransactionDto update(String username, String transactionId, UpdateTransactionRequest request) {
+    public TransactionResponseDto update(String username, String transactionId, UpdateTransactionRequestDto request) {
         if (request.isEmpty()) {
             throw new IllegalArgumentException("Tidak ada field yang diubah");
         }
@@ -154,8 +154,8 @@ public class TransactionService {
         log.info("[TXN] Soft-deleted transactionId={} username={}", transactionId, username);
     }
 
-    private TransactionDto toDto(Transaction t, String merchantName) {
-        return new TransactionDto(
+    private TransactionResponseDto toDto(Transaction t, String merchantName) {
+        return new TransactionResponseDto(
                 t.getTransactionId(),
                 t.getTransactionDate(),
                 t.getAmount(),

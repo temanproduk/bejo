@@ -1,14 +1,22 @@
 package com.bejo.dto.request;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 
-// Partial update — null fields are left unchanged
-public record UpdateTransactionRequest(
+public record AddTransactionRequestDto(
+        @NotBlank(message = "type wajib diisi")
+        @Pattern(regexp = "^(MANUAL|PARSED)$", message = "type harus MANUAL atau PARSED")
+        String type,
+
+        @NotNull(message = "transactionDate wajib diisi")
         LocalDateTime transactionDate,
 
+        @NotNull(message = "amount wajib diisi")
         @Positive(message = "amount harus lebih dari 0")
         Long amount,
 
@@ -24,11 +32,7 @@ public record UpdateTransactionRequest(
         @Size(max = 255, message = "rrn maksimal 255 karakter")
         String rrn,
 
+        // Required when type = PARSED; validated in service (cross-field rule)
         @Size(max = 255, message = "acquirer maksimal 255 karakter")
         String acquirer
-) {
-    public boolean isEmpty() {
-        return transactionDate == null && amount == null && issuerName == null
-                && merchantPan == null && customerPan == null && rrn == null && acquirer == null;
-    }
-}
+) {}

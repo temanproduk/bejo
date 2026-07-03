@@ -10,7 +10,7 @@ import jakarta.validation.constraints.NotNull;
  * Unknown fields are ignored so the contract tolerates payload additions.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record QrMpmNotifyRequest(
+public record QrMpmNotifyRequestDto(
         @NotBlank(message = "originalReferenceNo wajib diisi")
         String originalReferenceNo,
 

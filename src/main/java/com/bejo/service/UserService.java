@@ -1,11 +1,11 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.ChangePasswordRequest;
-import com.bejo.dto.request.UpdateBankRequest;
-import com.bejo.dto.request.UpdateBusinessRequest;
-import com.bejo.dto.request.UpdateProfileRequest;
-import com.bejo.dto.response.BankData;
-import com.bejo.dto.response.BusinessData;
+import com.bejo.dto.request.ChangePasswordRequestDto;
+import com.bejo.dto.request.UpdateBankRequestDto;
+import com.bejo.dto.request.UpdateBusinessRequestDto;
+import com.bejo.dto.request.UpdateProfileRequestDto;
+import com.bejo.dto.response.BankResponseDto;
+import com.bejo.dto.response.BusinessResponseDto;
 import com.bejo.entity.UserBank;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.UserBankRepository;
@@ -34,7 +34,7 @@ public class UserService {
     }
 
     @Transactional
-    public void updateProfile(String username, UpdateProfileRequest request) {
+    public void updateProfile(String username, UpdateProfileRequestDto request) {
         log.info("[PROFILE] username={}", username);
         var user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -46,7 +46,7 @@ public class UserService {
     }
 
     @Transactional
-    public void updateBusiness(String username, UpdateBusinessRequest request) {
+    public void updateBusiness(String username, UpdateBusinessRequestDto request) {
         log.info("[BUSINESS] username={}", username);
         var user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -58,7 +58,7 @@ public class UserService {
     }
 
     @Transactional
-    public BusinessData resetBusiness(String username) {
+    public BusinessResponseDto resetBusiness(String username) {
         log.info("[BUSINESS RESET] username={}", username);
         var user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -70,11 +70,11 @@ public class UserService {
         user.setNmid(user.getInitialNmid());
         userRepository.save(user);
         log.info("[BUSINESS RESET] Reverted for username={}", username);
-        return new BusinessData(user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
+        return new BusinessResponseDto(user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
     }
 
     @Transactional
-    public void updateBank(String username, UpdateBankRequest request) {
+    public void updateBank(String username, UpdateBankRequestDto request) {
         log.info("[BANK] username={}", username);
         UserBank bank = userBankRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
@@ -86,7 +86,7 @@ public class UserService {
     }
 
     @Transactional
-    public BankData resetBank(String username) {
+    public BankResponseDto resetBank(String username) {
         log.info("[BANK RESET] username={}", username);
         UserBank bank = userBankRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
@@ -98,11 +98,11 @@ public class UserService {
         bank.setBankAccountName(bank.getInitialBankAccountName());
         userBankRepository.save(bank);
         log.info("[BANK RESET] Reverted for username={}", username);
-        return new BankData(bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName());
+        return new BankResponseDto(bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName());
     }
 
     @Transactional
-    public void changePassword(String username, ChangePasswordRequest request) {
+    public void changePassword(String username, ChangePasswordRequestDto request) {
         log.info("[PASSWORD] username={}", username);
         var user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));

@@ -1,6 +1,6 @@
 package com.bejo.dto.response;
 
-public record LoginData(
+public record LoginResponseDto(
         String username,
         String accountType,
         String name,

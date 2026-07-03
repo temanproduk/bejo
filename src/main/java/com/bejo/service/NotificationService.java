@@ -1,7 +1,7 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.NotificationTransactionData;
-import com.bejo.dto.request.SendNotificationRequest;
+import com.bejo.dto.request.NotificationTransactionRequestDto;
+import com.bejo.dto.request.SendNotificationRequestDto;
 import com.bejo.entity.Session;
 import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
@@ -37,7 +37,7 @@ public class NotificationService {
         this.pushNotificationService = pushNotificationService;
     }
 
-    public void send(String username, SendNotificationRequest request) throws FirebaseMessagingException {
+    public void send(String username, SendNotificationRequestDto request) throws FirebaseMessagingException {
         if (!pushNotificationService.isConfigured()) {
             throw new IllegalStateException("Firebase is not configured — set FIREBASE_CREDENTIALS_BASE64 or FIREBASE_CREDENTIALS_PATH");
         }
@@ -67,7 +67,7 @@ public class NotificationService {
         }
     }
 
-    private Map<String, String> buildData(SendNotificationRequest request, NotificationTransactionData txData, String merchantName) {
+    private Map<String, String> buildData(SendNotificationRequestDto request, NotificationTransactionRequestDto txData, String merchantName) {
         Map<String, String> data = new HashMap<>();
         data.put("title", request.title());
         data.put("body", request.body());

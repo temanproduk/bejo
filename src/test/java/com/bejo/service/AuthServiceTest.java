@@ -1,8 +1,8 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.LoginRequest;
-import com.bejo.dto.request.RegisterRequest;
-import com.bejo.dto.response.LoginData;
+import com.bejo.dto.request.LoginRequestDto;
+import com.bejo.dto.request.RegisterRequestDto;
+import com.bejo.dto.response.LoginResponseDto;
 import com.bejo.entity.Session;
 import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
@@ -76,7 +76,7 @@ class AuthServiceTest {
     void loginWithUnknownUserFailsAndCountsFailure() {
         when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("ghost", "pw", "dev-1", null)))
+        assertThatThrownBy(() -> authService.login(new LoginRequestDto("ghost", "pw", "dev-1", null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid credentials");
 
@@ -88,7 +88,7 @@ class AuthServiceTest {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user("alice")));
         when(passwordEncoder.matches("wrong", "$hash")).thenReturn(false);
 
-        assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "wrong", "dev-1", null)))
+        assertThatThrownBy(() -> authService.login(new LoginRequestDto("alice", "wrong", "dev-1", null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid credentials");
 
@@ -104,7 +104,7 @@ class AuthServiceTest {
         when(jwtService.generateToken("alice")).thenReturn("jwt-token");
         when(jwtService.getExpiresInSeconds()).thenReturn(86_400L);
 
-        LoginData data = authService.login(new LoginRequest("alice", "pw", "dev-1", "fcm-token"));
+        LoginResponseDto data = authService.login(new LoginRequestDto("alice", "pw", "dev-1", "fcm-token"));
 
         assertThat(data.token()).isEqualTo("jwt-token");
         assertThat(data.tokenType()).isEqualTo("Bearer");
@@ -131,7 +131,7 @@ class AuthServiceTest {
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.of(existing));
         when(jwtService.generateToken("alice")).thenReturn("jwt-token");
 
-        authService.login(new LoginRequest("alice", "pw", "dev-1", null));
+        authService.login(new LoginRequestDto("alice", "pw", "dev-1", null));
 
         ArgumentCaptor<Session> captor = ArgumentCaptor.forClass(Session.class);
         verify(sessionRepository).save(captor.capture());
@@ -151,7 +151,7 @@ class AuthServiceTest {
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.of(existing));
         when(jwtService.generateToken("alice")).thenReturn("jwt-token");
 
-        authService.login(new LoginRequest("alice", "pw", "dev-1", "new-token"));
+        authService.login(new LoginRequestDto("alice", "pw", "dev-1", "new-token"));
 
         assertThat(existing.getPushToken()).isEqualTo("new-token");
     }
@@ -199,8 +199,8 @@ class AuthServiceTest {
         verify(tokenBlacklistService).blacklist(anyString(), any());
     }
 
-    private RegisterRequest registerRequest() {
-        return new RegisterRequest("alice", "password1", "Alice", "alice@example.com",
+    private RegisterRequestDto registerRequest() {
+        return new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
                 "+628111111111", "Warung Alice", null, null, null, null, null);
     }
 }

@@ -7,10 +7,10 @@ import java.time.LocalDateTime;
 
 /**
  * Acknowledgment returned to the QRIS merchant service. This is the callback
- * contract's own shape — deliberately not the internal ApiResponse envelope.
+ * contract's own shape — deliberately not the internal ApiResponseDto envelope.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record QrMpmNotifyResponse(
+public record QrMpmNotifyResponseDto(
         Long id,
         String billNumber,
         String referenceNumber,

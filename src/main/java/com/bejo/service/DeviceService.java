@@ -1,6 +1,6 @@
 package com.bejo.service;
 
-import com.bejo.dto.response.UpdateTokenData;
+import com.bejo.dto.response.UpdateTokenResponseDto;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.SessionRepository;
 import org.slf4j.Logger;
@@ -22,7 +22,7 @@ public class DeviceService {
     }
 
     @Transactional
-    public UpdateTokenData updateFcmToken(String username, String deviceId, String pushToken) {
+    public UpdateTokenResponseDto updateFcmToken(String username, String deviceId, String pushToken) {
         log.info("[TOKEN] username={} deviceId={}", username, deviceId);
 
         int updated = sessionRepository.updatePushToken(username, deviceId, pushToken, LocalDateTime.now());
@@ -31,6 +31,6 @@ public class DeviceService {
         }
 
         log.info("[TOKEN] Updated push token for deviceId={}", deviceId);
-        return new UpdateTokenData(deviceId, pushToken);
+        return new UpdateTokenResponseDto(deviceId, pushToken);
     }
 }

@@ -1,6 +1,6 @@
 package com.bejo.service;
 
-import com.bejo.dto.response.QrisData;
+import com.bejo.dto.response.QrisResponseDto;
 import com.bejo.entity.User;
 import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
@@ -57,7 +57,7 @@ class QrisServiceTest {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user()));
         when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(qris("dXBsb2FkZWQ=", null)));
 
-        QrisData data = qrisService.getQrisData("alice");
+        QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("UPLOADED");
         assertThat(data.qrisImage()).isEqualTo("dXBsb2FkZWQ=");
@@ -70,7 +70,7 @@ class QrisServiceTest {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user()));
         when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(q));
 
-        QrisData data = qrisService.getQrisData("alice");
+        QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("MANAGED");
         assertThat(data.qrisImage()).isNotBlank();
@@ -86,7 +86,7 @@ class QrisServiceTest {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user()));
         when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(qris(null, "aW5pdGlhbA==")));
 
-        QrisData data = qrisService.getQrisData("alice");
+        QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("MANAGED");
         assertThat(data.qrisImage()).isEqualTo("aW5pdGlhbA==");

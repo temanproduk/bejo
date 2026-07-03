@@ -1,6 +1,6 @@
 package com.bejo.service;
 
-import com.bejo.dto.response.UpdateTokenData;
+import com.bejo.dto.response.UpdateTokenResponseDto;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,7 +32,7 @@ class DeviceServiceTest {
         when(sessionRepository.updatePushToken(eq("alice"), eq("dev-1"), eq("new-token"), any()))
                 .thenReturn(1);
 
-        UpdateTokenData data = deviceService.updateFcmToken("alice", "dev-1", "new-token");
+        UpdateTokenResponseDto data = deviceService.updateFcmToken("alice", "dev-1", "new-token");
 
         assertThat(data.deviceId()).isEqualTo("dev-1");
         assertThat(data.pushToken()).isEqualTo("new-token");

@@ -1,6 +1,6 @@
 package com.bejo.dto.response;
 
-public record QrisData(
+public record QrisResponseDto(
         String type,
         String qrisImage,
         String businessName,

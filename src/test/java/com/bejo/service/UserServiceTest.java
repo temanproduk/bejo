@@ -1,9 +1,9 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.ChangePasswordRequest;
-import com.bejo.dto.request.UpdateBankRequest;
-import com.bejo.dto.request.UpdateBusinessRequest;
-import com.bejo.dto.request.UpdateProfileRequest;
+import com.bejo.dto.request.ChangePasswordRequestDto;
+import com.bejo.dto.request.UpdateBankRequestDto;
+import com.bejo.dto.request.UpdateBusinessRequestDto;
+import com.bejo.dto.request.UpdateProfileRequestDto;
 import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
 import com.bejo.exception.ResourceNotFoundException;
@@ -41,7 +41,7 @@ class UserServiceTest {
         User user = new User();
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
 
-        userService.updateProfile("alice", new UpdateProfileRequest("New Name", "new@example.com", "+628999999999"));
+        userService.updateProfile("alice", new UpdateProfileRequestDto("New Name", "new@example.com", "+628999999999"));
 
         assertThat(user.getName()).isEqualTo("New Name");
         assertThat(user.getEmail()).isEqualTo("new@example.com");
@@ -53,7 +53,7 @@ class UserServiceTest {
         when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> userService.updateProfile("ghost",
-                new UpdateProfileRequest("Name", "a@b.com", "+628111111111")))
+                new UpdateProfileRequestDto("Name", "a@b.com", "+628111111111")))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
@@ -65,7 +65,7 @@ class UserServiceTest {
         when(passwordEncoder.matches("wrong", "$old")).thenReturn(false);
 
         assertThatThrownBy(() -> userService.changePassword("alice",
-                new ChangePasswordRequest("wrong", "newpass123")))
+                new ChangePasswordRequestDto("wrong", "newpass123")))
                 .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(user.getPasswordHash()).isEqualTo("$old");
@@ -79,7 +79,7 @@ class UserServiceTest {
         when(passwordEncoder.matches("oldpass1", "$old")).thenReturn(true);
         when(passwordEncoder.encode("newpass123")).thenReturn("$new");
 
-        userService.changePassword("alice", new ChangePasswordRequest("oldpass1", "newpass123"));
+        userService.changePassword("alice", new ChangePasswordRequestDto("oldpass1", "newpass123"));
 
         assertThat(user.getPasswordHash()).isEqualTo("$new");
     }
@@ -89,7 +89,7 @@ class UserServiceTest {
         UserBank bank = new UserBank();
         when(userBankRepository.findByUsername("alice")).thenReturn(Optional.of(bank));
 
-        userService.updateBank("alice", new UpdateBankRequest("Mandiri", "9876543210", "Alice B"));
+        userService.updateBank("alice", new UpdateBankRequestDto("Mandiri", "9876543210", "Alice B"));
 
         assertThat(bank.getBankName()).isEqualTo("Mandiri");
         assertThat(bank.getBankNumber()).isEqualTo("9876543210");
@@ -126,7 +126,7 @@ class UserServiceTest {
         User user = new User();
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
 
-        userService.updateBusiness("alice", new UpdateBusinessRequest("Toko Baru", "Bandung", "ID999"));
+        userService.updateBusiness("alice", new UpdateBusinessRequestDto("Toko Baru", "Bandung", "ID999"));
 
         assertThat(user.getBusinessName()).isEqualTo("Toko Baru");
         assertThat(user.getBusinessAddress()).isEqualTo("Bandung");

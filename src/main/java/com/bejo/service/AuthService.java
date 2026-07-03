@@ -1,8 +1,8 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.LoginRequest;
-import com.bejo.dto.request.RegisterRequest;
-import com.bejo.dto.response.LoginData;
+import com.bejo.dto.request.LoginRequestDto;
+import com.bejo.dto.request.RegisterRequestDto;
+import com.bejo.dto.response.LoginResponseDto;
 import com.bejo.entity.Session;
 import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
@@ -57,7 +57,7 @@ public class AuthService {
     }
 
     @Transactional
-    public LoginData login(LoginRequest request) {
+    public LoginResponseDto login(LoginRequestDto request) {
         log.info("[LOGIN] username={} deviceId={}", request.username(), request.deviceId());
 
         var user = userRepository.findByUsername(request.username())
@@ -81,7 +81,7 @@ public class AuthService {
 
         loginSuccessCounter.increment();
         log.info("[LOGIN] Success for username={}", request.username());
-        return new LoginData(
+        return new LoginResponseDto(
                 request.username(),
                 user.getAccountType(),
                 user.getName(),
@@ -100,7 +100,7 @@ public class AuthService {
     }
 
     @Transactional
-    public void register(RegisterRequest request) {
+    public void register(RegisterRequestDto request) {
         log.info("[REGISTER] username={}", request.username());
 
         if (userRepository.existsByUsername(request.username())) {
@@ -152,7 +152,7 @@ public class AuthService {
         log.info("[LOGOUT] Token blacklisted jti={}", jti);
     }
 
-    private void upsertSession(LoginRequest request) {
+    private void upsertSession(LoginRequestDto request) {
         sessionRepository.findByUsernameAndDeviceId(request.username(), request.deviceId())
                 .ifPresentOrElse(existing -> {
                     existing.setLoginStatus(true);

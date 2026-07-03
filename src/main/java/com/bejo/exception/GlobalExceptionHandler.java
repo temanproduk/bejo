@@ -1,6 +1,6 @@
 package com.bejo.exception;
 
-import com.bejo.dto.response.ApiResponse;
+import com.bejo.dto.response.ApiResponseDto;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -26,98 +26,98 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(NoResourceFoundException.class)
-    public ResponseEntity<ApiResponse<Void>> handleNoRoute(NoResourceFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error("Route not found"));
+    public ResponseEntity<ApiResponseDto<Void>> handleNoRoute(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponseDto.error("Route not found"));
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
-                .body(ApiResponse.error("Method not allowed: " + ex.getMethod()));
+                .body(ApiResponseDto.error("Method not allowed: " + ex.getMethod()));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiResponse<Void>> handleUnreadable(HttpMessageNotReadableException ex) {
-        return ResponseEntity.badRequest().body(ApiResponse.error("Request body tidak valid atau tidak ditemukan"));
+    public ResponseEntity<ApiResponseDto<Void>> handleUnreadable(HttpMessageNotReadableException ex) {
+        return ResponseEntity.badRequest().body(ApiResponseDto.error("Request body tidak valid atau tidak ditemukan"));
     }
 
     @ExceptionHandler(MissingRequestHeaderException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMissingHeader(MissingRequestHeaderException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleMissingHeader(MissingRequestHeaderException ex) {
         return ResponseEntity.badRequest()
-                .body(ApiResponse.error("Header wajib tidak ada: " + ex.getHeaderName()));
+                .body(ApiResponseDto.error("Header wajib tidak ada: " + ex.getHeaderName()));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         return ResponseEntity.badRequest()
-                .body(ApiResponse.error("Format parameter tidak valid: " + ex.getName()));
+                .body(ApiResponseDto.error("Format parameter tidak valid: " + ex.getName()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleValidation(MethodArgumentNotValidException ex) {
         String message = ex.getBindingResult().getFieldErrors().stream()
                 .map(e -> e.getDefaultMessage())
                 .collect(Collectors.joining(", "));
-        return ResponseEntity.badRequest().body(ApiResponse.error(message));
+        return ResponseEntity.badRequest().body(ApiResponseDto.error(message));
     }
 
     @ExceptionHandler(HandlerMethodValidationException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMethodValidation(HandlerMethodValidationException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleMethodValidation(HandlerMethodValidationException ex) {
         String message = ex.getAllValidationResults().stream()
                 .flatMap(r -> r.getResolvableErrors().stream())
                 .map(e -> e.getDefaultMessage())
                 .collect(Collectors.joining(", "));
-        return ResponseEntity.badRequest().body(ApiResponse.error(message));
+        return ResponseEntity.badRequest().body(ApiResponseDto.error(message));
     }
 
     @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ApiResponse<Void>> handleNotFound(ResourceNotFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(ex.getMessage()));
+    public ResponseEntity<ApiResponseDto<Void>> handleNotFound(ResourceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponseDto.error(ex.getMessage()));
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<ApiResponse<Void>> handleDataIntegrity(DataIntegrityViolationException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleDataIntegrity(DataIntegrityViolationException ex) {
         if (ex.getCause() instanceof ConstraintViolationException cve) {
             String constraint = cve.getConstraintName();
             if ("uq_transaction_id".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(ApiResponse.error("transactionId sudah terdaftar"));
+                        .body(ApiResponseDto.error("transactionId sudah terdaftar"));
             }
             if ("uq_username".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(ApiResponse.error("Username sudah digunakan"));
+                        .body(ApiResponseDto.error("Username sudah digunakan"));
             }
             if ("uq_idempotency_key".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(ApiResponse.error("Permintaan dengan Idempotency-Key ini sedang diproses, coba lagi sebentar"));
+                        .body(ApiResponseDto.error("Permintaan dengan Idempotency-Key ini sedang diproses, coba lagi sebentar"));
             }
         }
         log.error("Data integrity violation", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ApiResponse.error("Data tidak valid atau sudah terdaftar"));
+                .body(ApiResponseDto.error("Data tidak valid atau sudah terdaftar"));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBadRequest(IllegalArgumentException ex) {
-        return ResponseEntity.badRequest().body(ApiResponse.error(ex.getMessage()));
+    public ResponseEntity<ApiResponseDto<Void>> handleBadRequest(IllegalArgumentException ex) {
+        return ResponseEntity.badRequest().body(ApiResponseDto.error(ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<ApiResponse<Void>> handleIllegalState(IllegalStateException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleIllegalState(IllegalStateException ex) {
         log.warn("Service configuration error: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponse.error(ex.getMessage()));
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponseDto.error(ex.getMessage()));
     }
 
     @ExceptionHandler(FirebaseMessagingException.class)
-    public ResponseEntity<ApiResponse<Void>> handleFcm(FirebaseMessagingException ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleFcm(FirebaseMessagingException ex) {
         log.error("FCM error [{}]: {}", ex.getMessagingErrorCode(), ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(ApiResponse.error("Failed to send notification: " + ex.getMessage()));
+                .body(ApiResponseDto.error("Failed to send notification: " + ex.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception ex) {
+    public ResponseEntity<ApiResponseDto<Void>> handleGeneral(Exception ex) {
         log.error("Unhandled exception", ex);
-        return ResponseEntity.internalServerError().body(ApiResponse.error("Internal server error"));
+        return ResponseEntity.internalServerError().body(ApiResponseDto.error("Internal server error"));
     }
 }

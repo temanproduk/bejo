@@ -1,9 +1,9 @@
 package com.bejo.controller;
 
-import com.bejo.dto.request.LoginRequest;
-import com.bejo.dto.request.RegisterRequest;
-import com.bejo.dto.response.ApiResponse;
-import com.bejo.dto.response.LoginData;
+import com.bejo.dto.request.LoginRequestDto;
+import com.bejo.dto.request.RegisterRequestDto;
+import com.bejo.dto.response.ApiResponseDto;
+import com.bejo.dto.response.LoginResponseDto;
 import com.bejo.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -25,26 +25,26 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<ApiResponse<Void>> register(@Valid @RequestBody RegisterRequest request) {
+    public ResponseEntity<ApiResponseDto<Void>> register(@Valid @RequestBody RegisterRequestDto request) {
         authService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Registrasi berhasil", null));
+                .body(ApiResponseDto.success("Registrasi berhasil", null));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<LoginData>> login(@Valid @RequestBody LoginRequest request) {
-        LoginData data = authService.login(request);
-        return ResponseEntity.ok(ApiResponse.success("session data is created", data));
+    public ResponseEntity<ApiResponseDto<LoginResponseDto>> login(@Valid @RequestBody LoginRequestDto request) {
+        LoginResponseDto data = authService.login(request);
+        return ResponseEntity.ok(ApiResponseDto.success("session data is created", data));
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request) {
+    public ResponseEntity<ApiResponseDto<Void>> logout(HttpServletRequest request) {
         String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("Authorization header tidak valid"));
+                    .body(ApiResponseDto.error("Authorization header tidak valid"));
         }
         authService.logout(authHeader.substring(7));
-        return ResponseEntity.ok(ApiResponse.success("Logged out successfully", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Logged out successfully", null));
     }
 }

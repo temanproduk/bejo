@@ -1,6 +1,6 @@
 package com.bejo.service;
 
-import com.bejo.dto.response.QrisData;
+import com.bejo.dto.response.QrisResponseDto;
 import com.bejo.entity.User;
 import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
@@ -33,7 +33,7 @@ public class QrisService {
     }
 
     @Transactional
-    public QrisData getQrisData(String username) {
+    public QrisResponseDto getQrisData(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         UserQris qris = userQrisRepository.findByUsername(username)
@@ -41,7 +41,7 @@ public class QrisService {
 
         if (qris.getQrisImage() != null) {
             log.info("[QRIS] Serving UPLOADED image for username={}", username);
-            return new QrisData("UPLOADED", qris.getQrisImage(),
+            return new QrisResponseDto("UPLOADED", qris.getQrisImage(),
                     user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
         }
 
@@ -54,7 +54,7 @@ public class QrisService {
         }
 
         log.info("[QRIS] Serving MANAGED image for username={}", username);
-        return new QrisData("MANAGED", initialImage,
+        return new QrisResponseDto("MANAGED", initialImage,
                 user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
     }
 

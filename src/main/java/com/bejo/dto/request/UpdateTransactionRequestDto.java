@@ -1,26 +1,17 @@
 package com.bejo.dto.request;
 
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 
-public record NotificationTransactionData(
-        @NotBlank(message = "transactionId wajib diisi")
-        @Size(max = 255, message = "transactionId maksimal 255 karakter")
-        String transactionId,
-
-        @NotNull(message = "transactionDate wajib diisi")
+// Partial update — null fields are left unchanged
+public record UpdateTransactionRequestDto(
         LocalDateTime transactionDate,
 
-        @NotNull(message = "amount wajib diisi")
         @Positive(message = "amount harus lebih dari 0")
         Long amount,
 
-        @NotBlank(message = "issuerName wajib diisi")
         @Size(max = 255, message = "issuerName maksimal 255 karakter")
         String issuerName,
 
@@ -31,5 +22,13 @@ public record NotificationTransactionData(
         String customerPan,
 
         @Size(max = 255, message = "rrn maksimal 255 karakter")
-        String rrn
-) {}
+        String rrn,
+
+        @Size(max = 255, message = "acquirer maksimal 255 karakter")
+        String acquirer
+) {
+    public boolean isEmpty() {
+        return transactionDate == null && amount == null && issuerName == null
+                && merchantPan == null && customerPan == null && rrn == null && acquirer == null;
+    }
+}

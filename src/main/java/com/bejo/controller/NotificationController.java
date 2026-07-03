@@ -1,7 +1,7 @@
 package com.bejo.controller;
 
-import com.bejo.dto.request.SendNotificationRequest;
-import com.bejo.dto.response.ApiResponse;
+import com.bejo.dto.request.SendNotificationRequestDto;
+import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.service.NotificationService;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import jakarta.validation.Valid;
@@ -25,10 +25,10 @@ public class NotificationController {
     // Test-only: sends an FCM push built from the request to the given device.
     // Does not record a transaction — use the QRIS callback for real payments.
     @PostMapping
-    public ResponseEntity<ApiResponse<Void>> sendTestNotification(
-            @Valid @RequestBody SendNotificationRequest request,
+    public ResponseEntity<ApiResponseDto<Void>> sendTestNotification(
+            @Valid @RequestBody SendNotificationRequestDto request,
             Authentication authentication) throws FirebaseMessagingException {
         notificationService.send(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponse.success("Test notification sent", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Test notification sent", null));
     }
 }

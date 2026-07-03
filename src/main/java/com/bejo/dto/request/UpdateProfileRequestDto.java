@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-public record UpdateProfileRequest(
+public record UpdateProfileRequestDto(
         @NotBlank(message = "Nama wajib diisi")
         @Size(min = 2, max = 100, message = "Nama harus antara 2 hingga 100 karakter")
         String name,

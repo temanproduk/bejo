@@ -1,8 +1,8 @@
 package com.bejo.controller;
 
-import com.bejo.dto.request.UploadQrisRequest;
-import com.bejo.dto.response.ApiResponse;
-import com.bejo.dto.response.QrisData;
+import com.bejo.dto.request.UploadQrisRequestDto;
+import com.bejo.dto.response.ApiResponseDto;
+import com.bejo.dto.response.QrisResponseDto;
 import com.bejo.service.QrisService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -20,22 +20,22 @@ public class QrisController {
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<QrisData>> getQris(Authentication authentication) {
-        QrisData data = qrisService.getQrisData(authentication.getName());
-        return ResponseEntity.ok(ApiResponse.success(data));
+    public ResponseEntity<ApiResponseDto<QrisResponseDto>> getQris(Authentication authentication) {
+        QrisResponseDto data = qrisService.getQrisData(authentication.getName());
+        return ResponseEntity.ok(ApiResponseDto.success(data));
     }
 
     @PostMapping("/upload")
-    public ResponseEntity<ApiResponse<Void>> uploadQris(
-            @Valid @RequestBody UploadQrisRequest request,
+    public ResponseEntity<ApiResponseDto<Void>> uploadQris(
+            @Valid @RequestBody UploadQrisRequestDto request,
             Authentication authentication) {
         qrisService.uploadQris(authentication.getName(), request.qrisImage());
-        return ResponseEntity.ok(ApiResponse.success("QRIS berhasil diupload", null));
+        return ResponseEntity.ok(ApiResponseDto.success("QRIS berhasil diupload", null));
     }
 
     @PostMapping("/reset")
-    public ResponseEntity<ApiResponse<Void>> resetQris(Authentication authentication) {
+    public ResponseEntity<ApiResponseDto<Void>> resetQris(Authentication authentication) {
         qrisService.resetQris(authentication.getName());
-        return ResponseEntity.ok(ApiResponse.success("QRIS berhasil direset ke versi generated", null));
+        return ResponseEntity.ok(ApiResponseDto.success("QRIS berhasil direset ke versi generated", null));
     }
 }

@@ -1,7 +1,7 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.QrMpmNotifyRequest;
-import com.bejo.dto.response.QrMpmNotifyResponse;
+import com.bejo.dto.request.QrMpmNotifyRequestDto;
+import com.bejo.dto.response.QrMpmNotifyResponseDto;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
@@ -44,12 +44,12 @@ class QrisCallbackServiceTest {
         ReflectionTestUtils.setField(service, "defaultUsername", "admin");
     }
 
-    private QrMpmNotifyRequest request(String status) {
-        return new QrMpmNotifyRequest(
+    private QrMpmNotifyRequestDto request(String status) {
+        return new QrMpmNotifyRequestDto(
                 "XCBS6Z450S", "DEV20250826422460", status, "SUCCESS",
                 "9360082230250015792", "9360082232504524231", "Asep & Testing", null,
-                new QrMpmNotifyRequest.Amount("100.00", "IDR"),
-                new QrMpmNotifyRequest.AdditionalInfo("0.00", "AstraPay", "POS", null, "5164",
+                new QrMpmNotifyRequestDto.Amount("100.00", "IDR"),
+                new QrMpmNotifyRequestDto.AdditionalInfo("0.00", "AstraPay", "POS", null, "5164",
                         "AstraPay User", "9360082232504524231", "9360082230250015792",
                         "93600822", "INV/QRM/4542BR/250826/2G4Y6CCZ"));
     }
@@ -62,7 +62,7 @@ class QrisCallbackServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndUsername(any(), eq("alice")))
                 .thenReturn(Optional.empty());
 
-        QrMpmNotifyResponse res = service.processNotify(request("00"), "2020-12-23T08:46:11+07:00");
+        QrMpmNotifyResponseDto res = service.processNotify(request("00"), "2020-12-23T08:46:11+07:00");
 
         ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(captor.capture());
@@ -93,7 +93,7 @@ class QrisCallbackServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndUsername("XCBS6Z450S|DEV20250826422460", "alice"))
                 .thenReturn(Optional.of(existing));
 
-        QrMpmNotifyResponse res = service.processNotify(request("00"), null);
+        QrMpmNotifyResponseDto res = service.processNotify(request("00"), null);
 
         assertThat(res.billNumber()).isEqualTo("XCBS6Z450S");
         verify(transactionRepository, never()).save(any());
@@ -152,7 +152,7 @@ class QrisCallbackServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndUsername(any(), any())).thenReturn(Optional.empty());
 
         // Payment FAILED (02), but the callback ack is still SUCCESS per the spec
-        QrMpmNotifyResponse res = service.processNotify(request("02"), null);
+        QrMpmNotifyResponseDto res = service.processNotify(request("02"), null);
         assertThat(res.status()).isEqualTo("SUCCESS");
     }
 }

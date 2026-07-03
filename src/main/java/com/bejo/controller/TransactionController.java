@@ -1,10 +1,10 @@
 package com.bejo.controller;
 
-import com.bejo.dto.request.AddTransactionRequest;
-import com.bejo.dto.request.UpdateTransactionRequest;
-import com.bejo.dto.response.ApiResponse;
-import com.bejo.dto.response.TransactionCreatedData;
-import com.bejo.dto.response.TransactionDto;
+import com.bejo.dto.request.AddTransactionRequestDto;
+import com.bejo.dto.request.UpdateTransactionRequestDto;
+import com.bejo.dto.response.ApiResponseDto;
+import com.bejo.dto.response.TransactionCreatedResponseDto;
+import com.bejo.dto.response.TransactionResponseDto;
 import com.bejo.service.TransactionService;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -27,38 +27,38 @@ public class TransactionController {
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<TransactionCreatedData>> addTransaction(
+    public ResponseEntity<ApiResponseDto<TransactionCreatedResponseDto>> addTransaction(
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
-            @Valid @RequestBody AddTransactionRequest request,
+            @Valid @RequestBody AddTransactionRequestDto request,
             Authentication authentication) {
-        TransactionCreatedData data = transactionService.create(authentication.getName(), idempotencyKey, request);
+        TransactionCreatedResponseDto data = transactionService.create(authentication.getName(), idempotencyKey, request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Transaksi berhasil ditambahkan", data));
+                .body(ApiResponseDto.success("Transaksi berhasil ditambahkan", data));
     }
 
     @PatchMapping("/{transactionId}")
-    public ResponseEntity<ApiResponse<TransactionDto>> updateTransaction(
+    public ResponseEntity<ApiResponseDto<TransactionResponseDto>> updateTransaction(
             @PathVariable String transactionId,
-            @Valid @RequestBody UpdateTransactionRequest request,
+            @Valid @RequestBody UpdateTransactionRequestDto request,
             Authentication authentication) {
-        TransactionDto data = transactionService.update(authentication.getName(), transactionId, request);
-        return ResponseEntity.ok(ApiResponse.success("Transaksi berhasil diubah", data));
+        TransactionResponseDto data = transactionService.update(authentication.getName(), transactionId, request);
+        return ResponseEntity.ok(ApiResponseDto.success("Transaksi berhasil diubah", data));
     }
 
     @DeleteMapping("/{transactionId}")
-    public ResponseEntity<ApiResponse<Void>> deleteTransaction(
+    public ResponseEntity<ApiResponseDto<Void>> deleteTransaction(
             @PathVariable String transactionId,
             Authentication authentication) {
         transactionService.delete(authentication.getName(), transactionId);
-        return ResponseEntity.ok(ApiResponse.success("Transaksi berhasil dihapus", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Transaksi berhasil dihapus", null));
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<TransactionDto>>> getHistory(
+    public ResponseEntity<ApiResponseDto<List<TransactionResponseDto>>> getHistory(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateStart,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateEnd,
             Authentication authentication) {
-        List<TransactionDto> data = transactionService.getHistory(authentication.getName(), dateStart, dateEnd);
-        return ResponseEntity.ok(ApiResponse.list(data));
+        List<TransactionResponseDto> data = transactionService.getHistory(authentication.getName(), dateStart, dateEnd);
+        return ResponseEntity.ok(ApiResponseDto.list(data));
     }
 }

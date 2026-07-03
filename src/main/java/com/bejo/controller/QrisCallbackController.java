@@ -1,7 +1,7 @@
 package com.bejo.controller;
 
-import com.bejo.dto.request.QrMpmNotifyRequest;
-import com.bejo.dto.response.QrMpmNotifyResponse;
+import com.bejo.dto.request.QrMpmNotifyRequestDto;
+import com.bejo.dto.response.QrMpmNotifyResponseDto;
 import com.bejo.service.QrisCallbackService;
 import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
@@ -27,9 +27,9 @@ public class QrisCallbackController {
     }
 
     @PostMapping(path = "/snap/v1.0/qr/qr-mpm-notify", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<QrMpmNotifyResponse> notify(
+    public ResponseEntity<QrMpmNotifyResponseDto> notify(
             @RequestHeader("X-TIMESTAMP") String xTimestamp,
-            @Valid @RequestBody QrMpmNotifyRequest request) {
+            @Valid @RequestBody QrMpmNotifyRequestDto request) {
         return ResponseEntity.ok(callbackService.processNotify(request, xTimestamp));
     }
 }

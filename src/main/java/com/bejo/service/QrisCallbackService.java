@@ -1,7 +1,7 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.QrMpmNotifyRequest;
-import com.bejo.dto.response.QrMpmNotifyResponse;
+import com.bejo.dto.request.QrMpmNotifyRequestDto;
+import com.bejo.dto.response.QrMpmNotifyResponseDto;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
@@ -55,12 +55,12 @@ public class QrisCallbackService {
     }
 
     @Transactional
-    public QrMpmNotifyResponse processNotify(QrMpmNotifyRequest req, String xTimestamp) {
+    public QrMpmNotifyResponseDto processNotify(QrMpmNotifyRequestDto req, String xTimestamp) {
         callbackCounter.increment();
         log.info("[CALLBACK] originalReferenceNo={} partnerRef={} status={}",
                 req.originalReferenceNo(), req.originalPartnerReferenceNo(), req.latestTransactionStatus());
 
-        QrMpmNotifyRequest.AdditionalInfo info = req.additionalInfo();
+        QrMpmNotifyRequestDto.AdditionalInfo info = req.additionalInfo();
         String merchantPan = info != null && info.merchantPan() != null ? info.merchantPan() : req.destinationNumber();
 
         // Route to the merchant whose NMID matches, else the default user
@@ -140,8 +140,8 @@ public class QrisCallbackService {
 
     // Per the spec, response.status is the acknowledgment status (processing
     // succeeded), not the payment's status — its example hardcodes "SUCCESS".
-    private QrMpmNotifyResponse response(Long id, QrMpmNotifyRequest req, BigDecimal amount, BigDecimal tip) {
-        return new QrMpmNotifyResponse(
+    private QrMpmNotifyResponseDto response(Long id, QrMpmNotifyRequestDto req, BigDecimal amount, BigDecimal tip) {
+        return new QrMpmNotifyResponseDto(
                 id,
                 req.originalReferenceNo(),
                 req.originalPartnerReferenceNo(),
@@ -189,7 +189,7 @@ public class QrisCallbackService {
         }
     }
 
-    private String toJson(QrMpmNotifyRequest req) {
+    private String toJson(QrMpmNotifyRequestDto req) {
         try {
             return objectMapper.writeValueAsString(req);
         } catch (JsonProcessingException e) {

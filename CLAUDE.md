@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Working agreement
+
+**Never `git commit` or `git push` automatically after making changes.** Make the edits, run the tests, then stop and report. Only commit and push when the user explicitly confirms/asks for it. This also gates the `release`-branch deploy (a push to `release` deploys to production), so it must always be an explicit, confirmed action.
+
 ## What this project is
 
 A Java 25 / Spring Boot REST API for QRIS merchants: registration and JWT login (against its own database), transaction history and manual entry, QRIS image management, bank/business profile management, FCM token management, and push notification delivery. Originally inspired by the Node.js project at `/Users/anton/Documents/Projects/cuan` but uses local DB authentication instead of scraping an external gateway.
@@ -104,7 +108,9 @@ controller/   → thin HTTP layer; validation via @Valid
 service/      → business logic, metrics via Micrometer Counter
 repository/   → Spring Data JPA interfaces
 entity/       → JPA entities (User, UserBank, UserQris, Session, Transaction, TokenBlacklist)
-dto/          → request records (@NotBlank validated) + response records
+dto/          → request records (@NotBlank validated) + response records.
+                Every DTO class name ends with `Dto` (e.g. LoginRequestDto,
+                TransactionDto); requests and responses are separate types.
 config/       → ApiTokenFilter, JwtAuthFilter, SecurityConfig, FirebaseConfig,
                 RequestLoggingFilter, DataSeeder
 exception/    → GlobalExceptionHandler + ResourceNotFoundException

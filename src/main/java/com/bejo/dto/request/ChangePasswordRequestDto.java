@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
-public record ChangePasswordRequest(
+public record ChangePasswordRequestDto(
         @NotBlank(message = "Password saat ini wajib diisi")
         String oldPassword,
 

@@ -1,8 +1,8 @@
 package com.bejo.controller;
 
-import com.bejo.dto.request.UpdateTokenRequest;
-import com.bejo.dto.response.ApiResponse;
-import com.bejo.dto.response.UpdateTokenData;
+import com.bejo.dto.request.UpdateTokenRequestDto;
+import com.bejo.dto.response.ApiResponseDto;
+import com.bejo.dto.response.UpdateTokenResponseDto;
 import com.bejo.service.DeviceService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -20,11 +20,11 @@ public class DeviceController {
     }
 
     @PutMapping("/{deviceId}/fcm-token")
-    public ResponseEntity<ApiResponse<UpdateTokenData>> updateFcmToken(
+    public ResponseEntity<ApiResponseDto<UpdateTokenResponseDto>> updateFcmToken(
             @PathVariable String deviceId,
-            @Valid @RequestBody UpdateTokenRequest request,
+            @Valid @RequestBody UpdateTokenRequestDto request,
             Authentication authentication) {
-        UpdateTokenData data = deviceService.updateFcmToken(authentication.getName(), deviceId, request.pushToken());
-        return ResponseEntity.ok(ApiResponse.success("Push Token data is updated", data));
+        UpdateTokenResponseDto data = deviceService.updateFcmToken(authentication.getName(), deviceId, request.pushToken());
+        return ResponseEntity.ok(ApiResponseDto.success("Push Token data is updated", data));
     }
 }

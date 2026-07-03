@@ -1,9 +1,9 @@
 package com.bejo.service;
 
-import com.bejo.dto.request.AddTransactionRequest;
-import com.bejo.dto.request.UpdateTransactionRequest;
-import com.bejo.dto.response.TransactionCreatedData;
-import com.bejo.dto.response.TransactionDto;
+import com.bejo.dto.request.AddTransactionRequestDto;
+import com.bejo.dto.request.UpdateTransactionRequestDto;
+import com.bejo.dto.response.TransactionCreatedResponseDto;
+import com.bejo.dto.response.TransactionResponseDto;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
 import com.bejo.repository.TransactionRepository;
@@ -42,8 +42,8 @@ class TransactionServiceTest {
         transactionService = new TransactionService(transactionRepository, userRepository, new SimpleMeterRegistry());
     }
 
-    private AddTransactionRequest request(String type, String acquirer) {
-        return new AddTransactionRequest(type, LocalDateTime.now(), 50_000L,
+    private AddTransactionRequestDto request(String type, String acquirer) {
+        return new AddTransactionRequestDto(type, LocalDateTime.now(), 50_000L,
                 "GoPay", null, null, null, acquirer);
     }
 
@@ -64,7 +64,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndUsername("key-1", "alice"))
                 .thenReturn(Optional.of(existing));
 
-        TransactionCreatedData data = transactionService.create("alice", "key-1", request("MANUAL", null));
+        TransactionCreatedResponseDto data = transactionService.create("alice", "key-1", request("MANUAL", null));
 
         assertThat(data.transactionId()).isEqualTo("TXN-EXISTING");
         verify(transactionRepository, never()).save(any());
@@ -118,7 +118,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice"))
                 .thenReturn(List.of());
 
-        List<TransactionDto> result = transactionService.getHistory("alice", null, null);
+        List<TransactionResponseDto> result = transactionService.getHistory("alice", null, null);
 
         assertThat(result).isEmpty();
         verify(transactionRepository).findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice");
@@ -156,7 +156,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice"))
                 .thenReturn(List.of(t));
 
-        List<TransactionDto> result = transactionService.getHistory("alice", null, null);
+        List<TransactionResponseDto> result = transactionService.getHistory("alice", null, null);
 
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().merchantName()).isEqualTo("Warung Alice");
@@ -205,9 +205,9 @@ class TransactionServiceTest {
                 .thenReturn(Optional.of(t));
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
 
-        UpdateTransactionRequest req = new UpdateTransactionRequest(
+        UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
                 null, 99_000L, null, null, null, null, null);
-        TransactionDto dto = transactionService.update("alice", "TXN-1", req);
+        TransactionResponseDto dto = transactionService.update("alice", "TXN-1", req);
 
         assertThat(dto.amount()).isEqualTo(99_000L);
         // Untouched fields keep their values
@@ -219,7 +219,7 @@ class TransactionServiceTest {
 
     @Test
     void updateWithNoFieldsIsRejected() {
-        UpdateTransactionRequest empty = new UpdateTransactionRequest(
+        UpdateTransactionRequestDto empty = new UpdateTransactionRequestDto(
                 null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", empty))
@@ -236,7 +236,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
                 .thenReturn(Optional.of(t));
 
-        UpdateTransactionRequest req = new UpdateTransactionRequest(
+        UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
                 null, 99_000L, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
@@ -252,7 +252,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
                 .thenReturn(Optional.of(t));
 
-        UpdateTransactionRequest req = new UpdateTransactionRequest(
+        UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
                 null, null, null, null, null, null, "  ");
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
@@ -266,7 +266,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-X", "alice"))
                 .thenReturn(Optional.empty());
 
-        UpdateTransactionRequest req = new UpdateTransactionRequest(
+        UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
                 null, 10_000L, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-X", req))

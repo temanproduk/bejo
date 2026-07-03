@@ -1,6 +1,6 @@
 package com.bejo.dto.response;
 
-public record UpdateTokenData(
+public record UpdateTokenResponseDto(
         String deviceId,
         String pushToken
 ) {}
