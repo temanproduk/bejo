@@ -33,13 +33,14 @@ class QrisCallbackServiceTest {
 
     @Mock private TransactionRepository transactionRepository;
     @Mock private UserRepository userRepository;
+    @Mock private PushNotificationService pushNotificationService;
 
     private QrisCallbackService service;
 
     @BeforeEach
     void setUp() {
         service = new QrisCallbackService(transactionRepository, userRepository,
-                new ObjectMapper(), new SimpleMeterRegistry());
+                pushNotificationService, new ObjectMapper(), new SimpleMeterRegistry());
         ReflectionTestUtils.setField(service, "defaultUsername", "admin");
     }
 

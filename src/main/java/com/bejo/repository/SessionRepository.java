@@ -8,12 +8,15 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface SessionRepository extends JpaRepository<Session, Long> {
 
     Optional<Session> findByUsernameAndDeviceId(String username, String deviceId);
+
+    List<Session> findByUsername(String username);
 
     @Modifying
     @Query("UPDATE Session s SET s.pushToken = :pushToken, s.lastUpdated = :now WHERE s.username = :username AND s.deviceId = :deviceId")

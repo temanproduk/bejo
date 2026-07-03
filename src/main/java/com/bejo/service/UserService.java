@@ -4,6 +4,8 @@ import com.bejo.dto.request.ChangePasswordRequest;
 import com.bejo.dto.request.UpdateBankRequest;
 import com.bejo.dto.request.UpdateBusinessRequest;
 import com.bejo.dto.request.UpdateProfileRequest;
+import com.bejo.dto.response.BankData;
+import com.bejo.dto.response.BusinessData;
 import com.bejo.entity.UserBank;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.UserBankRepository;
@@ -56,7 +58,7 @@ public class UserService {
     }
 
     @Transactional
-    public void resetBusiness(String username) {
+    public BusinessData resetBusiness(String username) {
         log.info("[BUSINESS RESET] username={}", username);
         var user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -68,6 +70,7 @@ public class UserService {
         user.setNmid(user.getInitialNmid());
         userRepository.save(user);
         log.info("[BUSINESS RESET] Reverted for username={}", username);
+        return new BusinessData(user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
     }
 
     @Transactional
@@ -83,7 +86,7 @@ public class UserService {
     }
 
     @Transactional
-    public void resetBank(String username) {
+    public BankData resetBank(String username) {
         log.info("[BANK RESET] username={}", username);
         UserBank bank = userBankRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
@@ -95,6 +98,7 @@ public class UserService {
         bank.setBankAccountName(bank.getInitialBankAccountName());
         userBankRepository.save(bank);
         log.info("[BANK RESET] Reverted for username={}", username);
+        return new BankData(bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName());
     }
 
     @Transactional

@@ -837,7 +837,7 @@ class ApiIntegrationTest {
     void notificationWithoutFirebaseConfiguredReturns503() throws Exception {
         String token = registerAndLogin("notif_user1");
 
-        mockMvc.perform(post("/api/notifications")
+        mockMvc.perform(post("/api/notifications/test")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)

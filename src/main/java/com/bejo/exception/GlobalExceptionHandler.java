@@ -110,7 +110,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(FirebaseMessagingException.class)
     public ResponseEntity<ApiResponse<Void>> handleFcm(FirebaseMessagingException ex) {
-        log.error("FCM error: {}", ex.getMessage());
+        log.error("FCM error [{}]: {}", ex.getMessagingErrorCode(), ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(ApiResponse.error("Failed to send notification: " + ex.getMessage()));
     }

@@ -257,7 +257,7 @@
       "name": "Notifications",
       "item": [
         {
-          "name": "Send Push Notification",
+          "name": "Send Test Notification",
           "request": {
             "method": "POST",
             "header": [
@@ -271,11 +271,11 @@
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/notifications",
+              "raw": "{{baseUrl}}/api/notifications/test",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "notifications"]
+              "path": ["api", "notifications", "test"]
             },
-            "description": "Sends an FCM push notification to the specified device AND inserts a MANAGED transaction record (acquirer: AstraPay).\n\nAll validation runs before the notification is sent — if any field is invalid or transactionId is a duplicate, neither the notification nor the transaction insertion occurs.\n\ndata.transactionId, data.transactionDate, data.amount, and data.issuerName are required. merchantPan, customerPan, and rrn are optional.\n\nRequires Firebase to be configured."
+            "description": "TEST endpoint — sends an FCM push notification (built from this payload) to the specified device. Does NOT record any transaction.\n\ndata.transactionId, data.transactionDate, data.amount, and data.issuerName are required. merchantPan, customerPan, and rrn are optional.\n\nRequires Firebase to be configured (503 if not). Real payments are recorded and pushed by the QRIS Callback (QR MPM Notify)."
           }
         }
       ]

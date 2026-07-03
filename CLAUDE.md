@@ -80,7 +80,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable) |
 | `DELETE` | `/api/transactions/{transactionId}` | JWT | Soft-delete a transaction (sets `deleted_at`) |
 | `PUT` | `/api/devices/{deviceId}/fcm-token` | JWT | Update FCM push token (scoped to the authenticated user's session) |
-| `POST` | `/api/notifications` | JWT | Send FCM push notification + record the transaction |
+| `POST` | `/api/notifications/test` | JWT | **Test:** send an FCM push from the request payload to one device (no DB write) |
 | `GET` | `/api/qris` | JWT | QRIS image; `type` = `UPLOADED` (custom) or `MANAGED` (generated) |
 | `POST` | `/api/qris/upload` | JWT | Upload base64 QRIS image (max ±5 MB) |
 | `POST` | `/api/qris/reset` | JWT | Revert to the managed/generated image |
@@ -128,7 +128,9 @@ Users are created via `POST /api/auth/register` (creates `users`, `user_banks`, 
 
 ### QRIS payment callback
 
-`POST /snap/v1.0/qr/qr-mpm-notify` (`QrisCallbackController` → `QrisCallbackService`) receives SNAP-like QR MPM notifications from the QRIS merchant service (AstraPay), unauthenticated (server-to-server). It resolves the merchant by `User.nmid == payload.merchantPan` (falling back to `destinationNumber`, then to `app.callback.default-username`, default `admin`); is idempotent on `originalReferenceNo|originalPartnerReferenceNo` (stored as the transaction's `idempotencyKey`); maps SNAP status codes (`00`→SUCCESS…); records a `MANAGED`/`AstraPay` transaction; and saves the raw payload JSON to `cuan_history.additional_info`. Returns the callback's own ack shape (`QrMpmNotifyResponse`), not the `ApiResponse` envelope. `findFirstByNmid` is used (not `findBy`) so a duplicate NMID degrades gracefully instead of throwing.
+`POST /snap/v1.0/qr/qr-mpm-notify` (`QrisCallbackController` → `QrisCallbackService`) receives SNAP-like QR MPM notifications from the QRIS merchant service (AstraPay), unauthenticated (server-to-server). It resolves the merchant by `User.nmid == payload.merchantPan` (falling back to `destinationNumber`, then to `app.callback.default-username`, default `admin`); is idempotent on `originalReferenceNo|originalPartnerReferenceNo` (stored as the transaction's `idempotencyKey`); maps SNAP status codes (`00`→SUCCESS…); records a `MANAGED`/`AstraPay` transaction; saves the raw payload JSON to `cuan_history.additional_info`; and sends a best-effort FCM push to all the merchant's devices. Returns the callback's own ack shape (`QrMpmNotifyResponse`), not the `ApiResponse` envelope. `findFirstByNmid` is used (not `findBy`) so a duplicate NMID degrades gracefully instead of throwing.
+
+FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one device, propagates errors — used by the test-notification API) and `sendToUser` (all a user's device sessions, best-effort, never throws — used by the callback). `NotificationService` (the `/api/notifications/test` endpoint) only sends a push; it does not persist a transaction.
 
 ### QRIS model
 

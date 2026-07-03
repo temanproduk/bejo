@@ -3,6 +3,7 @@ package com.bejo.service;
 import com.bejo.dto.request.QrMpmNotifyRequest;
 import com.bejo.dto.response.QrMpmNotifyResponse;
 import com.bejo.entity.Transaction;
+import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.TransactionRepository;
 import com.bejo.repository.UserRepository;
@@ -20,6 +21,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 public class QrisCallbackService {
@@ -28,6 +31,7 @@ public class QrisCallbackService {
 
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
+    private final PushNotificationService pushNotificationService;
     private final ObjectMapper objectMapper;
     private final Counter callbackCounter;
 
@@ -39,10 +43,12 @@ public class QrisCallbackService {
 
     public QrisCallbackService(TransactionRepository transactionRepository,
                                UserRepository userRepository,
+                               PushNotificationService pushNotificationService,
                                ObjectMapper objectMapper,
                                MeterRegistry meterRegistry) {
         this.transactionRepository = transactionRepository;
         this.userRepository = userRepository;
+        this.pushNotificationService = pushNotificationService;
         this.objectMapper = objectMapper;
         this.callbackCounter = Counter.builder("qris.callbacks.received").register(meterRegistry);
     }
@@ -57,13 +63,17 @@ public class QrisCallbackService {
         String merchantPan = info != null && info.merchantPan() != null ? info.merchantPan() : req.destinationNumber();
 
         // Route to the merchant whose NMID matches, else the default user
-        String username = userRepository.findFirstByNmid(merchantPan)
-                .map(u -> u.getUsername())
-                .orElseGet(() -> userRepository.findByUsername(defaultUsername)
-                        .map(u -> u.getUsername())
-                        .orElseThrow(() -> new ResourceNotFoundException(
-                                "No merchant matches merchantPan=" + merchantPan
-                                        + " and default user '" + defaultUsername + "' not found")));
+        User merchant = userRepository.findFirstByNmid(merchantPan)
+                .or(() -> userRepository.findByUsername(defaultUsername))
+                .orElseThrow(() -> {
+                    log.error("[CALLBACK] No merchant for merchantPan={} and default user '{}' missing — "
+                                    + "payment NOT recorded (originalReferenceNo={})",
+                            merchantPan, defaultUsername, req.originalReferenceNo());
+                    return new ResourceNotFoundException(
+                            "No merchant matches merchantPan=" + merchantPan
+                                    + " and default user '" + defaultUsername + "' not found");
+                });
+        String username = merchant.getUsername();
 
         BigDecimal amount = parseAmount(req.amount().value());
         BigDecimal tip = info != null && info.tip() != null ? parseAmount(info.tip()) : BigDecimal.ZERO;
@@ -98,9 +108,33 @@ public class QrisCallbackService {
         t.setScrapeDate(LocalDateTime.now());
         t.setAdditionalInfo(toJson(req));
         transactionRepository.save(t);
+        log.info("[CALLBACK] Recorded transactionId={} username={} amount={} status={}",
+                transactionId, username, t.getAmount(), status);
 
-        log.info("[CALLBACK] Recorded transactionId={} username={} status={}", transactionId, username, status);
+        // Best-effort push to the merchant's devices — must never fail the callback
+        try {
+            pushNotificationService.sendToUser(username, buildPushData(t, merchant.getBusinessName()));
+        } catch (Exception e) {
+            log.error("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
+                    transactionId, e.getMessage(), e);
+        }
+
         return response(t.getId(), req, amount, tip);
+    }
+
+    private Map<String, String> buildPushData(Transaction t, String merchantName) {
+        Map<String, String> data = new HashMap<>();
+        data.put("title", "Pembayaran Diterima");
+        data.put("body", "Pembayaran Rp" + t.getAmount() + " diterima");
+        data.put("transactionId", t.getTransactionId());
+        if (t.getTransactionDate() != null) data.put("transactionDate", t.getTransactionDate().toString());
+        data.put("amount", String.valueOf(t.getAmount()));
+        data.put("status", t.getStatus());
+        if (t.getSource() != null) data.put("issuerName", t.getSource());
+        if (merchantName != null) data.put("merchantName", merchantName);
+        if (t.getMerchantPan() != null) data.put("merchantPan", t.getMerchantPan());
+        if (t.getCustomerPan() != null) data.put("customerPan", t.getCustomerPan());
+        return data;
     }
 
     // Per the spec, response.status is the acknowledgment status (processing
@@ -120,6 +154,7 @@ public class QrisCallbackService {
         try {
             return new BigDecimal(value);
         } catch (NumberFormatException e) {
+            log.error("[CALLBACK] Invalid amount value '{}' in callback payload", value);
             throw new IllegalArgumentException("Nilai amount tidak valid: " + value);
         }
     }

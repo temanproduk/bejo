@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api/notifications")
+@RequestMapping("/api/notifications/test")
 public class NotificationController {
 
     private final NotificationService notificationService;
@@ -22,11 +22,13 @@ public class NotificationController {
         this.notificationService = notificationService;
     }
 
+    // Test-only: sends an FCM push built from the request to the given device.
+    // Does not record a transaction — use the QRIS callback for real payments.
     @PostMapping
-    public ResponseEntity<ApiResponse<Void>> sendNotification(
+    public ResponseEntity<ApiResponse<Void>> sendTestNotification(
             @Valid @RequestBody SendNotificationRequest request,
             Authentication authentication) throws FirebaseMessagingException {
         notificationService.send(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponse.success("Notification sent", null));
+        return ResponseEntity.ok(ApiResponse.success("Test notification sent", null));
     }
 }

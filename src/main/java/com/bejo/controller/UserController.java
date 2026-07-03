@@ -5,6 +5,8 @@ import com.bejo.dto.request.UpdateBankRequest;
 import com.bejo.dto.request.UpdateBusinessRequest;
 import com.bejo.dto.request.UpdateProfileRequest;
 import com.bejo.dto.response.ApiResponse;
+import com.bejo.dto.response.BankData;
+import com.bejo.dto.response.BusinessData;
 import com.bejo.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -38,9 +40,9 @@ public class UserController {
     }
 
     @PostMapping("/bank/reset")
-    public ResponseEntity<ApiResponse<Void>> resetBank(Authentication authentication) {
-        userService.resetBank(authentication.getName());
-        return ResponseEntity.ok(ApiResponse.success("Informasi rekening berhasil direset ke data awal", null));
+    public ResponseEntity<ApiResponse<BankData>> resetBank(Authentication authentication) {
+        BankData data = userService.resetBank(authentication.getName());
+        return ResponseEntity.ok(ApiResponse.success("Informasi rekening berhasil direset ke data awal", data));
     }
 
     @PatchMapping("/business")
@@ -52,9 +54,9 @@ public class UserController {
     }
 
     @PostMapping("/business/reset")
-    public ResponseEntity<ApiResponse<Void>> resetBusiness(Authentication authentication) {
-        userService.resetBusiness(authentication.getName());
-        return ResponseEntity.ok(ApiResponse.success("Informasi bisnis berhasil direset ke data awal", null));
+    public ResponseEntity<ApiResponse<BusinessData>> resetBusiness(Authentication authentication) {
+        BusinessData data = userService.resetBusiness(authentication.getName());
+        return ResponseEntity.ok(ApiResponse.success("Informasi bisnis berhasil direset ke data awal", data));
     }
 
     @PatchMapping("/password")

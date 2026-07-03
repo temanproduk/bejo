@@ -459,9 +459,9 @@ Soft-deletes a transaction: the row is kept in the database with a `deleted_at` 
 
 ### Notifications
 
-#### `POST /api/notifications`
+#### `POST /api/notifications/test`
 
-Sends an FCM push notification to a registered device **and** inserts a `MANAGED` transaction. All validation runs first — if any check fails, nothing is sent or recorded.
+**Test endpoint** — sends an FCM push notification (built from the request payload) to a single registered device, **without** recording anything in the database. Use it to verify push delivery end-to-end. Real payments are recorded (and their pushes sent) by the [QRIS callback](#qris-callback).
 
 **Request body**
 
@@ -493,7 +493,7 @@ Sends an FCM push notification to a registered device **and** inserts a `MANAGED
 }
 ```
 
-**Success — HTTP 200:** `{ "status": 1, "message": "Notification sent" }`
+**Success — HTTP 200:** `{ "status": 1, "message": "Test notification sent" }`
 
 **Errors**
 
@@ -501,7 +501,6 @@ Sends an FCM push notification to a registered device **and** inserts a `MANAGED
 |---|---|---|
 | 400 | `transactionId wajib diisi` | Missing field |
 | 400 | `amount harus lebih dari 0` | Non-positive amount |
-| 400 | `transactionId sudah terdaftar: <id>` | Duplicate transaction |
 | 404 | `Device not found: <deviceId>` | Unknown device |
 | 404 | `No FCM token registered for device: <deviceId>` | No FCM token on device |
 | 503 | `Firebase is not configured` | Firebase credentials missing |
@@ -692,7 +691,8 @@ Required fields: `originalReferenceNo`, `originalPartnerReferenceNo`, `latestTra
 - **Merchant routing** — the payment is attributed to the Bejo user whose `nmid` equals the payload's `merchantPan` (falling back to `destinationNumber`). If none matches, it falls back to the configured default user (`app.callback.default-username`, default `admin`); if that user doesn't exist either, returns `404`.
 - **Idempotency** — keyed on `originalReferenceNo` + `originalPartnerReferenceNo`; a duplicate delivery returns the existing transaction without inserting again.
 - **Status mapping** — `00`→SUCCESS, `01`→PENDING, `02`→FAILED, `03`→REFUNDED, `04`→CANCELLED, `05`→EXPIRED, else UNKNOWN.
-- The full payload JSON is saved to the transaction's `additionalInfo` (a general-purpose column, added in migration V3).
+- **Records a `MANAGED` transaction** and saves the full payload JSON to its `additionalInfo` (a general-purpose column, added in migration V3).
+- **Sends an FCM push** to all of the merchant's registered devices (best-effort — a push failure never fails the callback; skipped if Firebase isn't configured).
 
 **Success — HTTP 200** (acknowledgment)
 
