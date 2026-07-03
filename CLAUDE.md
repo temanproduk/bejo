@@ -65,13 +65,13 @@ Authorization: Bearer <JWT>
 
 The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` validates signature + expiry and rejects blacklisted (logged-out) tokens; controllers resolve the username via Spring's `Authentication` principal.
 
-`/actuator/**` and `/api/static` are exempt from both checks.
+`/actuator/**` and `/snap/**` (inbound QRIS payment callbacks) are exempt from both checks.
 
 ## API endpoints
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET`/`POST` | `/api/static` | None | Open test endpoint: accepts any params/body, logs the request, echoes it back |
+| `POST` | `/snap/v1.0/qr/qr-mpm-notify` | None | Inbound QRIS payment callback (SNAP QR MPM notify); records a MANAGED transaction, stores raw payload in `additional_info` |
 | `POST` | `/api/auth/register` | Public | Create user + bank + QRIS rows |
 | `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti) |
@@ -126,6 +126,10 @@ Users are created via `POST /api/auth/register` (creates `users`, `user_banks`, 
 
 `cuan_history.deleted_at = NULL` → active; non-null → deleted (V2 migration). `DELETE /api/transactions/{transactionId}` sets the timestamp; the row is never removed. History/edit/delete queries filter on `deleted_at IS NULL`, but `existsByTransactionId` and the idempotency-key replay lookup deliberately include deleted rows — the DB unique constraints span all rows, so a deleted `transaction_id`/`idempotency_key` still can't be reused.
 
+### QRIS payment callback
+
+`POST /snap/v1.0/qr/qr-mpm-notify` (`QrisCallbackController` → `QrisCallbackService`) receives SNAP-like QR MPM notifications from the QRIS merchant service (AstraPay), unauthenticated (server-to-server). It resolves the merchant by `User.nmid == payload.merchantPan` (falling back to `destinationNumber`, then to `app.callback.default-username`, default `admin`); is idempotent on `originalReferenceNo|originalPartnerReferenceNo` (stored as the transaction's `idempotencyKey`); maps SNAP status codes (`00`→SUCCESS…); records a `MANAGED`/`AstraPay` transaction; and saves the raw payload JSON to `cuan_history.additional_info`. Returns the callback's own ack shape (`QrMpmNotifyResponse`), not the `ApiResponse` envelope. `findFirstByNmid` is used (not `findBy`) so a duplicate NMID degrades gracefully instead of throwing.
+
 ### QRIS model
 
 `user_qris.qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
@@ -140,13 +144,13 @@ Users are created via `POST /api/auth/register` (creates `users`, `user_banks`, 
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
+Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
 
 Key tables:
 - `users` — credentials + profile + business info (with `initial_*` columns for reset)
 - `user_banks` / `user_qris` — one row per username (unique FK)
 - `cuan_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
-- `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`
+- `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)
 - `token_blacklist` — logged-out JWT jtis, purged hourly after expiry
 
 ## Tests

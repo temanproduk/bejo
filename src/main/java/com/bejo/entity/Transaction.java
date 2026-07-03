@@ -63,6 +63,10 @@ public class Transaction {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
+    // General-purpose extra context (e.g. raw callback payload JSON)
+    @Column(name = "additional_info", columnDefinition = "TEXT")
+    private String additionalInfo;
+
     public Long getId() { return id; }
     public String getTransactionId() { return transactionId; }
     public void setTransactionId(String transactionId) { this.transactionId = transactionId; }
@@ -100,4 +104,6 @@ public class Transaction {
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public LocalDateTime getDeletedAt() { return deletedAt; }
     public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
+    public String getAdditionalInfo() { return additionalInfo; }
+    public void setAdditionalInfo(String additionalInfo) { this.additionalInfo = additionalInfo; }
 }

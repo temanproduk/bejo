@@ -32,6 +32,7 @@ class ApiIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private com.bejo.repository.TransactionRepository transactionRepository;
+    @Autowired private com.bejo.repository.UserRepository userRepository;
 
     // ---------- helpers ----------
 
@@ -548,30 +549,102 @@ class ApiIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    // ---------- static ----------
+    // ---------- QRIS callback (snap qr-mpm-notify) ----------
 
-    @Test
-    void staticEndpointAcceptsGetWithoutAnyAuth() throws Exception {
-        mockMvc.perform(get("/api/static")
-                        .param("foo", "bar")
-                        .param("answer", "42"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value(1))
-                .andExpect(jsonPath("$.message").value("Static endpoint reached"))
-                .andExpect(jsonPath("$.data.method").value("GET"))
-                .andExpect(jsonPath("$.data.params.foo").value("bar"))
-                .andExpect(jsonPath("$.data.params.answer").value("42"));
+    // Unique merchantPan/refs per test so NMID routing is unambiguous and the
+    // global unique constraints on transaction_id/idempotency_key don't collide.
+    private String callbackBody(String merchantPan, String refNo, String partnerRef, String txnId) {
+        return """
+                {
+                  "originalReferenceNo": "%s",
+                  "originalPartnerReferenceNo": "%s",
+                  "latestTransactionStatus": "00",
+                  "transactionStatusDesc": "SUCCESS",
+                  "customerNumber": "9360082230250015792",
+                  "destinationNumber": "%s",
+                  "destinationAccountName": "Asep & Testing",
+                  "externalStoreId": null,
+                  "amount": { "value": "100.00", "currency": "IDR" },
+                  "additionalInfo": {
+                    "tip": "0.00", "deviceId": "AstraPay", "channel": "POS",
+                    "terminalId": "5164", "userName": "AstraPay User",
+                    "merchantPan": "%s", "customerPan": "9360082230250015792",
+                    "issuerName": "93600822", "transactionId": "%s"
+                  }
+                }
+                """.formatted(refNo, partnerRef, merchantPan, merchantPan, txnId);
+    }
+
+    private void registerWithNmid(String username, String nmid) throws Exception {
+        register(username);
+        com.bejo.entity.User u = userRepository.findByUsername(username).orElseThrow();
+        u.setNmid(nmid);
+        userRepository.save(u);
     }
 
     @Test
-    void staticEndpointAcceptsPostWithArbitraryBody() throws Exception {
-        mockMvc.perform(post("/api/static")
+    void qrisCallbackRecordsTransactionWithoutAnyAuth() throws Exception {
+        registerWithNmid("cb_user1", "9360082232504524231");
+        String body = callbackBody("9360082232504524231", "XCBS6Z450S", "DEV20250826422460",
+                "INV/QRM/4542BR/250826/2G4Y6CCZ");
+
+        // No X-API-TOKEN, no JWT — external server-to-server callback
+        mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                        .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
                         .contentType(APPLICATION_JSON)
-                        .content("{\"anything\":true,\"nested\":{\"x\":1}}"))
+                        .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value(1))
-                .andExpect(jsonPath("$.data.method").value("POST"))
-                .andExpect(jsonPath("$.data.body").value("{\"anything\":true,\"nested\":{\"x\":1}}"));
+                .andExpect(jsonPath("$.billNumber").value("XCBS6Z450S"))
+                .andExpect(jsonPath("$.referenceNumber").value("DEV20250826422460"))
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.id").isNumber());
+
+        // Recorded under the matched merchant and visible in history
+        String token = login("cb_user1", "password1", "device-cb_user1");
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].amount").value(100))
+                .andExpect(jsonPath("$.data[0].acquirer").value("AstraPay"))
+                .andExpect(jsonPath("$.data[0].merchantPan").value("9360082232504524231"));
+
+        // Raw payload stored in additional_info
+        com.bejo.entity.Transaction t = transactionRepository
+                .findByTransactionIdAndUsernameAndDeletedAtIsNull("INV/QRM/4542BR/250826/2G4Y6CCZ", "cb_user1")
+                .orElseThrow();
+        assertThat(t.getAdditionalInfo()).contains("originalReferenceNo").contains("XCBS6Z450S");
+    }
+
+    @Test
+    void qrisCallbackIsIdempotent() throws Exception {
+        registerWithNmid("cb_user2", "8888000011112222");
+        String body = callbackBody("8888000011112222", "IDEMREF01", "IDEMPART01", "INV-IDEM-01");
+
+        for (int i = 0; i < 2; i++) {
+            mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                            .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
+                            .contentType(APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isOk());
+        }
+
+        String token = login("cb_user2", "password1", "device-cb_user2");
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(1));
+    }
+
+    @Test
+    void qrisCallbackRejectsMissingAmount() throws Exception {
+        mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                        .contentType(APPLICATION_JSON)
+                        .content("""
+                                { "originalReferenceNo": "A", "originalPartnerReferenceNo": "B",
+                                  "latestTransactionStatus": "00" }
+                                """))
+                .andExpect(status().isBadRequest());
     }
 
     // ---------- devices ----------

@@ -479,42 +479,27 @@
       ]
     },
     {
-      "name": "Static",
+      "name": "QRIS Callback",
       "item": [
         {
-          "name": "Static GET",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/static?foo=bar",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "static"],
-              "query": [
-                { "key": "foo", "value": "bar" }
-              ]
-            },
-            "description": "Open test endpoint — no X-API-TOKEN and no JWT required. Accepts any query parameters, logs the full request on the server, and echoes it back.\n\nReturns HTTP 200."
-          }
-        },
-        {
-          "name": "Static POST",
+          "name": "QR MPM Notify",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-TIMESTAMP", "value": "2020-12-23T08:46:11+07:00" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"anything\": true,\n  \"nested\": { \"x\": 1 }\n}",
+              "raw": "{\n  \"originalReferenceNo\": \"XCBS6Z450S\",\n  \"originalPartnerReferenceNo\": \"DEV20250826422460\",\n  \"latestTransactionStatus\": \"00\",\n  \"transactionStatusDesc\": \"SUCCESS\",\n  \"customerNumber\": \"9360082230250015792\",\n  \"destinationNumber\": \"9360082232504524231\",\n  \"destinationAccountName\": \"Asep & Testing\",\n  \"externalStoreId\": null,\n  \"amount\": { \"value\": \"100.00\", \"currency\": \"IDR\" },\n  \"additionalInfo\": {\n    \"tip\": \"0.00\",\n    \"deviceId\": \"AstraPay\",\n    \"channel\": \"POS\",\n    \"terminalId\": \"5164\",\n    \"userName\": \"AstraPay User\",\n    \"merchantPan\": \"9360082232504524231\",\n    \"customerPan\": \"9360082230250015792\",\n    \"issuerName\": \"93600822\",\n    \"transactionId\": \"INV/QRM/4542BR/250826/2G4Y6CCZ\"\n  }\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/static",
+              "raw": "{{baseUrl}}/snap/v1.0/qr/qr-mpm-notify",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "static"]
+              "path": ["snap", "v1.0", "qr", "qr-mpm-notify"]
             },
-            "description": "Open test endpoint — no X-API-TOKEN and no JWT required. Accepts any body and query parameters, logs the full request on the server, and echoes it back.\n\nReturns HTTP 200."
+            "description": "Inbound QRIS payment callback (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). Server-to-server — no X-API-TOKEN and no JWT.\n\nRecords the payment as a MANAGED transaction and stores the raw payload in the transaction's additional_info column. Routed to the Bejo user whose nmid == merchantPan (else app.callback.default-username). Idempotent on originalReferenceNo + originalPartnerReferenceNo.\n\nReturns HTTP 200 with the acknowledgment shape { id, billNumber, referenceNumber, amount, tip, status, createdAt } — NOT the standard envelope."
           }
         }
       ]

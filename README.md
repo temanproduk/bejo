@@ -68,7 +68,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [Devices](#devices)
   - [User profile](#user-profile)
   - [QRIS](#qris)
-  - [Static](#static)
+  - [QRIS callback](#qris-callback)
 - [Error reference](#error-reference)
 - [Observability](#observability)
 - [Configuration](#configuration)
@@ -158,7 +158,7 @@ Every request requires:
 | `Authorization` | Protected only | `Bearer <JWT>` returned by login |
 
 Public (no JWT): `POST /api/auth/register`, `POST /api/auth/login`  
-Exempt entirely: `/actuator/**`, `/api/static`
+Exempt entirely: `/actuator/**`, `/snap/**` (inbound QRIS payment callbacks — server-to-server)
 
 Tokens expire after `JWT_EXPIRATION_MS` (default 90 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
 
@@ -648,32 +648,65 @@ Clears the uploaded image and reverts to the initial QRIS image.
 
 ---
 
-### Static
+### QRIS callback
 
-#### `GET | POST /api/static`
+#### `POST /snap/v1.0/qr/qr-mpm-notify`
 
-Open test endpoint — **no `X-API-TOKEN` and no JWT required**. Accepts any query parameters and (for POST) any request body, logs the full request (method, path, params, headers, body) on the server, and echoes it back. Useful for connectivity checks and webhook/client debugging.
+Inbound QRIS payment notification (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). **Server-to-server — no `X-API-TOKEN` and no JWT.** Records the payment as a `MANAGED` transaction and stores the **raw payload** in the transaction's `additionalInfo` column.
 
-```bash
-curl "https://<host>/api/static?foo=bar"
-curl -X POST "https://<host>/api/static" -H "Content-Type: application/json" -d '{"anything": true}'
-```
+This endpoint does **not** use the standard `{ status, message, data }` envelope — it returns the callback contract's own acknowledgment shape.
 
-**Success — HTTP 200**
+**Headers**
+
+| Header | Mandatory | Description |
+|---|---|---|
+| `Content-Type: application/json` | ✅ | |
+| `X-TIMESTAMP` | ⬜ | ISO-8601 transaction time; accepts an offset (`2020-12-23T08:46:11+07:00`), `Z`, or none. Recorded as the transaction date; a missing/invalid value falls back to now. |
+
+**Request body** (unknown fields are ignored)
 
 ```json
 {
-  "status": 1,
-  "message": "Static endpoint reached",
-  "data": {
-    "method": "POST",
-    "path": "/api/static",
-    "body": "{\"anything\": true}"
+  "originalReferenceNo": "XCBS6Z450S",
+  "originalPartnerReferenceNo": "DEV20250826422460",
+  "latestTransactionStatus": "00",
+  "transactionStatusDesc": "SUCCESS",
+  "customerNumber": "9360082230250015792",
+  "destinationNumber": "9360082232504524231",
+  "destinationAccountName": "Asep & Testing",
+  "amount": { "value": "100.00", "currency": "IDR" },
+  "additionalInfo": {
+    "tip": "0.00", "deviceId": "AstraPay", "terminalId": "5164",
+    "merchantPan": "9360082232504524231", "customerPan": "9360082230250015792",
+    "issuerName": "93600822", "transactionId": "INV/QRM/4542BR/250826/2G4Y6CCZ"
   }
 }
 ```
 
-`params` and `body` are included in `data` only when present.
+`originalReferenceNo`, `originalPartnerReferenceNo`, `latestTransactionStatus`, and `amount.value` are required.
+
+**Behavior**
+
+- **Merchant routing** — the payment is attributed to the Bejo user whose `nmid` equals the payload's `merchantPan` (falling back to `destinationNumber`). If none matches, it falls back to the configured default user (`app.callback.default-username`, default `admin`); if that user doesn't exist either, returns `404`.
+- **Idempotency** — keyed on `originalReferenceNo` + `originalPartnerReferenceNo`; a duplicate delivery returns the existing transaction without inserting again.
+- **Status mapping** — `00`→SUCCESS, `01`→PENDING, `02`→FAILED, `03`→REFUNDED, `04`→CANCELLED, `05`→EXPIRED, else UNKNOWN.
+- The full payload JSON is saved to the transaction's `additionalInfo` (a general-purpose column, added in migration V3).
+
+**Success — HTTP 200** (acknowledgment)
+
+```json
+{
+  "id": 123,
+  "billNumber": "XCBS6Z450S",
+  "referenceNumber": "DEV20250826422460",
+  "amount": 100.00,
+  "tip": 0.00,
+  "status": "SUCCESS",
+  "createdAt": "2026-07-03T10:30:00"
+}
+```
+
+**Errors:** `400` invalid/missing required fields, `404` no merchant match and no default user
 
 ---
 

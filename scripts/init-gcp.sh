@@ -190,23 +190,11 @@ create_or_update_secret "bejo-seed-password"        "$SEED_PASSWORD"
 # ---------------------------------------------------------------
 IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPO/$GCP_SERVICE_NAME:latest"
 
-# docker in CI; podman on this machine (gcloud's configure-docker helper
-# only writes docker config, so podman logs in with an access token instead)
-if command -v docker >/dev/null 2>&1; then
-  CONTAINER_CLI=docker
-  echo "==> Configuring Docker auth for Artifact Registry..."
-  gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-else
-  CONTAINER_CLI=podman
-  echo "==> Logging podman into Artifact Registry..."
-  gcloud auth print-access-token | podman login -u oauth2accesstoken --password-stdin "$GCP_REGION-docker.pkg.dev"
-fi
-
-echo "==> Building and pushing initial Docker image..."
-# Cloud Run runs amd64 — force the target platform so an arm64 build machine
-# (e.g. Apple Silicon) doesn't produce an image that fails with "exec format error"
-"$CONTAINER_CLI" build --platform=linux/amd64 -t "$IMAGE" "$SCRIPT_DIR/.."
-"$CONTAINER_CLI" push "$IMAGE"
+# Build with Cloud Build: runs on native amd64 server-side, so no local Docker/
+# podman and no slow qemu emulation on Apple Silicon. Uploads the source
+# (respecting .gcloudignore), builds the Dockerfile, and pushes to Artifact Registry.
+echo "==> Building image with Cloud Build (native amd64, no local emulation)..."
+gcloud builds submit "$SCRIPT_DIR/.." --tag="$IMAGE" --quiet
 
 # ---------------------------------------------------------------
 # 8. Initial Cloud Run deployment
