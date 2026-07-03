@@ -79,10 +79,12 @@ jobs:
             --set-secrets="API_TOKEN=bejo-api-token:latest" \
             --set-secrets="FIREBASE_CREDENTIALS_BASE64=bejo-firebase-credentials:latest" \
             --set-secrets="SEED_PASSWORD=bejo-seed-password:latest" \
-            --min-instances=0 \
+            --min-instances=1 \
             --max-instances=2 \
             --memory=512Mi \
             --cpu=1 \
+            --concurrency=80 \
+            --cpu-throttling \
             --allow-unauthenticated \
             --quiet
 
