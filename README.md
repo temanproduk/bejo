@@ -875,6 +875,10 @@ Errors shared across all endpoints:
 | `transactions.fetched_total` | — | Total transaction records returned |
 | `notifications.sent_total` | `result=success\|failure` | FCM notification outcomes |
 
+**Request logging**
+
+Every request is logged as `METHOD PATH[?query] STATUS DURATIONms`. Requests that fail with a `4xx` also log the reason (`[400] METHOD /path — <reason>`) and, on any `4xx`/`5xx`, the request body (`[BODY] …`). Body logging is production-safe: secrets (`password`/`token`/`pushToken`) are masked, the body is single-line and capped at 2 KB, and auth endpoints (`/api/auth/**`, register) are never captured. Under `SPRING_PROFILES_ACTIVE=prod` all logs are emitted as JSON (one object per line) for Cloud Logging.
+
 ---
 
 ## Configuration
@@ -899,6 +903,8 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `SEED_BUSINESS_NAME` | no | Default: `My Business` |
 | `SEED_BUSINESS_ADDRESS` | no | |
 | `SEED_NMID` | no | National Merchant ID for seed user |
+| `APP_REQUESTLOGGING_LOGBODYONERROR` | no | Log request bodies on 4xx/5xx (redacted, capped). Default `true`; set `false` to disable |
+| `APP_REQUESTLOGGING_MAXBODYLENGTH` | no | Max logged body length in chars. Default `2048` |
 
 \* One of the two Firebase options is required to use push notifications.
 
