@@ -1,5 +1,8 @@
 package com.bejo.service;
 
+import com.bejo.constant.Acquirer;
+import com.bejo.constant.TransactionStatus;
+import com.bejo.constant.TransactionType;
 import com.bejo.dto.request.QrMpmNotifyRequestDto;
 import com.bejo.dto.response.QrMpmNotifyResponseDto;
 import com.bejo.entity.Transaction;
@@ -100,8 +103,8 @@ public class QrisCallbackService {
         t.setAmount(amount.setScale(0, RoundingMode.HALF_UP).longValueExact());
         t.setStatus(status);
         t.setUsername(username);
-        t.setType("MANAGED");
-        t.setAcquirer(info != null && info.deviceId() != null ? info.deviceId() : "AstraPay");
+        t.setType(TransactionType.MANAGED);
+        t.setAcquirer(info != null && info.deviceId() != null ? info.deviceId() : Acquirer.ASTRAPAY);
         t.setSource(info != null ? info.issuerName() : null);
         t.setMerchantPan(merchantPan);
         t.setCustomerPan(info != null && info.customerPan() != null ? info.customerPan() : req.customerNumber());
@@ -147,7 +150,7 @@ public class QrisCallbackService {
                 req.originalPartnerReferenceNo(),
                 amount,
                 tip,
-                "SUCCESS",
+                TransactionStatus.SUCCESS,
                 LocalDateTime.now());
     }
 
@@ -163,13 +166,13 @@ public class QrisCallbackService {
     // 00=SUCCESS, 01=PENDING, 02=FAILED, 03=REFUNDED, 04=CANCELLED, 05=EXPIRED
     private String mapStatus(String code) {
         return switch (code) {
-            case "00" -> "SUCCESS";
-            case "01" -> "PENDING";
-            case "02" -> "FAILED";
-            case "03" -> "REFUNDED";
-            case "04" -> "CANCELLED";
-            case "05" -> "EXPIRED";
-            default -> "UNKNOWN";
+            case "00" -> TransactionStatus.SUCCESS;
+            case "01" -> TransactionStatus.PENDING;
+            case "02" -> TransactionStatus.FAILED;
+            case "03" -> TransactionStatus.REFUNDED;
+            case "04" -> TransactionStatus.CANCELLED;
+            case "05" -> TransactionStatus.EXPIRED;
+            default -> TransactionStatus.UNKNOWN;
         };
     }
 

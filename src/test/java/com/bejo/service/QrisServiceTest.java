@@ -9,10 +9,10 @@ import com.bejo.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.Base64;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -65,7 +65,7 @@ class QrisServiceTest {
     }
 
     @Test
-    void managedTypeGeneratesAndPersistsInitialImageOnFirstAccess() {
+    void managedTypeWithoutImageServesEmptyState() {
         UserQris q = qris(null, null);
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user()));
         when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(q));
@@ -73,12 +73,9 @@ class QrisServiceTest {
         QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("MANAGED");
-        assertThat(data.qrisImage()).isNotBlank();
-        // Generated image is valid base64 PNG
-        byte[] png = Base64.getDecoder().decode(data.qrisImage());
-        assertThat(png).startsWith(new byte[]{(byte) 0x89, 'P', 'N', 'G'});
-        verify(userQrisRepository).save(q);
-        assertThat(q.getInitialQrisImage()).isEqualTo(data.qrisImage());
+        // No placeholder is generated — the initial image (null here) is served as-is
+        assertThat(data.qrisImage()).isNull();
+        verify(userQrisRepository, never()).save(q);
     }
 
     @Test
@@ -114,11 +111,23 @@ class QrisServiceTest {
 
     @Test
     void uploadRejectsInvalidBase64() {
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(qris(null, null)));
-
+        // Validation runs before any repository lookup, so no stubbing is needed
         assertThatThrownBy(() -> qrisService.uploadQris("alice", "not base64 !!!"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("base64");
+    }
+
+    @Test
+    void uploadCreatesQrisRowWhenNoneExists() {
+        // Self-service accounts have no user_qris row until their first upload
+        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.empty());
+
+        qrisService.uploadQris("alice", "bmV3LWltYWdl");
+
+        ArgumentCaptor<UserQris> captor = ArgumentCaptor.forClass(UserQris.class);
+        verify(userQrisRepository).save(captor.capture());
+        assertThat(captor.getValue().getUsername()).isEqualTo("alice");
+        assertThat(captor.getValue().getQrisImage()).isEqualTo("bmV3LWltYWdl");
     }
 
     @Test
@@ -134,13 +143,15 @@ class QrisServiceTest {
     }
 
     @Test
-    void resetGeneratesInitialImageWhenMissing() {
+    void resetClearsUploadedImageWithoutGenerating() {
         UserQris q = qris("dXBsb2FkZWQ=", null);
         when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(q));
 
         qrisService.resetQris("alice");
 
         assertThat(q.getQrisImage()).isNull();
-        assertThat(q.getInitialQrisImage()).isNotBlank();
+        // No initial image is generated — stays null (empty state)
+        assertThat(q.getInitialQrisImage()).isNull();
+        verify(userQrisRepository).save(q);
     }
 }

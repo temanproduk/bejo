@@ -76,7 +76,8 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/snap/v1.0/qr/qr-mpm-notify` | None | Inbound QRIS payment callback (SNAP QR MPM notify); records a MANAGED transaction, stores raw payload in `additional_info` |
-| `POST` | `/api/auth/register` | Public | Create user + bank + QRIS rows |
+| `POST` | `/api/users/register` | Public | Self-service registration; creates a `SELF_SERVICE` user + bank (no QRIS row — QRIS is optional) |
+| `POST` | `/api/users/internal/register` | JWT | Internal/system registration; same payload but creates a `MANAGED` user |
 | `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti) |
 | `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive) |
@@ -113,8 +114,12 @@ dto/          → request records (@NotBlank validated) + response records.
                 TransactionDto); requests and responses are separate types.
 config/       → ApiTokenFilter, JwtAuthFilter, SecurityConfig, FirebaseConfig,
                 RequestLoggingFilter, DataSeeder
+constant/     → canonical domain values (no magic strings): AccountType,
+                TransactionType, TransactionStatus, QrisType, Acquirer
 exception/    → GlobalExceptionHandler + ResourceNotFoundException
 ```
+
+Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults).
 
 Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by consulting `RequestMappingHandlerMapping`. It must be injected with `@Qualifier("requestMappingHandlerMapping")` (actuator registers a second bean of that type) and the request path must be parsed via `ServletRequestPathUtils.parseAndCache` because the entry point runs before `DispatcherServlet`.
 
@@ -126,7 +131,14 @@ Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by cons
 3. Upsert a row in `cuan_sessions` keyed on `(username, device_id)`; an existing FCM token is preserved when the login request has no `pushToken`.
 4. Return profile + bank data + JWT (`expiresIn` seconds).
 
-Users are created via `POST /api/auth/register` (creates `users`, `user_banks`, and `user_qris` rows) or by `DataSeeder` at startup when `SEED_PASSWORD` is set.
+### Registration & account types
+
+Registration lives in `UserService` (not `AuthService` — auth is only login/logout/session). Two entry points, both create `users` + `user_banks` rows (bank fields optional, default to empty strings) and **no** `user_qris` row (QRIS is optional — added later via upload):
+
+- `POST /api/users/register` (public) → `AccountType.SELF_SERVICE`. For self-registered merchants.
+- `POST /api/users/internal/register` (JWT-protected) → `AccountType.MANAGED`. Same payload; for internal/system provisioning.
+
+`DataSeeder` also creates a `MANAGED` seed user at startup when `SEED_PASSWORD` is set — but seed data (including `seed-qris.b64`) is for the seed/test user only and must never back any other feature.
 
 ### Transaction soft delete
 
@@ -140,7 +152,7 @@ FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one devi
 
 ### QRIS model
 
-`user_qris.qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
+QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
 
 ### Observability
 
@@ -155,7 +167,7 @@ FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one devi
 Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
 
 Key tables:
-- `users` — credentials + profile + business info (with `initial_*` columns for reset)
+- `users` — credentials + profile + business info (with `initial_*` columns for reset); `account_type` is `MANAGED` (internal/seed) or `SELF_SERVICE` (self-registered)
 - `user_banks` / `user_qris` — one row per username (unique FK)
 - `cuan_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
 - `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)

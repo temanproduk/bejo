@@ -1,5 +1,9 @@
 package com.bejo.config;
 
+import com.bejo.constant.AccountType;
+import com.bejo.constant.Acquirer;
+import com.bejo.constant.TransactionStatus;
+import com.bejo.constant.TransactionType;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
@@ -87,7 +91,7 @@ public class DataSeeder implements ApplicationRunner {
             user.setInitialNmid(nmid);
             user.setEmail("admin@bejo.id");
             user.setPhone("+6281234567890");
-            user.setAccountType("MANAGED");
+            user.setAccountType(AccountType.MANAGED);
             userRepository.save(user);
 
             UserBank bank = new UserBank();
@@ -196,9 +200,9 @@ public class DataSeeder implements ApplicationRunner {
             t.setRrn(String.format("%012d", (long) (Math.random() * 1_000_000_000_000L)));
             t.setMerchantPan(merchantPan);
             t.setCustomerPan(customerPan);
-            t.setType("MANAGED");
-            t.setAcquirer("AstraPay");
-            t.setStatus("SUCCESS");
+            t.setType(TransactionType.MANAGED);
+            t.setAcquirer(Acquirer.ASTRAPAY);
+            t.setStatus(TransactionStatus.SUCCESS);
             t.setScrapeDate(now);
             txns.add(t);
         }

@@ -48,7 +48,7 @@ class ApiIntegrationTest {
     }
 
     private void register(String username) throws Exception {
-        mockMvc.perform(post("/api/auth/register")
+        mockMvc.perform(post("/api/users/register")
                         .header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(registerBody(username))))
@@ -130,7 +130,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.username").value("auth_user1"))
                 .andExpect(jsonPath("$.data.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.data.expiresIn").value(86400))
-                .andExpect(jsonPath("$.data.accountType").value("MANAGED"))
+                .andExpect(jsonPath("$.data.accountType").value("SELF_SERVICE"))
                 .andReturn();
 
         assertThat(result.getResponse().getContentAsString()).contains("token");
@@ -156,7 +156,7 @@ class ApiIntegrationTest {
     void duplicateRegistrationIsRejected() throws Exception {
         register("auth_user3");
 
-        mockMvc.perform(post("/api/auth/register")
+        mockMvc.perform(post("/api/users/register")
                         .header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(registerBody("auth_user3"))))
@@ -170,7 +170,7 @@ class ApiIntegrationTest {
         body.put("password", "short");
         body.put("phone", "081234");
 
-        mockMvc.perform(post("/api/auth/register")
+        mockMvc.perform(post("/api/users/register")
                         .header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
@@ -697,18 +697,16 @@ class ApiIntegrationTest {
     // ---------- QRIS ----------
 
     @Test
-    void qrisLifecycleManagedUploadReset() throws Exception {
+    void qrisLifecycleSelfServiceOptionalUploadReset() throws Exception {
         String token = registerAndLogin("qris_user1");
 
-        // Fresh account: MANAGED with a generated image
+        // Fresh self-service account: QRIS is optional, no row exists yet
         mockMvc.perform(get("/api/qris")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.type").value("MANAGED"))
-                .andExpect(jsonPath("$.data.qrisImage").isNotEmpty());
+                .andExpect(status().isNotFound());
 
-        // Upload a custom image
+        // Upload a custom image — creates the QRIS row on first upload
         mockMvc.perform(post("/api/qris/upload")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
@@ -722,7 +720,8 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.type").value("UPLOADED"))
                 .andExpect(jsonPath("$.data.qrisImage").value("dXBsb2FkZWQtaW1hZ2U="));
 
-        // Reset back to managed
+        // Reset clears the uploaded image; no placeholder is generated, so the
+        // managed image is an empty state (qrisImage omitted)
         mockMvc.perform(post("/api/qris/reset")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
@@ -731,7 +730,50 @@ class ApiIntegrationTest {
         mockMvc.perform(get("/api/qris")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
-                .andExpect(jsonPath("$.data.type").value("MANAGED"));
+                .andExpect(jsonPath("$.data.type").value("MANAGED"))
+                .andExpect(jsonPath("$.data.qrisImage").doesNotExist());
+    }
+
+    @Test
+    void internalRegistrationCreatesManagedUser() throws Exception {
+        // Internal registration requires a valid JWT (it is not public)
+        String adminToken = registerAndLogin("int_admin1");
+
+        Map<String, Object> body = registerBody("int_managed1");
+        mockMvc.perform(post("/api/users/internal/register")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value(1));
+
+        // The created account is MANAGED...
+        String managedToken = login("int_managed1", "password1", "dev-managed1");
+        mockMvc.perform(post("/api/auth/login")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "int_managed1",
+                                "password", "password1",
+                                "deviceId", "dev-managed1b"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accountType").value("MANAGED"));
+
+        // ...and QRIS is optional — no row is created until the user uploads one
+        mockMvc.perform(get("/api/qris")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + managedToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void internalRegistrationRequiresAuthentication() throws Exception {
+        mockMvc.perform(post("/api/users/internal/register")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(registerBody("int_noauth1"))))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

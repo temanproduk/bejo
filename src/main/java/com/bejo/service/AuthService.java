@@ -1,16 +1,12 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.LoginRequestDto;
-import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.response.LoginResponseDto;
 import com.bejo.entity.Session;
-import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
-import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserBankRepository;
-import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -29,7 +25,6 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final UserBankRepository userBankRepository;
-    private final UserQrisRepository userQrisRepository;
     private final SessionRepository sessionRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
@@ -39,7 +34,6 @@ public class AuthService {
 
     public AuthService(UserRepository userRepository,
                        UserBankRepository userBankRepository,
-                       UserQrisRepository userQrisRepository,
                        SessionRepository sessionRepository,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
@@ -47,7 +41,6 @@ public class AuthService {
                        MeterRegistry meterRegistry) {
         this.userRepository = userRepository;
         this.userBankRepository = userBankRepository;
-        this.userQrisRepository = userQrisRepository;
         this.sessionRepository = sessionRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
@@ -97,51 +90,6 @@ public class AuthService {
                 bank.getBankAccountName(),
                 token, "Bearer",
                 jwtService.getExpiresInSeconds());
-    }
-
-    @Transactional
-    public void register(RegisterRequestDto request) {
-        log.info("[REGISTER] username={}", request.username());
-
-        if (userRepository.existsByUsername(request.username())) {
-            throw new IllegalArgumentException("Username sudah digunakan");
-        }
-
-        User user = new User();
-        user.setUsername(request.username());
-        user.setPasswordHash(passwordEncoder.encode(request.password()));
-        user.setName(request.name());
-        user.setEmail(request.email());
-        user.setPhone(request.phone());
-        user.setBusinessName(request.businessName());
-        user.setBusinessAddress(request.businessAddress());
-        user.setNmid(request.nmid());
-        user.setInitialBusinessName(request.businessName());
-        user.setInitialBusinessAddress(request.businessAddress());
-        user.setInitialNmid(request.nmid());
-        user.setAccountType("MANAGED");
-        user.setEmailVerified(false);
-        user.setPhoneVerified(false);
-        userRepository.save(user);
-
-        String bankName        = request.bankName()        != null ? request.bankName()        : "";
-        String bankNumber      = request.bankNumber()      != null ? request.bankNumber()      : "";
-        String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";
-        UserBank bank = new UserBank();
-        bank.setUsername(request.username());
-        bank.setBankName(bankName);
-        bank.setBankNumber(bankNumber);
-        bank.setBankAccountName(bankAccountName);
-        bank.setInitialBankName(bankName);
-        bank.setInitialBankNumber(bankNumber);
-        bank.setInitialBankAccountName(bankAccountName);
-        userBankRepository.save(bank);
-
-        UserQris qris = new UserQris();
-        qris.setUsername(request.username());
-        userQrisRepository.save(qris);
-
-        log.info("[REGISTER] Created user username={}", request.username());
     }
 
     @Transactional

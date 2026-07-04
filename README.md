@@ -15,7 +15,7 @@ Bejo closes that gap.
 - **Instant payment alerts** — a push notification with an audible chime the moment money lands, so staff never have to trust a customer's screenshot.
 - **Transaction history** — every payment recorded and filterable by date, for daily reconciliation and bookkeeping.
 - **Manual & external entries** — record cash sales, or log transactions from another acquirer, alongside QRIS payments. Entries can be edited or removed.
-- **QRIS management** — display a Bejo-generated code or upload the merchant's own image.
+- **QRIS management** — display the merchant's managed QRIS or upload their own image (no image is synthesized; accounts without one return `null`).
 - **Business & bank profile** — keep merchant name, address, National Merchant ID (NMID), and payout bank details up to date, with one-tap reset back to the officially registered values.
 
 ## Account types
@@ -635,7 +635,9 @@ Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, 
 
 #### `GET /api/qris` — Get QRIS image
 
-Returns the QRIS image and business info. `type` indicates whether the image is Bejo-generated or user-uploaded.
+Returns the QRIS image and business info. `type` indicates whether the image is Bejo-managed or user-uploaded.
+
+`qrisImage` **may be `null`** — an account that has never uploaded a QRIS and has no managed image (e.g. a freshly registered merchant) returns `type: MANAGED` with `qrisImage: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to upload their QRIS.
 
 **Success — HTTP 200**
 
@@ -654,7 +656,7 @@ Returns the QRIS image and business info. `type` indicates whether the image is 
 
 | `type` | Description |
 |---|---|
-| `MANAGED` | Auto-generated placeholder image |
+| `MANAGED` | The account's initial/managed image, or `null` if none has been set |
 | `UPLOADED` | User-uploaded image (overrides MANAGED) |
 
 ---
@@ -673,7 +675,7 @@ Once uploaded, `GET /api/qris` returns this image with `type: UPLOADED`.
 
 #### `POST /api/qris/reset` — Reset QRIS image
 
-Clears the uploaded image and reverts to the initial QRIS image.
+Clears the uploaded image and reverts to the initial/managed QRIS image (which may be `null` → empty state on the client). No placeholder is generated.
 
 **Success — HTTP 200:** `{ "status": 1, "message": "QRIS berhasil direset ke versi generated" }`
 

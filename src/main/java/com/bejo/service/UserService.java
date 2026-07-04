@@ -1,11 +1,14 @@
 package com.bejo.service;
 
+import com.bejo.constant.AccountType;
 import com.bejo.dto.request.ChangePasswordRequestDto;
+import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.request.UpdateBankRequestDto;
 import com.bejo.dto.request.UpdateBusinessRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
 import com.bejo.dto.response.BankResponseDto;
 import com.bejo.dto.response.BusinessResponseDto;
+import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.UserBankRepository;
@@ -31,6 +34,69 @@ public class UserService {
         this.userRepository = userRepository;
         this.userBankRepository = userBankRepository;
         this.passwordEncoder = passwordEncoder;
+    }
+
+    /**
+     * Self-service registration through the public API: creates a
+     * {@link AccountType#SELF_SERVICE} account with its {@code users} and
+     * {@code user_banks} rows. QRIS is optional — no {@code user_qris} row (and no
+     * default image) is created; the user may upload one later via the QRIS API.
+     * This is account creation, not authentication — login, logout, and session
+     * management live in {@link AuthService}.
+     */
+    @Transactional
+    public void register(RegisterRequestDto request) {
+        log.info("[REGISTER] username={}", request.username());
+        createUserAndBank(request, AccountType.SELF_SERVICE);
+        log.info("[REGISTER] Created SELF_SERVICE user username={}", request.username());
+    }
+
+    /**
+     * Internal/system registration: identical to self-service registration but marks
+     * the account {@link AccountType#MANAGED}. Bank info is still optional and QRIS is
+     * still optional (no {@code user_qris} row is created — add one later via upload).
+     */
+    @Transactional
+    public void registerInternal(RegisterRequestDto request) {
+        log.info("[REGISTER-INTERNAL] username={}", request.username());
+        createUserAndBank(request, AccountType.MANAGED);
+        log.info("[REGISTER-INTERNAL] Created MANAGED user username={}", request.username());
+    }
+
+    private void createUserAndBank(RegisterRequestDto request, String accountType) {
+        if (userRepository.existsByUsername(request.username())) {
+            throw new IllegalArgumentException("Username sudah digunakan");
+        }
+
+        User user = new User();
+        user.setUsername(request.username());
+        user.setPasswordHash(passwordEncoder.encode(request.password()));
+        user.setName(request.name());
+        user.setEmail(request.email());
+        user.setPhone(request.phone());
+        user.setBusinessName(request.businessName());
+        user.setBusinessAddress(request.businessAddress());
+        user.setNmid(request.nmid());
+        user.setInitialBusinessName(request.businessName());
+        user.setInitialBusinessAddress(request.businessAddress());
+        user.setInitialNmid(request.nmid());
+        user.setAccountType(accountType);
+        user.setEmailVerified(false);
+        user.setPhoneVerified(false);
+        userRepository.save(user);
+
+        String bankName        = request.bankName()        != null ? request.bankName()        : "";
+        String bankNumber      = request.bankNumber()      != null ? request.bankNumber()      : "";
+        String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";
+        UserBank bank = new UserBank();
+        bank.setUsername(request.username());
+        bank.setBankName(bankName);
+        bank.setBankNumber(bankNumber);
+        bank.setBankAccountName(bankAccountName);
+        bank.setInitialBankName(bankName);
+        bank.setInitialBankNumber(bankNumber);
+        bank.setInitialBankAccountName(bankAccountName);
+        userBankRepository.save(bank);
     }
 
     @Transactional

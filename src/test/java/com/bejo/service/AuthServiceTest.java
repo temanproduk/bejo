@@ -1,15 +1,12 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.LoginRequestDto;
-import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.response.LoginResponseDto;
 import com.bejo.entity.Session;
 import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
-import com.bejo.entity.UserQris;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserBankRepository;
-import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,7 +23,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -35,7 +31,6 @@ class AuthServiceTest {
 
     @Mock private UserRepository userRepository;
     @Mock private UserBankRepository userBankRepository;
-    @Mock private UserQrisRepository userQrisRepository;
     @Mock private SessionRepository sessionRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtService jwtService;
@@ -47,7 +42,7 @@ class AuthServiceTest {
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
-        authService = new AuthService(userRepository, userBankRepository, userQrisRepository,
+        authService = new AuthService(userRepository, userBankRepository,
                 sessionRepository, passwordEncoder, jwtService, tokenBlacklistService, meterRegistry);
     }
 
@@ -157,39 +152,6 @@ class AuthServiceTest {
     }
 
     @Test
-    void registerRejectsDuplicateUsername() {
-        when(userRepository.existsByUsername("alice")).thenReturn(true);
-
-        assertThatThrownBy(() -> authService.register(registerRequest()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Username sudah digunakan");
-
-        verify(userRepository, never()).save(any());
-    }
-
-    @Test
-    void registerCreatesUserBankAndQris() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
-
-        authService.register(registerRequest());
-
-        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(userCaptor.capture());
-        assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("$encoded");
-        assertThat(userCaptor.getValue().getAccountType()).isEqualTo("MANAGED");
-
-        ArgumentCaptor<UserBank> bankCaptor = ArgumentCaptor.forClass(UserBank.class);
-        verify(userBankRepository).save(bankCaptor.capture());
-        // Bank fields not supplied at registration default to empty strings
-        assertThat(bankCaptor.getValue().getBankName()).isEmpty();
-
-        ArgumentCaptor<UserQris> qrisCaptor = ArgumentCaptor.forClass(UserQris.class);
-        verify(userQrisRepository).save(qrisCaptor.capture());
-        assertThat(qrisCaptor.getValue().getUsername()).isEqualTo("alice");
-    }
-
-    @Test
     void logoutBlacklistsTokenJti() {
         when(jwtService.extractJti("token")).thenReturn("jti-123");
         when(jwtService.extractExpiration("token")).thenReturn(java.time.LocalDateTime.now().plusDays(1));
@@ -197,10 +159,5 @@ class AuthServiceTest {
         authService.logout("token");
 
         verify(tokenBlacklistService).blacklist(anyString(), any());
-    }
-
-    private RegisterRequestDto registerRequest() {
-        return new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null);
     }
 }

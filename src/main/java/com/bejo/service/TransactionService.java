@@ -1,5 +1,8 @@
 package com.bejo.service;
 
+import com.bejo.constant.Acquirer;
+import com.bejo.constant.TransactionStatus;
+import com.bejo.constant.TransactionType;
 import com.bejo.dto.request.AddTransactionRequestDto;
 import com.bejo.dto.request.UpdateTransactionRequestDto;
 import com.bejo.dto.response.TransactionCreatedResponseDto;
@@ -83,12 +86,12 @@ public class TransactionService {
         userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        boolean isParsed = "PARSED".equals(request.type());
+        boolean isParsed = TransactionType.PARSED.equals(request.type());
         if (isParsed && (request.acquirer() == null || request.acquirer().isBlank())) {
             throw new IllegalArgumentException("acquirer wajib diisi untuk type PARSED");
         }
 
-        String acquirer = isParsed ? request.acquirer() : "Cash";
+        String acquirer = isParsed ? request.acquirer() : Acquirer.CASH;
         String transactionId = "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
 
         Transaction t = new Transaction();
@@ -103,7 +106,7 @@ public class TransactionService {
         t.setRrn(request.rrn());
         t.setType(request.type());
         t.setAcquirer(acquirer);
-        t.setStatus("SUCCESS");
+        t.setStatus(TransactionStatus.SUCCESS);
         t.setScrapeDate(LocalDateTime.now());
         transactionRepository.save(t);
         log.info("[TXN] Created type={} acquirer={} transactionId={}", request.type(), acquirer, transactionId);
@@ -121,7 +124,7 @@ public class TransactionService {
 
         // MANAGED rows are pushed by the Bejo server and are the payment record
         // of truth — only MANUAL/PARSED entries are user-editable
-        if (!"MANUAL".equals(t.getType()) && !"PARSED".equals(t.getType())) {
+        if (!TransactionType.MANUAL.equals(t.getType()) && !TransactionType.PARSED.equals(t.getType())) {
             throw new IllegalArgumentException("Transaksi bertipe " + t.getType() + " tidak dapat diubah");
         }
 

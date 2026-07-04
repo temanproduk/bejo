@@ -1,6 +1,7 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.ChangePasswordRequestDto;
+import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.request.UpdateBankRequestDto;
 import com.bejo.dto.request.UpdateBusinessRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
@@ -12,6 +13,7 @@ import com.bejo.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -20,6 +22,9 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -34,6 +39,64 @@ class UserServiceTest {
     @BeforeEach
     void setUp() {
         userService = new UserService(userRepository, userBankRepository, passwordEncoder);
+    }
+
+    private RegisterRequestDto registerRequest() {
+        return new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
+                "+628111111111", "Warung Alice", null, null, null, null, null);
+    }
+
+    @Test
+    void registerRejectsDuplicateUsername() {
+        when(userRepository.existsByUsername("alice")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.register(registerRequest()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Username sudah digunakan");
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void registerCreatesSelfServiceUserAndBank() {
+        when(userRepository.existsByUsername("alice")).thenReturn(false);
+        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
+
+        userService.register(registerRequest());
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(userCaptor.capture());
+        assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("$encoded");
+        assertThat(userCaptor.getValue().getAccountType()).isEqualTo("SELF_SERVICE");
+
+        ArgumentCaptor<UserBank> bankCaptor = ArgumentCaptor.forClass(UserBank.class);
+        verify(userBankRepository).save(bankCaptor.capture());
+        // Bank fields not supplied at registration default to empty strings
+        assertThat(bankCaptor.getValue().getBankName()).isEmpty();
+    }
+
+    @Test
+    void registerInternalCreatesManagedUser() {
+        when(userRepository.existsByUsername("alice")).thenReturn(false);
+        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
+
+        userService.registerInternal(registerRequest());
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(userCaptor.capture());
+        assertThat(userCaptor.getValue().getAccountType()).isEqualTo("MANAGED");
+        verify(userBankRepository).save(any());
+    }
+
+    @Test
+    void registerInternalRejectsDuplicateUsername() {
+        when(userRepository.existsByUsername("alice")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.registerInternal(registerRequest()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Username sudah digunakan");
+
+        verify(userRepository, never()).save(any());
     }
 
     @Test

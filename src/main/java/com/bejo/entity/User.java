@@ -1,5 +1,6 @@
 package com.bejo.entity;
 
+import com.bejo.constant.AccountType;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
@@ -51,7 +52,7 @@ public class User {
     private boolean isPhoneVerified = false;
 
     @Column(name = "account_type", nullable = false)
-    private String accountType = "MANAGED";
+    private String accountType = AccountType.MANAGED;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;

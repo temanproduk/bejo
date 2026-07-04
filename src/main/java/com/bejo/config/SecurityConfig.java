@@ -68,7 +68,7 @@ public class SecurityConfig {
                         // JSON API returns no HTML/scripts — lock the CSP right down
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'")))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
+                        .requestMatchers("/api/auth/login", "/api/users/register").permitAll()
                         .requestMatchers("/snap/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
                         .anyRequest().authenticated()
