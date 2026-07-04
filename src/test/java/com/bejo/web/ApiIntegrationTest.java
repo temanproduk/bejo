@@ -904,6 +904,71 @@ class ApiIntegrationTest {
                 .andExpect(status().isServiceUnavailable());
     }
 
+    // ---------- app settings ----------
+
+    @Test
+    void appSettingsDefaultsThenUpdate() throws Exception {
+        String token = registerAndLogin("appset_user1");
+
+        // Defaults when nothing has been synced yet
+        mockMvc.perform(get("/api/app-settings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.blacklistEnabled").value(true))
+                .andExpect(jsonPath("$.data.whitelistEnabled").value(false))
+                .andExpect(jsonPath("$.data.monitoredApps").isEmpty())
+                .andExpect(jsonPath("$.data.includeKeywords").isEmpty());
+
+        // Save monitored apps (issuer is trimmed + lowercased)
+        mockMvc.perform(put("/api/app-settings/monitored-apps")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"apps\":{\"id.dana\":\"DANA\",\"com.gojek.app\":\"gopay\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monitoredApps['id.dana']").value("dana"));
+
+        // Save keywords + toggle (Promo/promo dedupe to one entry)
+        mockMvc.perform(put("/api/app-settings/keywords")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"excludeKeywords\":[\"Promo\",\"promo\",\"diskon\"],\"whitelistEnabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.excludeKeywords[0]").value("promo"))
+                .andExpect(jsonPath("$.data.excludeKeywords[1]").value("diskon"))
+                .andExpect(jsonPath("$.data.whitelistEnabled").value(true));
+
+        // GET reflects the saved state; untouched blacklist toggle stays at its default
+        mockMvc.perform(get("/api/app-settings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.monitoredApps['com.gojek.app']").value("gopay"))
+                .andExpect(jsonPath("$.data.excludeKeywords[0]").value("promo"))
+                .andExpect(jsonPath("$.data.blacklistEnabled").value(true));
+    }
+
+    @Test
+    void appSettingsRejectInvalidPackage() throws Exception {
+        String token = registerAndLogin("appset_user2");
+
+        mockMvc.perform(put("/api/app-settings/monitored-apps")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"apps\":{\"bad package!\":\"x\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void appSettingsRequireJwt() throws Exception {
+        mockMvc.perform(get("/api/app-settings")
+                        .header("X-API-TOKEN", API_TOKEN))
+                .andExpect(status().isUnauthorized());
+    }
+
     // ---------- error handling ----------
 
     @Test

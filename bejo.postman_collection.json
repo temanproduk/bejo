@@ -455,6 +455,71 @@
       ]
     },
     {
+      "name": "App Settings",
+      "item": [
+        {
+          "name": "Get App Settings",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/app-settings",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "app-settings"]
+            },
+            "description": "Returns the user's app settings (monitored apps + notification keyword filters). When nothing has been synced yet, returns defaults: empty monitoredApps/keyword lists, blacklistEnabled=true, whitelistEnabled=false."
+          }
+        },
+        {
+          "name": "Save Monitored Apps",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apps\": {\n    \"id.dana\": \"dana\",\n    \"com.gojek.app\": \"gopay\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/app-settings/monitored-apps",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "app-settings", "monitored-apps"]
+            },
+            "description": "Replaces the monitored-apps map (packageName -> issuer). Sending an empty object clears the list. Package names must match [A-Za-z0-9_.]+; issuers are trimmed and lowercased. Returns the full updated settings."
+          }
+        },
+        {
+          "name": "Save Keywords",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"includeKeywords\": [\"uang masuk\", \"pembayaran diterima\"],\n  \"excludeKeywords\": [\"promo\", \"gagal\"],\n  \"blacklistEnabled\": true,\n  \"whitelistEnabled\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/app-settings/keywords",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "app-settings", "keywords"]
+            },
+            "description": "Updates the notification keyword filters. Partial update: omit a field (null) to leave it unchanged; send an empty list to clear it. Keywords are trimmed, lowercased, and deduplicated. Returns the full updated settings."
+          }
+        }
+      ]
+    },
+    {
       "name": "QRIS",
       "item": [
         {

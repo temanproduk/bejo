@@ -95,6 +95,9 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/users/me/bank/reset` | JWT | Reset bank info to initial values |
 | `PATCH` | `/api/users/me/business` | JWT | Update business name/address/NMID |
 | `POST` | `/api/users/me/business/reset` | JWT | Reset business info to initial values |
+| `GET` | `/api/app-settings` | JWT | Get the user's app settings (monitored apps + notification keywords); returns defaults if never synced |
+| `PUT` | `/api/app-settings/monitored-apps` | JWT | Replace the monitored-apps map (`packageName`→`issuer`) |
+| `PUT` | `/api/app-settings/keywords` | JWT | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
 
 All responses follow `{ "status": 1\|0, "message": "...", "data": {...}, "count": N }` — null fields are omitted.
 
@@ -116,6 +119,8 @@ config/       → ApiTokenFilter, JwtAuthFilter, SecurityConfig, FirebaseConfig,
                 RequestLoggingFilter, DataSeeder
 constant/     → canonical domain values (no magic strings): AccountType,
                 TransactionType, TransactionStatus, QrisType, Acquirer
+converter/    → JPA AttributeConverters storing JSON in TEXT columns
+                (StringListJsonConverter, StringMapJsonConverter)
 exception/    → GlobalExceptionHandler + ResourceNotFoundException
 ```
 
@@ -154,6 +159,14 @@ FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one devi
 
 QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
 
+### App settings
+
+`AppSettingsController` → `AppSettingsService` manage a per-user `user_app_settings` row (one per username, created lazily on first update) holding the settings synced from the mobile client:
+- **Monitored apps** — a `packageName → issuer` map (mirrors the Android `notifAppList` pref), stored as JSON via `StringMapJsonConverter`.
+- **Notification keywords** — `includeKeywords` (whitelist) + `excludeKeywords` (blacklist) string lists (JSON via `StringListJsonConverter`) plus `blacklistEnabled` (default true) / `whitelistEnabled` (default false) toggles.
+
+`GET /api/app-settings` returns defaults (empty lists/map, blacklist on, whitelist off) when no row exists yet — it never 404s. `PUT /api/app-settings/monitored-apps` replaces the whole map; `PUT /api/app-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
+
 ### Observability
 
 - `/actuator/health` — liveness/readiness
@@ -164,7 +177,7 @@ QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` re
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
+Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info` + V4 `user_app_settings`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
 
 Key tables:
 - `users` — credentials + profile + business info (with `initial_*` columns for reset); `account_type` is `MANAGED` (internal/seed) or `SELF_SERVICE` (self-registered)
@@ -172,6 +185,7 @@ Key tables:
 - `cuan_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
 - `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)
 - `token_blacklist` — logged-out JWT jtis, purged hourly after expiry
+- `user_app_settings` — one row per username; monitored-apps map + notification keyword filters (JSON in TEXT columns) + blacklist/whitelist toggles
 
 ## Tests
 

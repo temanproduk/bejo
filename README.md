@@ -68,6 +68,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [Notifications](#notifications)
   - [Devices](#devices)
   - [User profile](#user-profile)
+  - [App settings](#app-settings)
   - [QRIS](#qris)
   - [QRIS callback](#qris-callback)
 - [Error reference](#error-reference)
@@ -647,6 +648,79 @@ Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, 
 | `newPassword` | yes | Min 8 chars, at least 1 letter and 1 digit |
 
 **Errors:** `400 Password saat ini tidak sesuai`, `400 Password baru minimal 8 karakter`, `400 Password baru harus mengandung minimal 1 huruf dan 1 angka`
+
+---
+
+### App settings
+
+Per-user settings synced from the app: the **monitored apps** (which apps' notifications to watch) and the **notification keywords** (blacklist/whitelist filters). All endpoints require JWT. Settings are created on first save; a user who has never synced gets sensible defaults.
+
+#### `GET /api/app-settings` — Get app settings
+
+Returns the user's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`. Empty lists mean the client should fall back to its own bundled defaults.
+
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "message": "App settings retrieved",
+  "data": {
+    "monitoredApps": { "id.dana": "dana", "com.gojek.app": "gopay" },
+    "includeKeywords": ["uang masuk", "pembayaran diterima"],
+    "excludeKeywords": ["promo", "gagal"],
+    "blacklistEnabled": true,
+    "whitelistEnabled": false
+  }
+}
+```
+
+---
+
+#### `PUT /api/app-settings/monitored-apps` — Save monitored apps
+
+Replaces the monitored-apps map (`packageName` → `issuer`). Sending `{}` clears the list. Package names must match `[A-Za-z0-9_.]+`; issuers are trimmed and lowercased. Returns the full updated settings.
+
+**Request body**
+
+```json
+{
+  "apps": {
+    "id.dana": "dana",
+    "com.gojek.app": "gopay"
+  }
+}
+```
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Daftar aplikasi dipantau berhasil disimpan", "data": { ...full settings... } }`
+
+**Errors:** `400 apps wajib diisi`, `400 Nama package tidak valid: <pkg>`, `400 Nama issuer tidak boleh kosong untuk package <pkg>`, `400 Terlalu banyak aplikasi (maksimal 500)`
+
+---
+
+#### `PUT /api/app-settings/keywords` — Save notification keywords
+
+Updates the keyword filters. **Partial update:** a `null` field is left unchanged; an empty list (`[]`) clears that list. Keywords are trimmed, lowercased, and deduplicated. Returns the full updated settings.
+
+**Request body** (any subset of fields)
+
+| Field | Type | Description |
+|---|---|---|
+| `includeKeywords` | array | Whitelist keywords (money-in indicators) |
+| `excludeKeywords` | array | Blacklist keywords (promos, failures, outgoing) |
+| `blacklistEnabled` | boolean | Enable exclude-keyword filtering |
+| `whitelistEnabled` | boolean | Enable include-keyword filtering |
+
+```json
+{
+  "excludeKeywords": ["promo", "diskon"],
+  "whitelistEnabled": true
+}
+```
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Kata kunci notifikasi berhasil disimpan", "data": { ...full settings... } }`
+
+**Errors:** `400 Tidak ada field yang diubah` (all fields null), `400 <field>: kata kunci terlalu panjang: <kw>`, `400 <field>: terlalu banyak kata kunci (maksimal 1000)`
 
 ---
 
