@@ -20,10 +20,10 @@ Bejo closes that gap.
 
 ## Account types
 
-| Type | Who it's for | What Bejo does |
+| Type | Who it's for | How it's created |
 |---|---|---|
-| **MANAGED** | Merchants using a Bejo-issued QRIS | Bejo manages the QR and the payment gateway integration, so alerts and the ring sound are delivered automatically on every payment. |
-| **EXTERNAL** | Merchants who keep their own acquirer / QRIS | Bejo stores and tracks the transactions the merchant submits, but does not manage the QR code itself. |
+| **MANAGED** | Merchants provisioned by Bejo internally | Created by the seed process or the internal registration API (`/api/users/internal/register`). |
+| **SELF_SERVICE** | Merchants who sign up themselves | Created through the public registration API (`/api/users/register`) from the app. |
 
 ## How a payment flows
 
@@ -63,6 +63,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
 - [Data model](#data-model)
 - [Endpoints](#endpoints)
   - [Auth](#auth)
+  - [Users](#users)
   - [Transactions](#transactions)
   - [Notifications](#notifications)
   - [Devices](#devices)
@@ -159,7 +160,7 @@ Every request requires:
 | `X-API-TOKEN` | All | Shared secret — `API_TOKEN` env var |
 | `Authorization` | Protected only | `Bearer <JWT>` returned by login |
 
-Public (no JWT): `POST /api/auth/register`, `POST /api/auth/login`  
+Public (no JWT): `POST /api/users/register`, `POST /api/auth/login`  
 Exempt from the API token: `/actuator/health` (for Cloud Run probes) and `/snap/**` (inbound QRIS payment callbacks — server-to-server). All other `/actuator/*` endpoints (metrics, prometheus, info) **require** `X-API-TOKEN`.
 
 Tokens expire after `JWT_EXPIRATION_MS` (default 7 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
@@ -199,7 +200,7 @@ Null fields are omitted.
 | Field | Editable | Description |
 |---|---|---|
 | `username` | No | 3–50 chars, alphanumeric + underscore |
-| `accountType` | No | `MANAGED` or `EXTERNAL` — see below |
+| `accountType` | No | `MANAGED` or `SELF_SERVICE` — see below |
 | `name` | Yes | Display name |
 | `email` | Yes | Email address |
 | `isEmailVerified` | System | Always `false` (verification not yet implemented) |
@@ -218,8 +219,8 @@ Initial values (`initialBusinessName`, `initialBusinessAddress`, `initialNmid`, 
 
 | Value | Description |
 |---|---|
-| `MANAGED` | QRIS managed by Bejo — includes push notification and ring sound |
-| `EXTERNAL` | Own acquirer — Bejo stores and tracks transactions only |
+| `MANAGED` | Created internally by Bejo (seed data or the internal registration API) |
+| `SELF_SERVICE` | Self-registered through the public registration API |
 
 ### Transaction types
 
@@ -235,48 +236,7 @@ Initial values (`initialBusinessName`, `initialBusinessAddress`, `initialNmid`, 
 
 ### Auth
 
-#### `POST /api/auth/register`
-
-Creates a new user account. `X-API-TOKEN` required, no JWT.
-
-**Request body**
-
-| Field | Required | Validation |
-|---|---|---|
-| `username` | yes | 3–50 chars, alphanumeric + underscore, unique |
-| `password` | yes | Min 8 chars, at least 1 letter and 1 digit |
-| `name` | yes | 2–100 chars |
-| `email` | yes | Valid email format |
-| `phone` | yes | International format e.g. `+628123456789` |
-| `businessName` | yes | Max 255 chars |
-| `businessAddress` | no | Free text |
-| `nmid` | no | Max 50 chars |
-| `bankName` | no | Max 100 chars |
-| `bankNumber` | no | Digits only, 6–20 digits |
-| `bankAccountName` | no | Max 100 chars |
-
-```json
-{
-  "username": "alice",
-  "password": "Secret1",
-  "name": "Alice",
-  "email": "alice@example.com",
-  "phone": "+628100000000",
-  "businessName": "Alice Shop",
-  "businessAddress": "Jl. Contoh No. 1",
-  "nmid": "ID1026540778978"
-}
-```
-
-**Responses**
-
-| HTTP | Result |
-|---|---|
-| 201 | `{ "status": 1, "message": "Registrasi berhasil" }` |
-| 400 | Validation error — `username wajib diisi`, `password harus mengandung minimal 1 huruf dan 1 angka`, `format email tidak valid`, etc. |
-| 400 | `Username sudah digunakan` |
-
----
+> Registration lives under **[Users](#users)** — the Auth endpoints are login/logout only.
 
 #### `POST /api/auth/login`
 
@@ -532,6 +492,65 @@ Updates the FCM push token for a device. Only devices belonging to the authentic
 
 ---
 
+### Users
+
+#### `POST /api/users/register`
+
+Self-service registration. Creates a `SELF_SERVICE` user + bank profile. **No QRIS row is created — QRIS is optional** and can be added later via `POST /api/qris/upload`. `X-API-TOKEN` required, no JWT.
+
+**Request body**
+
+| Field | Required | Validation |
+|---|---|---|
+| `username` | yes | 3–50 chars, alphanumeric + underscore, unique |
+| `password` | yes | Min 8 chars, at least 1 letter and 1 digit |
+| `name` | yes | 2–100 chars |
+| `email` | yes | Valid email format |
+| `phone` | yes | International format e.g. `+628123456789` |
+| `businessName` | yes | Max 255 chars |
+| `businessAddress` | no | Free text |
+| `nmid` | no | Max 50 chars |
+| `bankName` | no | Max 100 chars |
+| `bankNumber` | no | Digits only, 6–20 digits |
+| `bankAccountName` | no | Max 100 chars |
+
+```json
+{
+  "username": "alice",
+  "password": "Secret1",
+  "name": "Alice",
+  "email": "alice@example.com",
+  "phone": "+628100000000",
+  "businessName": "Alice Shop",
+  "businessAddress": "Jl. Contoh No. 1",
+  "nmid": "ID1026540778978"
+}
+```
+
+**Responses**
+
+| HTTP | Result |
+|---|---|
+| 201 | `{ "status": 1, "message": "Registrasi berhasil" }` |
+| 400 | Validation error — `username wajib diisi`, `password harus mengandung minimal 1 huruf dan 1 angka`, `format email tidak valid`, etc. |
+| 400 | `Username sudah digunakan` |
+
+---
+
+#### `POST /api/users/internal/register`
+
+Internal/system registration. Same request body as above, but creates a `MANAGED` account. **Requires JWT** (in addition to `X-API-TOKEN`) — it is not public.
+
+**Responses**
+
+| HTTP | Result |
+|---|---|
+| 201 | `{ "status": 1, "message": "Registrasi internal berhasil" }` |
+| 400 | Validation error / `Username sudah digunakan` |
+| 401 | Missing or invalid JWT |
+
+---
+
 ### User profile
 
 All endpoints below require JWT.
@@ -637,7 +656,7 @@ Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, 
 
 Returns the QRIS image and business info. `type` indicates whether the image is Bejo-managed or user-uploaded.
 
-`qrisImage` **may be `null`** — an account that has never uploaded a QRIS and has no managed image (e.g. a freshly registered merchant) returns `type: MANAGED` with `qrisImage: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to upload their QRIS.
+**QRIS is optional.** A freshly registered merchant has no QRIS record at all, so `GET /api/qris` returns **`404 QRIS data not found`** until they upload one via `POST /api/qris/upload` (which creates the record on first upload). Once a record exists, `qrisImage` **may still be `null`** — e.g. after an upload is reset, the response is `type: MANAGED` with `qrisImage: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to upload their QRIS.
 
 **Success — HTTP 200**
 

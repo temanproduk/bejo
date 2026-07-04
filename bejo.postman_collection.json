@@ -53,11 +53,33 @@
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/auth/register",
+              "raw": "{{baseUrl}}/api/users/register",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "register"]
+              "path": ["api", "users", "register"]
             },
-            "description": "Creates a new user account. No JWT required — only X-API-TOKEN.\n\nMandatory: username, password, name, email, phone, businessName.\nOptional: businessAddress, nmid, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success. businessName/businessAddress/nmid and bankName/bankNumber/bankAccountName are stored as both the display and initial (regulatory) values."
+            "description": "Self-service registration. Creates a SELF_SERVICE user + bank profile. No JWT required — only X-API-TOKEN. No QRIS row is created (QRIS is optional; add one later via /api/qris/upload).\n\nMandatory: username, password, name, email, phone, businessName.\nOptional: businessAddress, nmid, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success."
+          }
+        },
+        {
+          "name": "Register (internal — MANAGED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"managed_user\",\n  \"password\": \"Secret1\",\n  \"name\": \"Managed User\",\n  \"email\": \"managed@example.com\",\n  \"phone\": \"+628100000001\",\n  \"businessName\": \"Managed Shop\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/internal/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "internal", "register"]
+            },
+            "description": "Internal/system registration. Same payload as public registration but creates a MANAGED account. Requires a valid JWT (Authorization: Bearer) in addition to X-API-TOKEN — it is not public.\n\nReturns HTTP 201 on success."
           }
         },
         {
