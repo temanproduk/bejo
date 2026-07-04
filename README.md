@@ -879,6 +879,8 @@ Errors shared across all endpoints:
 
 Every request is logged as `METHOD PATH[?query] STATUS DURATIONms`. Requests that fail with a `4xx` also log the reason (`[400] METHOD /path — <reason>`) and, on any `4xx`/`5xx`, the request body (`[BODY] …`). Body logging is production-safe: secrets (`password`/`token`/`pushToken`) are masked, the body is single-line and capped at 2 KB, and auth endpoints (`/api/auth/**`, register) are never captured. Under `SPRING_PROFILES_ACTIVE=prod` all logs are emitted as JSON (one object per line) for Cloud Logging.
 
+The QRIS payment callback (`/snap/v1.0/qr/qr-mpm-notify`) is logged more verbosely to aid debugging: on any `4xx`/`5xx` it dumps `[CALLBACK-REQ]` with **all request headers** (credential headers masked) and the **full body** (capped 8 KB), captured even when the request is rejected before the body is read. This fuller logging is intentionally scoped to that one endpoint.
+
 ---
 
 ## Configuration

@@ -173,6 +173,7 @@ QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` re
 - `/actuator/prometheus` — Micrometer metrics scraped by Prometheus (container: `bejo-prometheus:9090`)
 - Custom counters: `login.attempts{result}`, `transactions.fetched`, `notifications.sent{result}`
 - `RequestLoggingFilter` logs `METHOD PATH[?query] STATUS DURATIONms` for every request. On a 4xx/5xx it additionally logs the request body (`[BODY] …`) — secrets (`password`/`token`/`pushToken` fields) masked, single-line, capped at 2 KB, and auth endpoints (`/api/auth/**`, register) skipped entirely. Toggle with `app.request-logging.log-body-on-error` (default `true`) / `app.request-logging.max-body-length` (default `2048`).
+- The QRIS callback (`/snap/v1.0/qr/qr-mpm-notify`) gets a fuller dump: on any 4xx/5xx, `RequestLoggingFilter` logs `[CALLBACK-REQ]` with **all headers** (credential headers `Authorization`/`X-API-TOKEN`/`Cookie` masked) and the **full body** (capped 8 KB). Its body is buffered up front (`CachedBodyHttpServletRequest`) so it's captured even when validation fails before the body is read (e.g. a missing `X-TIMESTAMP` header).
 - `GlobalExceptionHandler` logs every 4xx client error at `WARN` (`[400] METHOD /path — reason`), so requests rejected before reaching a service (validation, missing header, unreadable body) are still debuggable in Cloud Run.
 - JSON log format active under `SPRING_PROFILES_ACTIVE=prod`
 

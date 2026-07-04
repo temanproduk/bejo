@@ -102,6 +102,53 @@ class RequestLoggingFilterTest {
                 .doesNotContain("super-secret-token");
     }
 
+    private List<String> callbackLogs() {
+        return appender.list.stream()
+                .filter(e -> e.getFormattedMessage().startsWith("[CALLBACK-REQ]"))
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
+    }
+
+    @Test
+    void callbackErrorDumpsFullBodyAndHeadersEvenWhenBodyNotRead() throws Exception {
+        MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify",
+                "{\"originalReferenceNo\":\"XCBS6Z450S\",\"latestTransactionStatus\":\"00\"}");
+        req.addHeader("X-PARTNER-ID", "astrapay");
+
+        // Chain does NOT read the body — simulates a missing-header validation failure
+        filter.doFilter(req, new MockHttpServletResponse(),
+                (r, res) -> ((HttpServletResponse) res).setStatus(400));
+
+        assertThat(callbackLogs()).hasSize(1);
+        assertThat(callbackLogs().getFirst())
+                .contains("X-PARTNER-ID: astrapay")
+                .contains("\"originalReferenceNo\":\"XCBS6Z450S\"");
+    }
+
+    @Test
+    void callbackMasksCredentialHeaders() throws Exception {
+        MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{}");
+        req.addHeader("Authorization", "Bearer super-secret");
+        req.addHeader("X-API-TOKEN", "the-shared-secret");
+
+        filter.doFilter(req, new MockHttpServletResponse(), chainReturning(400));
+
+        assertThat(callbackLogs().getFirst())
+                .contains("Authorization: ***")
+                .contains("X-API-TOKEN: ***")
+                .doesNotContain("super-secret")
+                .doesNotContain("the-shared-secret");
+    }
+
+    @Test
+    void callbackSuccessDoesNotDump() throws Exception {
+        MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{}");
+
+        filter.doFilter(req, new MockHttpServletResponse(), chainReturning(200));
+
+        assertThat(callbackLogs()).isEmpty();
+    }
+
     @Test
     void alwaysLogsRequestLineWithQueryString() throws Exception {
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/transactions");
