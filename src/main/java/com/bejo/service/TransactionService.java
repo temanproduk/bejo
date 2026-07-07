@@ -4,7 +4,10 @@ import com.bejo.constant.Acquirer;
 import com.bejo.constant.TransactionStatus;
 import com.bejo.constant.TransactionType;
 import com.bejo.dto.request.AddTransactionRequestDto;
+import com.bejo.dto.request.BulkAddTransactionRequestDto;
+import com.bejo.dto.request.BulkTransactionItemDto;
 import com.bejo.dto.request.UpdateTransactionRequestDto;
+import com.bejo.dto.response.BulkTransactionResultResponseDto;
 import com.bejo.dto.response.TransactionCreatedResponseDto;
 import com.bejo.dto.response.TransactionResponseDto;
 import com.bejo.entity.Transaction;
@@ -13,30 +16,44 @@ import com.bejo.repository.TransactionRepository;
 import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.Validator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class TransactionService {
 
     private static final Logger log = LoggerFactory.getLogger(TransactionService.class);
 
+    // Bulk-sync per-item result statuses
+    private static final String RESULT_CREATED = "CREATED";
+    private static final String RESULT_DUPLICATE = "DUPLICATE";
+    private static final String RESULT_FAILED = "FAILED";
+
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
+    private final Validator validator;
     private final Counter transactionFetchCounter;
 
     public TransactionService(TransactionRepository transactionRepository,
                               UserRepository userRepository,
+                              Validator validator,
                               MeterRegistry meterRegistry) {
         this.transactionRepository = transactionRepository;
         this.userRepository = userRepository;
+        this.validator = validator;
         this.transactionFetchCounter = Counter.builder("transactions.fetched").register(meterRegistry);
     }
 
@@ -86,11 +103,89 @@ public class TransactionService {
         userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
+        Transaction t = buildTransaction(username, idempotencyKey, request);
+        transactionRepository.save(t);
+        log.info("[TXN] Created type={} acquirer={} transactionId={}", t.getType(), t.getAcquirer(), t.getTransactionId());
+        return new TransactionCreatedResponseDto(t.getTransactionId());
+    }
+
+    /**
+     * Bulk-create manually-entered transactions synced from the client after offline
+     * entry. Each item is processed independently (its own DB transaction), so a
+     * malformed or duplicate row never blocks the rest of the batch:
+     * <ul>
+     *   <li>invalid item → {@code FAILED} with the validation message;</li>
+     *   <li>{@code idempotencyKey} already stored (a prior partial sync) → {@code DUPLICATE}
+     *       with the existing transaction id — safe to re-send;</li>
+     *   <li>otherwise → {@code CREATED} with the new transaction id.</li>
+     * </ul>
+     * Not {@code @Transactional} on purpose — each save commits on its own so partial
+     * progress survives, and a per-item constraint violation can't poison the batch.
+     */
+    public BulkTransactionResultResponseDto bulkCreate(String username, BulkAddTransactionRequestDto request) {
+        List<BulkTransactionItemDto> items = request.transactions();
+        log.info("[TXN-BULK] username={} items={}", username, items.size());
+        userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        List<BulkTransactionResultResponseDto.ItemResult> results = new ArrayList<>();
+        int created = 0, duplicate = 0, failed = 0;
+
+        for (BulkTransactionItemDto item : items) {
+            String key = item.idempotencyKey();
+
+            // Per-item validation so one bad row fails alone instead of the whole batch
+            Set<ConstraintViolation<BulkTransactionItemDto>> violations = validator.validate(item);
+            if (!violations.isEmpty()) {
+                failed++;
+                results.add(failedResult(key, violations.stream()
+                        .map(ConstraintViolation::getMessage)
+                        .collect(Collectors.joining(", "))));
+                continue;
+            }
+
+            try {
+                var existing = transactionRepository.findByIdempotencyKeyAndUsername(key, username);
+                if (existing.isPresent()) {
+                    duplicate++;
+                    results.add(new BulkTransactionResultResponseDto.ItemResult(
+                            key, RESULT_DUPLICATE, existing.get().getTransactionId(), null));
+                    continue;
+                }
+                Transaction t = buildTransaction(username, key, item.transaction());
+                transactionRepository.save(t);
+                created++;
+                results.add(new BulkTransactionResultResponseDto.ItemResult(
+                        key, RESULT_CREATED, t.getTransactionId(), null));
+            } catch (DataIntegrityViolationException e) {
+                // Concurrent insert with the same idempotency key — treat as already synced
+                duplicate++;
+                String existingId = transactionRepository.findByIdempotencyKeyAndUsername(key, username)
+                        .map(Transaction::getTransactionId).orElse(null);
+                results.add(new BulkTransactionResultResponseDto.ItemResult(
+                        key, RESULT_DUPLICATE, existingId, null));
+            } catch (IllegalArgumentException e) {
+                failed++;
+                results.add(failedResult(key, e.getMessage()));
+            }
+        }
+
+        log.info("[TXN-BULK] Done username={} created={} duplicate={} failed={}",
+                username, created, duplicate, failed);
+        return new BulkTransactionResultResponseDto(items.size(), created, duplicate, failed, results);
+    }
+
+    private BulkTransactionResultResponseDto.ItemResult failedResult(String key, String error) {
+        return new BulkTransactionResultResponseDto.ItemResult(key, RESULT_FAILED, null, error);
+    }
+
+    // Builds an unsaved MANUAL/PARSED transaction, applying the cross-field rule that
+    // PARSED requires an explicit acquirer (MANUAL defaults to Cash).
+    private Transaction buildTransaction(String username, String idempotencyKey, AddTransactionRequestDto request) {
         boolean isParsed = TransactionType.PARSED.equals(request.type());
         if (isParsed && (request.acquirer() == null || request.acquirer().isBlank())) {
             throw new IllegalArgumentException("acquirer wajib diisi untuk type PARSED");
         }
-
         String acquirer = isParsed ? request.acquirer() : Acquirer.CASH;
         String transactionId = "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
 
@@ -108,9 +203,7 @@ public class TransactionService {
         t.setAcquirer(acquirer);
         t.setStatus(TransactionStatus.SUCCESS);
         t.setScrapeDate(LocalDateTime.now());
-        transactionRepository.save(t);
-        log.info("[TXN] Created type={} acquirer={} transactionId={}", request.type(), acquirer, transactionId);
-        return new TransactionCreatedResponseDto(transactionId);
+        return t;
     }
 
     @Transactional

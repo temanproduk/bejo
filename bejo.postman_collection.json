@@ -230,6 +230,28 @@
           }
         },
         {
+          "name": "Bulk Create (offline sync)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactions\": [\n    {\n      \"idempotencyKey\": \"off-1\",\n      \"transaction\": {\n        \"type\": \"MANUAL\",\n        \"transactionDate\": \"2026-06-28T09:14:00\",\n        \"amount\": 10000\n      }\n    },\n    {\n      \"idempotencyKey\": \"off-2\",\n      \"transaction\": {\n        \"type\": \"PARSED\",\n        \"transactionDate\": \"2026-06-28T10:00:00\",\n        \"amount\": 20000,\n        \"acquirer\": \"AstraPay\"\n      }\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/bulk",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "bulk"]
+            },
+            "description": "Bulk-create manually-entered transactions synced after offline entry. Each item has its own idempotencyKey (client-generated) so re-sending the batch never duplicates. Partial success: one bad item does not block the rest.\n\nReturns HTTP 200 with a summary (total/created/duplicate/failed) and a per-item results list; match each result back by idempotencyKey. Item status is CREATED, DUPLICATE (already synced), or FAILED (with error). Batch limits: 1–500 items."
+          }
+        },
+        {
           "name": "Edit Transaction",
           "request": {
             "method": "PATCH",
@@ -450,6 +472,60 @@
               "path": ["api", "users", "me", "password"]
             },
             "description": "Changes the authenticated user's password. Requires the current password for verification.\n\nnewPassword rules: minimum 8 characters, at least 1 letter and 1 number."
+          }
+        },
+        {
+          "name": "Get Profile Picture",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/profile-picture",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "profile-picture"]
+            },
+            "description": "Returns the user's profile picture as a base64 string. Optional — when unset, data.profilePicture is explicitly null (no placeholder)."
+          }
+        },
+        {
+          "name": "Set Profile Picture",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"profilePicture\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMFAgD5wKq2AAAAAElFTkSuQmCC\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/profile-picture",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "profile-picture"]
+            },
+            "description": "Stores a base64-encoded image as the profile picture. Compress client-side; the decoded image must be <= 1 MB. Returns the saved picture."
+          }
+        },
+        {
+          "name": "Delete Profile Picture",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/profile-picture",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "me", "profile-picture"]
+            },
+            "description": "Clears the user's profile picture (sets it back to null). Idempotent — succeeds whether or not a picture was set."
           }
         }
       ]

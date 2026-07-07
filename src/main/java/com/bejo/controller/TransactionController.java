@@ -1,8 +1,10 @@
 package com.bejo.controller;
 
 import com.bejo.dto.request.AddTransactionRequestDto;
+import com.bejo.dto.request.BulkAddTransactionRequestDto;
 import com.bejo.dto.request.UpdateTransactionRequestDto;
 import com.bejo.dto.response.ApiResponseDto;
+import com.bejo.dto.response.BulkTransactionResultResponseDto;
 import com.bejo.dto.response.TransactionCreatedResponseDto;
 import com.bejo.dto.response.TransactionResponseDto;
 import com.bejo.service.TransactionService;
@@ -34,6 +36,17 @@ public class TransactionController {
         TransactionCreatedResponseDto data = transactionService.create(authentication.getName(), idempotencyKey, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponseDto.success("Transaksi berhasil ditambahkan", data));
+    }
+
+    // Offline sync: push a batch of manually-entered transactions in one request.
+    // Each item carries its own idempotencyKey so re-syncing the batch never
+    // duplicates; the response reports per-item CREATED/DUPLICATE/FAILED.
+    @PostMapping("/bulk")
+    public ResponseEntity<ApiResponseDto<BulkTransactionResultResponseDto>> addTransactionsBulk(
+            @Valid @RequestBody BulkAddTransactionRequestDto request,
+            Authentication authentication) {
+        BulkTransactionResultResponseDto data = transactionService.bulkCreate(authentication.getName(), request);
+        return ResponseEntity.ok(ApiResponseDto.success("Sinkronisasi transaksi selesai", data));
     }
 
     @PatchMapping("/{transactionId}")

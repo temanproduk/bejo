@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,10 +37,12 @@ class TransactionServiceTest {
     @Mock private UserRepository userRepository;
 
     private TransactionService transactionService;
+    private static final jakarta.validation.Validator VALIDATOR =
+            jakarta.validation.Validation.buildDefaultValidatorFactory().getValidator();
 
     @BeforeEach
     void setUp() {
-        transactionService = new TransactionService(transactionRepository, userRepository, new SimpleMeterRegistry());
+        transactionService = new TransactionService(transactionRepository, userRepository, VALIDATOR, new SimpleMeterRegistry());
     }
 
     private AddTransactionRequestDto request(String type, String acquirer) {
@@ -270,6 +273,122 @@ class TransactionServiceTest {
                 null, 10_000L, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-X", req))
+                .isInstanceOf(com.bejo.exception.ResourceNotFoundException.class);
+    }
+
+    // ---------- bulk create ----------
+
+    private com.bejo.dto.request.BulkTransactionItemDto bulkItem(String key, AddTransactionRequestDto tx) {
+        return new com.bejo.dto.request.BulkTransactionItemDto(key, tx);
+    }
+
+    @Test
+    void bulkCreateSavesAllValidItems() {
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
+        when(transactionRepository.findByIdempotencyKeyAndUsername(any(), eq("alice")))
+                .thenReturn(Optional.empty());
+
+        var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
+                bulkItem("k1", request("MANUAL", null)),
+                bulkItem("k2", request("PARSED", "AstraPay"))));
+
+        var result = transactionService.bulkCreate("alice", request);
+
+        assertThat(result.total()).isEqualTo(2);
+        assertThat(result.created()).isEqualTo(2);
+        assertThat(result.duplicate()).isZero();
+        assertThat(result.failed()).isZero();
+        assertThat(result.results()).allMatch(r -> "CREATED".equals(r.status()) && r.transactionId() != null);
+        verify(transactionRepository, times(2)).save(any());
+    }
+
+    @Test
+    void bulkCreateMarksExistingKeyAsDuplicate() {
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
+        Transaction existing = new Transaction();
+        existing.setTransactionId("TXN-EXISTING");
+        when(transactionRepository.findByIdempotencyKeyAndUsername("k1", "alice"))
+                .thenReturn(Optional.of(existing));
+        when(transactionRepository.findByIdempotencyKeyAndUsername("k2", "alice"))
+                .thenReturn(Optional.empty());
+
+        var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
+                bulkItem("k1", request("MANUAL", null)),
+                bulkItem("k2", request("MANUAL", null))));
+
+        var result = transactionService.bulkCreate("alice", request);
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.duplicate()).isEqualTo(1);
+        var dup = result.results().stream().filter(r -> r.idempotencyKey().equals("k1")).findFirst().orElseThrow();
+        assertThat(dup.status()).isEqualTo("DUPLICATE");
+        assertThat(dup.transactionId()).isEqualTo("TXN-EXISTING");
+        verify(transactionRepository, times(1)).save(any());
+    }
+
+    @Test
+    void bulkCreateFailsInvalidItemButKeepsGoodOnes() {
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
+        when(transactionRepository.findByIdempotencyKeyAndUsername(any(), eq("alice")))
+                .thenReturn(Optional.empty());
+
+        // Second item is invalid: amount must be positive
+        AddTransactionRequestDto bad = new AddTransactionRequestDto("MANUAL", LocalDateTime.now(), -5L,
+                null, null, null, null, null);
+
+        var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
+                bulkItem("k1", request("MANUAL", null)),
+                bulkItem("k2", bad)));
+
+        var result = transactionService.bulkCreate("alice", request);
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(1);
+        var fail = result.results().stream().filter(r -> r.idempotencyKey().equals("k2")).findFirst().orElseThrow();
+        assertThat(fail.status()).isEqualTo("FAILED");
+        assertThat(fail.error()).contains("amount");
+        // Only the valid item is saved
+        verify(transactionRepository, times(1)).save(any());
+    }
+
+    @Test
+    void bulkCreateFailsParsedWithoutAcquirer() {
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
+        when(transactionRepository.findByIdempotencyKeyAndUsername(any(), eq("alice")))
+                .thenReturn(Optional.empty());
+
+        var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
+                bulkItem("k1", request("PARSED", null))));
+
+        var result = transactionService.bulkCreate("alice", request);
+
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.results().getFirst().error()).contains("acquirer");
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void bulkCreateBlankIdempotencyKeyFailsThatItem() {
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
+
+        var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
+                bulkItem("  ", request("MANUAL", null))));
+
+        var result = transactionService.bulkCreate("alice", request);
+
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.results().getFirst().error()).contains("idempotencyKey");
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void bulkCreateUnknownUserIs404() {
+        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+
+        var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
+                bulkItem("k1", request("MANUAL", null))));
+
+        assertThatThrownBy(() -> transactionService.bulkCreate("ghost", request))
                 .isInstanceOf(com.bejo.exception.ResourceNotFoundException.class);
     }
 }

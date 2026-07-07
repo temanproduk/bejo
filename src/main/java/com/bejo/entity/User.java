@@ -54,6 +54,10 @@ public class User {
     @Column(name = "account_type", nullable = false)
     private String accountType = AccountType.MANAGED;
 
+    // Optional base64-encoded (compressed) profile picture; null when unset
+    @Column(name = "profile_picture", columnDefinition = "TEXT")
+    private String profilePicture;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -91,6 +95,8 @@ public class User {
     public void setPhoneVerified(boolean phoneVerified) { isPhoneVerified = phoneVerified; }
     public String getAccountType() { return accountType; }
     public void setAccountType(String accountType) { this.accountType = accountType; }
+    public String getProfilePicture() { return profilePicture; }
+    public void setProfilePicture(String profilePicture) { this.profilePicture = profilePicture; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

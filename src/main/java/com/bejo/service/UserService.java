@@ -8,6 +8,7 @@ import com.bejo.dto.request.UpdateBusinessRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
 import com.bejo.dto.response.BankResponseDto;
 import com.bejo.dto.response.BusinessResponseDto;
+import com.bejo.dto.response.ProfilePictureResponseDto;
 import com.bejo.entity.User;
 import com.bejo.entity.UserBank;
 import com.bejo.exception.ResourceNotFoundException;
@@ -18,6 +19,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Base64;
 
 @Service
 public class UserService {
@@ -178,5 +181,53 @@ public class UserService {
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
         userRepository.save(user);
         log.info("[PASSWORD] Changed for username={}", username);
+    }
+
+    // 1 MB — the maximum size of the decoded profile picture
+    private static final int MAX_PROFILE_PICTURE_BYTES = 1_048_576;
+
+    @Transactional(readOnly = true)
+    public ProfilePictureResponseDto getProfilePicture(String username) {
+        log.info("[PROFILE-PIC] Get for username={}", username);
+        var user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        // May be null — the client renders an empty state, no placeholder
+        return new ProfilePictureResponseDto(user.getProfilePicture());
+    }
+
+    @Transactional
+    public ProfilePictureResponseDto updateProfilePicture(String username, String base64Image) {
+        log.info("[PROFILE-PIC] Update for username={}", username);
+        var user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        validateProfilePicture(base64Image);
+
+        user.setProfilePicture(base64Image);
+        userRepository.save(user);
+        log.info("[PROFILE-PIC] Updated ({} base64 chars) for username={}", base64Image.length(), username);
+        return new ProfilePictureResponseDto(user.getProfilePicture());
+    }
+
+    @Transactional
+    public void deleteProfilePicture(String username) {
+        log.info("[PROFILE-PIC] Delete for username={}", username);
+        var user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        user.setProfilePicture(null);
+        userRepository.save(user);
+        log.info("[PROFILE-PIC] Deleted for username={}", username);
+    }
+
+    private void validateProfilePicture(String base64Image) {
+        byte[] decoded;
+        try {
+            decoded = Base64.getDecoder().decode(base64Image);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("profilePicture bukan format base64 yang valid");
+        }
+        if (decoded.length > MAX_PROFILE_PICTURE_BYTES) {
+            throw new IllegalArgumentException("profilePicture terlalu besar (maksimal 1MB)");
+        }
     }
 }

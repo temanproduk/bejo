@@ -82,6 +82,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti) |
 | `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive) |
 | `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header |
+| `POST` | `/api/transactions/bulk` | JWT | Bulk-sync MANUAL/PARSED transactions (offline entry); per-item `idempotencyKey`, partial-success result |
 | `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable) |
 | `DELETE` | `/api/transactions/{transactionId}` | JWT | Soft-delete a transaction (sets `deleted_at`) |
 | `PUT` | `/api/devices/{deviceId}/fcm-token` | JWT | Update FCM push token (scoped to the authenticated user's session) |
@@ -91,6 +92,9 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/qris/reset` | JWT | Revert to the managed/generated image |
 | `PATCH` | `/api/users/me` | JWT | Update name, email, phone |
 | `PATCH` | `/api/users/me/password` | JWT | Change password (requires `oldPassword`) |
+| `GET` | `/api/users/me/profile-picture` | JWT | Get profile picture (base64), or `null` when unset |
+| `PUT` | `/api/users/me/profile-picture` | JWT | Set profile picture from base64 (compressed, max 1 MB decoded) |
+| `DELETE` | `/api/users/me/profile-picture` | JWT | Remove profile picture (sets it back to `null`) |
 | `PATCH` | `/api/users/me/bank` | JWT | Update bank info |
 | `POST` | `/api/users/me/bank/reset` | JWT | Reset bank info to initial values |
 | `PATCH` | `/api/users/me/business` | JWT | Update business name/address/NMID |
@@ -145,6 +149,13 @@ Registration lives in `UserService` (not `AuthService` — auth is only login/lo
 
 `DataSeeder` also creates a `MANAGED` seed user at startup when `SEED_PASSWORD` is set — but seed data (including `seed-qris.b64`) is for the seed/test user only and must never back any other feature.
 
+### Bulk transaction sync (offline)
+
+`POST /api/transactions/bulk` (`TransactionService.bulkCreate`) lets the client push a batch of manually-entered transactions accumulated while offline. Key design points:
+- **Per-item idempotency** — each item carries its own client-generated `idempotencyKey` (not the request-level `Idempotency-Key` header), so re-sending the whole batch (or a partial batch after a dropped connection) never duplicates.
+- **Partial success** — the method is deliberately **not** `@Transactional`; each item is validated individually (via an injected `jakarta.validation.Validator`, since the request DTO does not cascade-validate its list elements) and saved in its own transaction. One malformed/duplicate row can't roll back or block the rest.
+- **Per-item result** — returns `BulkTransactionResultResponseDto` with counts + a `results` list of `{idempotencyKey, status (CREATED|DUPLICATE|FAILED), transactionId, error}`. The client matches by `idempotencyKey` to mark local rows synced (CREATED/DUPLICATE) or retry/fix (FAILED). A concurrent unique-constraint hit is caught and reported as DUPLICATE.
+
 ### Transaction soft delete
 
 `cuan_history.deleted_at = NULL` → active; non-null → deleted (V2 migration). `DELETE /api/transactions/{transactionId}` sets the timestamp; the row is never removed. History/edit/delete queries filter on `deleted_at IS NULL`, but `existsByTransactionId` and the idempotency-key replay lookup deliberately include deleted rows — the DB unique constraints span all rows, so a deleted `transaction_id`/`idempotency_key` still can't be reused.
@@ -179,10 +190,10 @@ QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` re
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info` + V4 `user_app_settings`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
+Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info` + V4 `user_app_settings` + V5 `profile_picture`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
 
 Key tables:
-- `users` — credentials + profile + business info (with `initial_*` columns for reset); `account_type` is `MANAGED` (internal/seed) or `SELF_SERVICE` (self-registered)
+- `users` — credentials + profile + business info (with `initial_*` columns for reset); `account_type` is `MANAGED` (internal/seed) or `SELF_SERVICE` (self-registered); optional `profile_picture` (base64 TEXT, ≤1 MB decoded)
 - `user_banks` / `user_qris` — one row per username (unique FK)
 - `cuan_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
 - `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)

@@ -11,6 +11,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -231,6 +232,62 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data[0].amount").value(75000))
                 .andExpect(jsonPath("$.data[0].acquirer").value("Cash"))
                 .andExpect(jsonPath("$.data[0].merchantName").value("Warung txn_user1"));
+    }
+
+    @Test
+    void bulkCreateSyncsOfflineTransactionsIdempotently() throws Exception {
+        String token = registerAndLogin("txn_bulk1");
+
+        Map<String, Object> item1 = Map.of("idempotencyKey", "off-1",
+                "transaction", Map.of("type", "MANUAL", "transactionDate", "2026-07-01T10:00:00", "amount", 10000));
+        Map<String, Object> item2 = Map.of("idempotencyKey", "off-2",
+                "transaction", Map.of("type", "PARSED", "transactionDate", "2026-07-01T11:00:00", "amount", 20000, "acquirer", "AstraPay"));
+        // Invalid: negative amount
+        Map<String, Object> bad = Map.of("idempotencyKey", "off-3",
+                "transaction", Map.of("type", "MANUAL", "transactionDate", "2026-07-01T12:00:00", "amount", -5));
+
+        String body = objectMapper.writeValueAsString(Map.of("transactions", List.of(item1, item2, bad)));
+
+        // First sync: 2 created, 1 failed
+        mockMvc.perform(post("/api/transactions/bulk")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(3))
+                .andExpect(jsonPath("$.data.created").value(2))
+                .andExpect(jsonPath("$.data.failed").value(1));
+
+        // Re-sync the same batch (client retry): the 2 good ones are now duplicates
+        mockMvc.perform(post("/api/transactions/bulk")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.created").value(0))
+                .andExpect(jsonPath("$.data.duplicate").value(2))
+                .andExpect(jsonPath("$.data.failed").value(1));
+
+        // Exactly the 2 valid transactions exist — no duplicates from the re-sync
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(2));
+    }
+
+    @Test
+    void bulkCreateEmptyListIsRejected() throws Exception {
+        String token = registerAndLogin("txn_bulk2");
+
+        mockMvc.perform(post("/api/transactions/bulk")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("transactions", List.of()))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
     }
 
     @Test
@@ -880,6 +937,67 @@ class ApiIntegrationTest {
                 .andExpect(status().isBadRequest());
 
         login("pass_user1", "newpass123", "dev-1");
+    }
+
+    @Test
+    void profilePictureGetSetFlow() throws Exception {
+        String token = registerAndLogin("pic_user1");
+
+        // No picture yet — the field is present and explicitly null (no placeholder)
+        mockMvc.perform(get("/api/users/me/profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.profilePicture").value(org.hamcrest.Matchers.nullValue()));
+
+        // Set a picture (valid base64)
+        String base64 = java.util.Base64.getEncoder().encodeToString("fake-image-bytes".getBytes());
+        mockMvc.perform(put("/api/users/me/profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("profilePicture", base64))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.profilePicture").value(base64));
+
+        // GET returns it
+        mockMvc.perform(get("/api/users/me/profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.profilePicture").value(base64));
+
+        // DELETE clears it
+        mockMvc.perform(delete("/api/users/me/profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(1));
+
+        // GET is null again
+        mockMvc.perform(get("/api/users/me/profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.profilePicture").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void profilePictureRejectsInvalidBase64() throws Exception {
+        String token = registerAndLogin("pic_user2");
+
+        mockMvc.perform(put("/api/users/me/profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("profilePicture", "@@ not base64 @@"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void profilePictureRequiresJwt() throws Exception {
+        mockMvc.perform(get("/api/users/me/profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN))
+                .andExpect(status().isUnauthorized());
     }
 
     // ---------- notifications ----------

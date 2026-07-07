@@ -220,4 +220,87 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.resetBusiness("alice"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void getProfilePictureReturnsNullWhenUnset() {
+        User user = new User();
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+
+        assertThat(userService.getProfilePicture("alice").profilePicture()).isNull();
+    }
+
+    @Test
+    void getProfilePictureReturnsStoredValue() {
+        User user = new User();
+        user.setProfilePicture("aW1hZ2U=");
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+
+        assertThat(userService.getProfilePicture("alice").profilePicture()).isEqualTo("aW1hZ2U=");
+    }
+
+    @Test
+    void updateProfilePictureStoresValidBase64() {
+        User user = new User();
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+
+        var data = userService.updateProfilePicture("alice", "aW1hZ2UtZGF0YQ==");
+
+        assertThat(user.getProfilePicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
+        assertThat(data.profilePicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void updateProfilePictureRejectsInvalidBase64() {
+        User user = new User();
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> userService.updateProfilePicture("alice", "@@ not base64 @@"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("base64");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void updateProfilePictureRejectsOver1Mb() {
+        User user = new User();
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+
+        // 1 MB + 1 byte of image data, base64-encoded
+        byte[] tooBig = new byte[1_048_577];
+        String base64 = java.util.Base64.getEncoder().encodeToString(tooBig);
+
+        assertThatThrownBy(() -> userService.updateProfilePicture("alice", base64))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1MB");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void updateProfilePictureForUnknownUserThrows() {
+        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.updateProfilePicture("ghost", "aW1hZ2U="))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void deleteProfilePictureClearsValue() {
+        User user = new User();
+        user.setProfilePicture("aW1hZ2U=");
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+
+        userService.deleteProfilePicture("alice");
+
+        assertThat(user.getProfilePicture()).isNull();
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void deleteProfilePictureForUnknownUserThrows() {
+        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.deleteProfilePicture("ghost"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
 }
