@@ -1,0 +1,67 @@
+package com.bejo.controller;
+
+import com.bejo.dto.request.CreateProductRequestDto;
+import com.bejo.dto.request.UpdateProductRequestDto;
+import com.bejo.dto.response.ApiResponseDto;
+import com.bejo.dto.response.ProductResponseDto;
+import com.bejo.service.ProductService;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/products")
+public class ProductController {
+
+    private final ProductService productService;
+
+    public ProductController(ProductService productService) {
+        this.productService = productService;
+    }
+
+    @PostMapping
+    public ResponseEntity<ApiResponseDto<ProductResponseDto>> create(
+            @Valid @RequestBody CreateProductRequestDto request,
+            Authentication authentication) {
+        ProductResponseDto data = productService.create(authentication.getName(), request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponseDto.success("Produk berhasil dibuat", data));
+    }
+
+    @GetMapping
+    public ResponseEntity<ApiResponseDto<List<ProductResponseDto>>> list(
+            @RequestParam(required = false) Long categoryId,
+            Authentication authentication) {
+        List<ProductResponseDto> data = productService.list(authentication.getName(), categoryId);
+        return ResponseEntity.ok(ApiResponseDto.list(data));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ApiResponseDto<ProductResponseDto>> get(
+            @PathVariable Long id,
+            Authentication authentication) {
+        ProductResponseDto data = productService.get(authentication.getName(), id);
+        return ResponseEntity.ok(ApiResponseDto.success(data));
+    }
+
+    @PatchMapping("/{id}")
+    public ResponseEntity<ApiResponseDto<ProductResponseDto>> update(
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateProductRequestDto request,
+            Authentication authentication) {
+        ProductResponseDto data = productService.update(authentication.getName(), id, request);
+        return ResponseEntity.ok(ApiResponseDto.success("Produk berhasil diubah", data));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponseDto<Void>> delete(
+            @PathVariable Long id,
+            Authentication authentication) {
+        productService.delete(authentication.getName(), id);
+        return ResponseEntity.ok(ApiResponseDto.success("Produk berhasil dihapus", null));
+    }
+}

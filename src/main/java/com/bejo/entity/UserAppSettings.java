@@ -45,6 +45,13 @@ public class UserAppSettings {
     @Column(name = "whitelist_enabled", nullable = false)
     private boolean whitelistEnabled = false;
 
+    // App config toggles (default off)
+    @Column(name = "qris_with_profile_picture", nullable = false)
+    private boolean qrisWithProfilePicture = false;
+
+    @Column(name = "inventory_enabled", nullable = false)
+    private boolean inventoryEnabled = false;
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
@@ -67,6 +74,10 @@ public class UserAppSettings {
     public void setBlacklistEnabled(boolean blacklistEnabled) { this.blacklistEnabled = blacklistEnabled; }
     public boolean isWhitelistEnabled() { return whitelistEnabled; }
     public void setWhitelistEnabled(boolean whitelistEnabled) { this.whitelistEnabled = whitelistEnabled; }
+    public boolean isQrisWithProfilePicture() { return qrisWithProfilePicture; }
+    public void setQrisWithProfilePicture(boolean qrisWithProfilePicture) { this.qrisWithProfilePicture = qrisWithProfilePicture; }
+    public boolean isInventoryEnabled() { return inventoryEnabled; }
+    public void setInventoryEnabled(boolean inventoryEnabled) { this.inventoryEnabled = inventoryEnabled; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

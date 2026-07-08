@@ -99,9 +99,22 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/users/me/bank/reset` | JWT | Reset bank info to initial values |
 | `PATCH` | `/api/users/me/business` | JWT | Update business name/address/NMID |
 | `POST` | `/api/users/me/business/reset` | JWT | Reset business info to initial values |
+| `POST` | `/api/categories` | JWT | Create a product category |
+| `GET` | `/api/categories` | JWT | List the merchant's categories |
+| `DELETE` | `/api/categories/{id}` | JWT | Delete a category (its products become uncategorized) |
+| `POST` | `/api/products` | JWT | Create a product (SKU); optional `categoryId`, `photo` (base64 ≤500 KB) |
+| `GET` | `/api/products` | JWT | List products; optional `?categoryId=` filter (omits `photo`) |
+| `GET` | `/api/products/{id}` | JWT | Get one product (includes `photo`) |
+| `PATCH` | `/api/products/{id}` | JWT | Partial update (name, price, cost, stock, category, photo) |
+| `DELETE` | `/api/products/{id}` | JWT | Delete a product (hard) |
+| `POST` | `/api/purchases` | JWT | Record a purchase order (restock): raises stock of several products at once |
+| `GET` | `/api/purchases` | JWT | List purchase history (summary, omits line items) |
+| `GET` | `/api/purchases/{id}` | JWT | Get one purchase with its line items |
 | `GET` | `/api/app-settings` | JWT | Get the user's app settings (monitored apps + notification keywords); returns defaults if never synced |
 | `PUT` | `/api/app-settings/monitored-apps` | JWT | Replace the monitored-apps map (`packageName`→`issuer`) |
 | `PUT` | `/api/app-settings/keywords` | JWT | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
+| `PUT` | `/api/app-settings/qris-with-profile-picture` | JWT | Toggle composing the QRIS image onto the profile picture (`{enabled}`; default false) |
+| `PUT` | `/api/app-settings/inventory` | JWT | Toggle inventory management (`{enabled}`; default false) |
 
 All responses follow `{ "status": 1\|0, "message": "...", "data": {...}, "count": N }` — null fields are omitted.
 
@@ -170,13 +183,25 @@ FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one devi
 
 QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
 
+### Products & inventory
+
+Basic per-merchant SKU catalog with simple inventory, scoped by `username`:
+- `ProductCategoryController` → `ProductCategoryService` — categories (`product_categories`); names unique per merchant. Deleting a category first **un-categorizes** its products (`ProductRepository.clearCategory` sets their `category_id` to null in the service, so behavior matches under both Flyway/Postgres and the H2 test schema) then removes the row — products are never deleted with it.
+- `ProductController` → `ProductService` — products (`products`); `sku` unique per merchant. `stock` is a plain column (inventory management = `PATCH` the value; no ledger). A product's `categoryId` must belong to the same merchant (else 400). `photo` is an optional base64 image validated ≤500 KB decoded; **list responses omit the photo** to keep payloads small, the single-product detail includes it. Prices are `BIGINT` IDR; `costPrice` is optional.
+
+### Purchases (restock)
+
+`PurchaseController` → `PurchaseService` records purchase orders that **raise** the stock of several products at once (`purchases` + `purchase_items`). `POST /api/purchases` is atomic and two-pass: pass 1 resolves every line to one of the merchant's own products (unknown product → 400, nothing changes); pass 2 raises each product's `stock`, snapshots the line (`sku`/`name`/`unitPrice`) and persists the purchase + items. Line `unitPrice` is the provided value, else the product's `costPrice`, else 0; `total_amount` = Σ subtotals. `purchase_items.product_id` has no FK and the line snapshots product fields, so history survives a product edit/delete. `GET /api/purchases` returns summaries (items omitted); `GET /api/purchases/{id}` includes the items.
+
 ### App settings
 
 `AppSettingsController` → `AppSettingsService` manage a per-user `user_app_settings` row (one per username, created lazily on first update) holding the settings synced from the mobile client:
 - **Monitored apps** — a `packageName → issuer` map (mirrors the Android `notifAppList` pref), stored as JSON via `StringMapJsonConverter`.
 - **Notification keywords** — `includeKeywords` (whitelist) + `excludeKeywords` (blacklist) string lists (JSON via `StringListJsonConverter`) plus `blacklistEnabled` (default true) / `whitelistEnabled` (default false) toggles.
 
-`GET /api/app-settings` returns defaults (empty lists/map, blacklist on, whitelist off) when no row exists yet — it never 404s. `PUT /api/app-settings/monitored-apps` replaces the whole map; `PUT /api/app-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
+- **App config toggles** — `qrisWithProfilePicture` (compose the QRIS image onto the profile picture) and `inventoryEnabled` (enable inventory management), both boolean columns defaulting false, each set via its own `PUT` (`{enabled}`).
+
+`GET /api/app-settings` returns defaults (empty lists/map, blacklist on, whitelist off, both toggles off) when no row exists yet — it never 404s. `PUT /api/app-settings/monitored-apps` replaces the whole map; `PUT /api/app-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
 
 ### Observability
 
@@ -190,7 +215,7 @@ QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` re
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info` + V4 `user_app_settings` + V5 `profile_picture`) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one.
+Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info` + V4 `user_app_settings` + V5 profile picture + products/categories + purchases) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one. (V5 was consolidated from three pre-production migrations; V1–V4 are in production and must never change.)
 
 Key tables:
 - `users` — credentials + profile + business info (with `initial_*` columns for reset); `account_type` is `MANAGED` (internal/seed) or `SELF_SERVICE` (self-registered); optional `profile_picture` (base64 TEXT, ≤1 MB decoded)
@@ -198,7 +223,10 @@ Key tables:
 - `cuan_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
 - `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)
 - `token_blacklist` — logged-out JWT jtis, purged hourly after expiry
-- `user_app_settings` — one row per username; monitored-apps map + notification keyword filters (JSON in TEXT columns) + blacklist/whitelist toggles
+- `user_app_settings` — one row per username; monitored-apps map + notification keyword filters (JSON in TEXT columns) + blacklist/whitelist toggles + app config toggles (`qris_with_profile_picture`, `inventory_enabled`)
+- `product_categories` — per-merchant product categories; name unique per username
+- `products` — per-merchant SKUs; `sku` unique per username; nullable `category_id` FK; `stock` (INTEGER), `price`/`cost_price` (BIGINT IDR), optional base64 `photo` (TEXT, ≤500 KB decoded)
+- `purchases` / `purchase_items` — per-merchant restock orders; a purchase raises product stock and records line items (product snapshot + `unit_price`/`quantity`/`subtotal`); `total_amount` is the sum
 
 ## Tests
 

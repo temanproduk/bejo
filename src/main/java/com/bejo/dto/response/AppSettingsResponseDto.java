@@ -13,5 +13,7 @@ public record AppSettingsResponseDto(
         List<String> includeKeywords,
         List<String> excludeKeywords,
         boolean blacklistEnabled,
-        boolean whitelistEnabled
+        boolean whitelistEnabled,
+        boolean qrisWithProfilePicture,
+        boolean inventoryEnabled
 ) {}

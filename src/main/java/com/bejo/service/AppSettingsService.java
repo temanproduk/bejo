@@ -45,9 +45,9 @@ public class AppSettingsService {
         log.info("[APP-SETTINGS] Get for username={}", username);
         return repository.findByUsername(username)
                 .map(this::toResponse)
-                // No row yet — return defaults (blacklist ON, whitelist OFF, empty lists)
+                // No row yet — return defaults (blacklist ON, whitelist OFF, toggles OFF, empty lists)
                 .orElseGet(() -> new AppSettingsResponseDto(
-                        Map.of(), List.of(), List.of(), true, false));
+                        Map.of(), List.of(), List.of(), true, false, false, false));
     }
 
     @Transactional
@@ -85,6 +85,24 @@ public class AppSettingsService {
         log.info("[APP-SETTINGS] Updated keywords (include={}, exclude={}, blacklist={}, whitelist={}) for username={}",
                 settings.getIncludeKeywords().size(), settings.getExcludeKeywords().size(),
                 settings.isBlacklistEnabled(), settings.isWhitelistEnabled(), username);
+        return toResponse(settings);
+    }
+
+    @Transactional
+    public AppSettingsResponseDto updateQrisWithProfilePicture(String username, boolean enabled) {
+        UserAppSettings settings = loadOrCreate(username);
+        settings.setQrisWithProfilePicture(enabled);
+        repository.save(settings);
+        log.info("[APP-SETTINGS] qrisWithProfilePicture={} for username={}", enabled, username);
+        return toResponse(settings);
+    }
+
+    @Transactional
+    public AppSettingsResponseDto updateInventoryEnabled(String username, boolean enabled) {
+        UserAppSettings settings = loadOrCreate(username);
+        settings.setInventoryEnabled(enabled);
+        repository.save(settings);
+        log.info("[APP-SETTINGS] inventoryEnabled={} for username={}", enabled, username);
         return toResponse(settings);
     }
 
@@ -146,6 +164,8 @@ public class AppSettingsService {
                 new ArrayList<>(s.getIncludeKeywords()),
                 new ArrayList<>(s.getExcludeKeywords()),
                 s.isBlacklistEnabled(),
-                s.isWhitelistEnabled());
+                s.isWhitelistEnabled(),
+                s.isQrisWithProfilePicture(),
+                s.isInventoryEnabled());
     }
 }

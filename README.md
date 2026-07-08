@@ -68,6 +68,8 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [Notifications](#notifications)
   - [Devices](#devices)
   - [User profile](#user-profile)
+  - [Products & categories](#products--categories)
+  - [Purchases (restock)](#purchases-restock)
   - [App settings](#app-settings)
   - [QRIS](#qris)
   - [QRIS callback](#qris-callback)
@@ -739,13 +741,144 @@ Clears the user's profile picture (sets it back to `null`). Idempotent — succe
 
 ---
 
+### Products & categories
+
+Basic per-merchant SKU catalog with simple inventory. All endpoints require JWT and are scoped to the authenticated merchant. Categories are an optional grouping; inventory is managed by setting a product's `stock`.
+
+#### `POST /api/categories` — Create category
+
+**Request body:** `{ "name": "Minuman" }` (required, unique per merchant, max 100 chars)
+
+**Success — HTTP 201:** `{ "status": 1, "message": "Kategori berhasil dibuat", "data": { "id": 3, "name": "Minuman", "createdAt": "..." } }`
+
+**Errors:** `400 name wajib diisi`, `400 Kategori sudah ada: <name>`
+
+#### `GET /api/categories` — List categories
+
+Returns the merchant's categories (`data` array + `count`).
+
+#### `DELETE /api/categories/{id}` — Delete category
+
+Deletes the category and **un-categorizes** its products (their `categoryId` becomes null) — products are not deleted.
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Kategori berhasil dihapus" }` · **Errors:** `404 Category not found`
+
+---
+
+#### `POST /api/products` — Create product
+
+**Request body**
+
+| Field | Required | Description |
+|---|---|---|
+| `sku` | yes | Merchant product code, unique per merchant, max 64 chars |
+| `name` | yes | Max 255 chars |
+| `categoryId` | no | Must be one of the merchant's own categories |
+| `price` | no | Selling price in IDR, ≥ 0 (default 0) |
+| `costPrice` | no | Purchase cost in IDR, ≥ 0 |
+| `stock` | no | Quantity on hand, ≥ 0 (default 0) |
+| `photo` | no | Base64 image, **≤ 500 KB decoded** |
+
+**Success — HTTP 201** — returns the product with its resolved `categoryName`:
+
+```json
+{
+  "status": 1,
+  "message": "Produk berhasil dibuat",
+  "data": {
+    "id": 12, "sku": "KOPI-01", "name": "Kopi Susu",
+    "categoryId": 3, "categoryName": "Minuman",
+    "price": 18000, "costPrice": 10000, "stock": 25,
+    "photo": "<base64>", "createdAt": "...", "updatedAt": "..."
+  }
+}
+```
+
+**Errors:** `400 sku wajib diisi`, `400 SKU sudah digunakan: <sku>`, `400 Kategori tidak ditemukan: <id>`, `400 photo terlalu besar (maksimal 500KB)`, `400 photo bukan format base64 yang valid`
+
+#### `GET /api/products` — List products
+
+Optional `?categoryId=<id>` filter. **The `photo` field is omitted from list items** to keep the payload small — fetch the detail endpoint for the image. Returns `data` array + `count`.
+
+#### `GET /api/products/{id}` — Get product
+
+Returns the full product **including `photo`**. `404` if not found / not owned.
+
+#### `PATCH /api/products/{id}` — Update product
+
+Partial update — any subset of `sku`, `name`, `categoryId`, `price`, `costPrice`, `stock`, `photo`; a `null`/omitted field is left unchanged. Managing inventory = send `{ "stock": 40 }`. Returns the updated product.
+
+**Errors:** `400 Tidak ada field yang diubah`, `400 SKU sudah digunakan: <sku>`, `400 Kategori tidak ditemukan: <id>`, `404 Product not found`
+
+#### `DELETE /api/products/{id}` — Delete product
+
+Hard-deletes the product. **Success — HTTP 200:** `{ "status": 1, "message": "Produk berhasil dihapus" }`
+
+---
+
+### Purchases (restock)
+
+Record a **purchase order** — buying stock from a supplier. One purchase **raises the stock of several products at once** and is saved with its line items. All endpoints require JWT, scoped to the merchant.
+
+#### `POST /api/purchases` — Record a purchase
+
+**Atomic:** if any line references a product the merchant doesn't own, the whole purchase is rejected and no stock changes.
+
+**Request body**
+
+| Field | Required | Description |
+|---|---|---|
+| `note` | no | Free text, max 255 chars |
+| `items` | yes | 1–200 lines |
+| `items[].productId` | yes | One of the merchant's products |
+| `items[].quantity` | yes | Units added to stock, > 0 |
+| `items[].unitPrice` | no | Cost per unit, IDR ≥ 0. Omit to use the product's `costPrice` (0 if it has none) |
+
+```json
+{
+  "note": "restock pagi",
+  "items": [
+    { "productId": 12, "quantity": 20 },
+    { "productId": 15, "quantity": 5, "unitPrice": 9000 }
+  ]
+}
+```
+
+**Success — HTTP 201** — the saved purchase with line snapshots; each product's `stock` has been raised by its quantity:
+
+```json
+{
+  "status": 1,
+  "message": "Pembelian berhasil dicatat",
+  "data": {
+    "id": 7, "totalAmount": 145000, "note": "restock pagi", "createdAt": "...",
+    "items": [
+      { "productId": 12, "sku": "KOPI-01", "name": "Kopi Susu", "unitPrice": 5000, "quantity": 20, "subtotal": 100000 },
+      { "productId": 15, "sku": "TEH-01",  "name": "Teh Manis",  "unitPrice": 9000, "quantity": 5,  "subtotal": 45000 }
+    ]
+  }
+}
+```
+
+**Errors:** `400 items tidak boleh kosong`, `400 quantity harus lebih dari 0`, `400 Produk tidak ditemukan: <id>`
+
+#### `GET /api/purchases` — Purchase history
+
+Returns purchases newest-first (`data` array + `count`). **Line items are omitted** from the list; fetch the detail for them.
+
+#### `GET /api/purchases/{id}` — Purchase detail
+
+Returns one purchase **including its `items`**. `404` if not found / not owned.
+
+---
+
 ### App settings
 
-Per-user settings synced from the app: the **monitored apps** (which apps' notifications to watch) and the **notification keywords** (blacklist/whitelist filters). All endpoints require JWT. Settings are created on first save; a user who has never synced gets sensible defaults.
+Per-user settings synced from the app: the **monitored apps** (which apps' notifications to watch), the **notification keywords** (blacklist/whitelist filters), and app **config toggles**. All endpoints require JWT. Settings are created on first save; a user who has never synced gets sensible defaults.
 
 #### `GET /api/app-settings` — Get app settings
 
-Returns the user's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`. Empty lists mean the client should fall back to its own bundled defaults.
+Returns the user's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`, both config toggles `false`. Empty lists mean the client should fall back to its own bundled defaults.
 
 **Success — HTTP 200**
 
@@ -758,10 +891,17 @@ Returns the user's settings. When nothing has been synced yet, returns defaults:
     "includeKeywords": ["uang masuk", "pembayaran diterima"],
     "excludeKeywords": ["promo", "gagal"],
     "blacklistEnabled": true,
-    "whitelistEnabled": false
+    "whitelistEnabled": false,
+    "qrisWithProfilePicture": false,
+    "inventoryEnabled": false
   }
 }
 ```
+
+| Config field | Default | Meaning |
+|---|---|---|
+| `qrisWithProfilePicture` | `false` | Whether the QRIS image should be composed onto the profile picture |
+| `inventoryEnabled` | `false` | Whether inventory management is enabled |
 
 ---
 
@@ -807,6 +947,22 @@ Updates the keyword filters. **Partial update:** a `null` field is left unchange
 ```
 
 **Success — HTTP 200:** `{ "status": 1, "message": "Kata kunci notifikasi berhasil disimpan", "data": { ...full settings... } }`
+
+---
+
+#### `PUT /api/app-settings/qris-with-profile-picture` — Toggle QRIS on profile picture
+
+**Request body:** `{ "enabled": true }` (required boolean). Returns the full updated settings.
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan QRIS pada foto profil berhasil disimpan", "data": { ...full settings... } }` · **Errors:** `400 enabled wajib diisi`
+
+---
+
+#### `PUT /api/app-settings/inventory` — Toggle inventory management
+
+**Request body:** `{ "enabled": true }` (required boolean). Returns the full updated settings.
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan manajemen inventaris berhasil disimpan", "data": { ...full settings... } }` · **Errors:** `400 enabled wajib diisi`
 
 **Errors:** `400 Tidak ada field yang diubah` (all fields null), `400 <field>: kata kunci terlalu panjang: <kw>`, `400 <field>: terlalu banyak kata kunci (maksimal 1000)`
 

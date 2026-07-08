@@ -58,6 +58,8 @@ class AppSettingsServiceTest {
         assertThat(data.excludeKeywords()).isEmpty();
         assertThat(data.blacklistEnabled()).isTrue();
         assertThat(data.whitelistEnabled()).isFalse();
+        assertThat(data.qrisWithProfilePicture()).isFalse();
+        assertThat(data.inventoryEnabled()).isFalse();
     }
 
     @Test
@@ -162,5 +164,30 @@ class AppSettingsServiceTest {
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().getUsername()).isEqualTo("alice");
         assertThat(captor.getValue().getIncludeKeywords()).containsExactly("uang masuk");
+    }
+
+    @Test
+    void updateQrisWithProfilePictureSavesFlag() {
+        when(repository.findByUsername("alice")).thenReturn(Optional.of(existing()));
+
+        AppSettingsResponseDto data = service.updateQrisWithProfilePicture("alice", true);
+
+        ArgumentCaptor<UserAppSettings> captor = ArgumentCaptor.forClass(UserAppSettings.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isQrisWithProfilePicture()).isTrue();
+        assertThat(data.qrisWithProfilePicture()).isTrue();
+    }
+
+    @Test
+    void updateInventoryEnabledCreatesRowWhenAbsent() {
+        when(repository.findByUsername("alice")).thenReturn(Optional.empty());
+
+        AppSettingsResponseDto data = service.updateInventoryEnabled("alice", true);
+
+        ArgumentCaptor<UserAppSettings> captor = ArgumentCaptor.forClass(UserAppSettings.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getUsername()).isEqualTo("alice");
+        assertThat(captor.getValue().isInventoryEnabled()).isTrue();
+        assertThat(data.inventoryEnabled()).isTrue();
     }
 }

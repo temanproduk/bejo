@@ -1022,6 +1022,242 @@ class ApiIntegrationTest {
                 .andExpect(status().isServiceUnavailable());
     }
 
+    // ---------- products & categories ----------
+
+    private long createCategory(String token, String name) throws Exception {
+        MvcResult r = mockMvc.perform(post("/api/categories")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("name", name))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(r.getResponse().getContentAsString()).at("/data/id").asLong();
+    }
+
+    @Test
+    void productCategoryAndPhotoLifecycle() throws Exception {
+        String token = registerAndLogin("prod_user1");
+        long catId = createCategory(token, "Minuman");
+
+        // Create a product in that category, with a small base64 photo
+        String photo = java.util.Base64.getEncoder().encodeToString("img".getBytes());
+        Map<String, Object> body = new HashMap<>();
+        body.put("sku", "KOPI-01");
+        body.put("name", "Kopi Susu");
+        body.put("categoryId", catId);
+        body.put("price", 18000);
+        body.put("costPrice", 10000);
+        body.put("stock", 25);
+        body.put("photo", photo);
+
+        MvcResult created = mockMvc.perform(post("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.categoryName").value("Minuman"))
+                .andExpect(jsonPath("$.data.stock").value(25))
+                .andReturn();
+        long productId = objectMapper.readTree(created.getResponse().getContentAsString()).at("/data/id").asLong();
+
+        // List omits the photo to keep payloads small
+        mockMvc.perform(get("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].photo").doesNotExist())
+                .andExpect(jsonPath("$.data[0].categoryName").value("Minuman"));
+
+        // Detail includes the photo
+        mockMvc.perform(get("/api/products/" + productId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.photo").value(photo));
+
+        // Filter by category
+        mockMvc.perform(get("/api/products?categoryId=" + catId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(1));
+
+        // Update stock (inventory management via PATCH)
+        mockMvc.perform(patch("/api/products/" + productId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stock", 40))))
+                .andExpect(jsonPath("$.data.stock").value(40));
+
+        // Deleting the category un-categorizes the product (not deletes it)
+        mockMvc.perform(delete("/api/categories/" + catId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/products/" + productId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.categoryId").doesNotExist())
+                .andExpect(jsonPath("$.data.categoryName").doesNotExist());
+
+        // Delete the product
+        mockMvc.perform(delete("/api/products/" + productId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/products/" + productId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void productDuplicateSkuRejected() throws Exception {
+        String token = registerAndLogin("prod_user2");
+        Map<String, Object> body = Map.of("sku", "DUP-1", "name", "A", "price", 1000);
+
+        mockMvc.perform(post("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void productWithForeignCategoryRejected() throws Exception {
+        String tokenA = registerAndLogin("prod_user3a");
+        String tokenB = registerAndLogin("prod_user3b");
+        long catA = createCategory(tokenA, "Makanan");
+
+        // User B cannot attach user A's category
+        mockMvc.perform(post("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tokenB)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "sku", "X-1", "name", "X", "price", 1000, "categoryId", catA))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void productRequiresJwt() throws Exception {
+        mockMvc.perform(get("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ---------- purchases (restock) ----------
+
+    private long createProduct(String token, String sku, int stock, Integer costPrice) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("sku", sku);
+        body.put("name", "Product " + sku);
+        body.put("stock", stock);
+        if (costPrice != null) body.put("costPrice", costPrice);
+        MvcResult r = mockMvc.perform(post("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(r.getResponse().getContentAsString()).at("/data/id").asLong();
+    }
+
+    private int stockOf(String token, long productId) throws Exception {
+        MvcResult r = mockMvc.perform(get("/api/products/" + productId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andReturn();
+        return objectMapper.readTree(r.getResponse().getContentAsString()).at("/data/stock").asInt();
+    }
+
+    @Test
+    void purchaseRaisesStockOfAllProductsAndPersists() throws Exception {
+        String token = registerAndLogin("buy_user1");
+        long p1 = createProduct(token, "P1", 10, 5000);
+        long p2 = createProduct(token, "P2", 3, 8000);
+
+        String body = objectMapper.writeValueAsString(Map.of(
+                "note", "restock pagi",
+                "items", List.of(
+                        Map.of("productId", p1, "quantity", 20),                  // uses costPrice 5000
+                        Map.of("productId", p2, "quantity", 5, "unitPrice", 9000)))); // override
+
+        MvcResult created = mockMvc.perform(post("/api/purchases")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.totalAmount").value(145000)) // 20*5000 + 5*9000
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andReturn();
+        long purchaseId = objectMapper.readTree(created.getResponse().getContentAsString()).at("/data/id").asLong();
+
+        // Both products' stock rose
+        assertThat(stockOf(token, p1)).isEqualTo(30);
+        assertThat(stockOf(token, p2)).isEqualTo(8);
+
+        // History: list omits items, detail includes them
+        mockMvc.perform(get("/api/purchases")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].items").doesNotExist());
+
+        mockMvc.perform(get("/api/purchases/" + purchaseId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[0].sku").value("P1"));
+    }
+
+    @Test
+    void purchaseWithUnknownProductRejectedAndNoStockChange() throws Exception {
+        String token = registerAndLogin("buy_user2");
+        long p1 = createProduct(token, "P1", 10, 5000);
+
+        String body = objectMapper.writeValueAsString(Map.of("items", List.of(
+                Map.of("productId", p1, "quantity", 5),
+                Map.of("productId", 999999, "quantity", 2))));
+
+        mockMvc.perform(post("/api/purchases")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // Atomic: the valid product's stock is unchanged
+        assertThat(stockOf(token, p1)).isEqualTo(10);
+    }
+
+    @Test
+    void purchaseEmptyItemsRejected() throws Exception {
+        String token = registerAndLogin("buy_user3");
+
+        mockMvc.perform(post("/api/purchases")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("items", List.of()))))
+                .andExpect(status().isBadRequest());
+    }
+
     // ---------- app settings ----------
 
     @Test
@@ -1035,6 +1271,8 @@ class ApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.blacklistEnabled").value(true))
                 .andExpect(jsonPath("$.data.whitelistEnabled").value(false))
+                .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(false))
+                .andExpect(jsonPath("$.data.inventoryEnabled").value(false))
                 .andExpect(jsonPath("$.data.monitoredApps").isEmpty())
                 .andExpect(jsonPath("$.data.includeKeywords").isEmpty());
 
@@ -1065,6 +1303,45 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.monitoredApps['com.gojek.app']").value("gopay"))
                 .andExpect(jsonPath("$.data.excludeKeywords[0]").value("promo"))
                 .andExpect(jsonPath("$.data.blacklistEnabled").value(true));
+    }
+
+    @Test
+    void appSettingsConfigTogglesFlow() throws Exception {
+        String token = registerAndLogin("appset_cfg1");
+
+        // Enable "QRIS with profile picture"
+        mockMvc.perform(put("/api/app-settings/qris-with-profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(true))
+                .andExpect(jsonPath("$.data.inventoryEnabled").value(false));
+
+        // Enable inventory management
+        mockMvc.perform(put("/api/app-settings/inventory")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.inventoryEnabled").value(true));
+
+        // GET reflects both flags
+        mockMvc.perform(get("/api/app-settings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(true))
+                .andExpect(jsonPath("$.data.inventoryEnabled").value(true));
+
+        // Missing 'enabled' is rejected
+        mockMvc.perform(put("/api/app-settings/inventory")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

@@ -531,6 +531,219 @@
       ]
     },
     {
+      "name": "Products & Categories",
+      "item": [
+        {
+          "name": "Create Category",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Minuman\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "categories"]
+            },
+            "description": "Creates a product category (unique name per merchant). Returns HTTP 201 with { id, name, createdAt }."
+          }
+        },
+        {
+          "name": "List Categories",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "categories"]
+            },
+            "description": "Lists the merchant's product categories."
+          }
+        },
+        {
+          "name": "Delete Category",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "categories", "1"]
+            },
+            "description": "Deletes a category. Its products are un-categorized (categoryId -> null), not deleted. Replace 1 with the category id."
+          }
+        },
+        {
+          "name": "Create Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sku\": \"KOPI-01\",\n  \"name\": \"Kopi Susu\",\n  \"categoryId\": 1,\n  \"price\": 18000,\n  \"costPrice\": 10000,\n  \"stock\": 25,\n  \"photo\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMFAgD5wKq2AAAAAElFTkSuQmCC\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"]
+            },
+            "description": "Creates a product (SKU). sku + name required; sku unique per merchant. categoryId (optional) must be one of the merchant's own categories. photo (optional) is a base64 image, max 500 KB decoded. Returns HTTP 201 with the product incl. resolved categoryName."
+          }
+        },
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products?categoryId=1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products"],
+              "query": [
+                { "key": "categoryId", "value": "1", "description": "Optional filter by category id", "disabled": true }
+              ]
+            },
+            "description": "Lists the merchant's products. Optional ?categoryId= filter. The photo field is omitted from list items to keep the payload small — use Get Product for the image."
+          }
+        },
+        {
+          "name": "Get Product",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "1"]
+            },
+            "description": "Returns one product including its photo. Replace 1 with the product id."
+          }
+        },
+        {
+          "name": "Update Product (incl. stock)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 20000,\n  \"stock\": 40\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "1"]
+            },
+            "description": "Partial update: send any subset of sku, name, categoryId, price, costPrice, stock, photo. Managing inventory = send { \"stock\": N }. Replace 1 with the product id."
+          }
+        },
+        {
+          "name": "Delete Product",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "1"]
+            },
+            "description": "Hard-deletes a product. Replace 1 with the product id."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Purchases",
+      "item": [
+        {
+          "name": "Create Purchase (restock)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"restock pagi\",\n  \"items\": [\n    { \"productId\": 1, \"quantity\": 20 },\n    { \"productId\": 2, \"quantity\": 5, \"unitPrice\": 9000 }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/purchases",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "purchases"]
+            },
+            "description": "Records a purchase order (restock): raises the stock of every listed product at once and saves the purchase with line items. Atomic — if any productId isn't the merchant's, the whole purchase is rejected. Each line's unitPrice defaults to the product's costPrice when omitted. Returns HTTP 201 with totalAmount + item snapshots."
+          }
+        },
+        {
+          "name": "List Purchases",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/purchases",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "purchases"]
+            },
+            "description": "Lists purchase history newest-first. Line items are omitted from the list — use Get Purchase for them."
+          }
+        },
+        {
+          "name": "Get Purchase",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/purchases/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "purchases", "1"]
+            },
+            "description": "Returns one purchase including its line items. Replace 1 with the purchase id."
+          }
+        }
+      ]
+    },
+    {
       "name": "App Settings",
       "item": [
         {
@@ -591,6 +804,50 @@
               "path": ["api", "app-settings", "keywords"]
             },
             "description": "Updates the notification keyword filters. Partial update: omit a field (null) to leave it unchanged; send an empty list to clear it. Keywords are trimmed, lowercased, and deduplicated. Returns the full updated settings."
+          }
+        },
+        {
+          "name": "Toggle QRIS on Profile Picture",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/app-settings/qris-with-profile-picture",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "app-settings", "qris-with-profile-picture"]
+            },
+            "description": "Toggles whether the QRIS image is composed onto the profile picture (default false). Returns the full updated settings."
+          }
+        },
+        {
+          "name": "Toggle Inventory Management",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/app-settings/inventory",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "app-settings", "inventory"]
+            },
+            "description": "Toggles whether inventory management is enabled (default false). Returns the full updated settings."
           }
         }
       ]
