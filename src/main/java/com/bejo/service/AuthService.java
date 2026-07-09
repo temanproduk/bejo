@@ -93,11 +93,21 @@ public class AuthService {
     }
 
     @Transactional
-    public void logout(String token) {
+    public void logout(String token, String username, String deviceId) {
         String jti = jwtService.extractJti(token);
         LocalDateTime expiresAt = jwtService.extractExpiration(token);
         tokenBlacklistService.blacklist(jti, expiresAt);
         log.info("[LOGOUT] Token blacklisted jti={}", jti);
+
+        // Clear the FCM token for the device being logged out so it stops receiving
+        // pushes (other devices of the same user are untouched). deviceId is optional
+        // for backward compatibility with clients that don't send it.
+        if (deviceId != null && !deviceId.isBlank()) {
+            int cleared = sessionRepository.clearPushTokenAndLogout(username, deviceId, LocalDateTime.now());
+            if (cleared > 0) {
+                log.info("[LOGOUT] Cleared FCM token for username={} deviceId={}", username, deviceId);
+            }
+        }
     }
 
     private void upsertSession(LoginRequestDto request) {

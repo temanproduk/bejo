@@ -23,6 +23,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -152,12 +154,24 @@ class AuthServiceTest {
     }
 
     @Test
-    void logoutBlacklistsTokenJti() {
+    void logoutBlacklistsTokenAndClearsDeviceToken() {
         when(jwtService.extractJti("token")).thenReturn("jti-123");
         when(jwtService.extractExpiration("token")).thenReturn(java.time.LocalDateTime.now().plusDays(1));
 
-        authService.logout("token");
+        authService.logout("token", "alice", "dev-1");
 
         verify(tokenBlacklistService).blacklist(anyString(), any());
+        verify(sessionRepository).clearPushTokenAndLogout(eq("alice"), eq("dev-1"), any());
+    }
+
+    @Test
+    void logoutWithoutDeviceIdOnlyBlacklists() {
+        when(jwtService.extractJti("token")).thenReturn("jti-123");
+        when(jwtService.extractExpiration("token")).thenReturn(java.time.LocalDateTime.now().plusDays(1));
+
+        authService.logout("token", "alice", null);
+
+        verify(tokenBlacklistService).blacklist(anyString(), any());
+        verify(sessionRepository, never()).clearPushTokenAndLogout(any(), any(), any());
     }
 }

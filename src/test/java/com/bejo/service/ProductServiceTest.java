@@ -22,6 +22,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -200,7 +201,7 @@ class ProductServiceTest {
         when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
         when(productRepository.findByIdAndUsername(2L, "alice")).thenReturn(Optional.of(b));
 
-        var request = new com.bejo.dto.request.StockAdjustmentRequestDto(List.of(
+        var request = new com.bejo.dto.request.StockAdjustmentRequestDto("opname sore", List.of(
                 new com.bejo.dto.request.StockAdjustmentItemDto(1L, 8),    // counted 8 (−2)
                 new com.bejo.dto.request.StockAdjustmentItemDto(2L, 12))); // counted 12 (+7)
 
@@ -209,6 +210,8 @@ class ProductServiceTest {
         assertThat(a.getStock()).isEqualTo(8);
         assertThat(b.getStock()).isEqualTo(12);
         verify(productRepository, times(2)).save(any(Product.class));
+        // The note flows onto the recorded ADJUSTMENT mutation
+        verify(stockMutationService).recordStockChange(eq("alice"), eq("ADJUSTMENT"), eq("opname sore"), any());
 
         assertThat(result.total()).isEqualTo(2);
         assertThat(result.items().get(0).previousStock()).isEqualTo(10);
@@ -223,7 +226,7 @@ class ProductServiceTest {
         when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
         when(productRepository.findByIdAndUsername(99L, "alice")).thenReturn(Optional.empty());
 
-        var request = new com.bejo.dto.request.StockAdjustmentRequestDto(List.of(
+        var request = new com.bejo.dto.request.StockAdjustmentRequestDto(null, List.of(
                 new com.bejo.dto.request.StockAdjustmentItemDto(1L, 8),
                 new com.bejo.dto.request.StockAdjustmentItemDto(99L, 3)));
 

@@ -171,7 +171,8 @@ public class ProductService {
                     product.getId(), product.getSku(), product.getName(),
                     previous, counted, counted - previous));
         }
-        stockMutationService.recordStockChange(username, StockMutationType.ADJUSTMENT, "Stock opname", changes);
+        String note = request.note() != null && !request.note().isBlank() ? request.note().trim() : "Stock opname";
+        stockMutationService.recordStockChange(username, StockMutationType.ADJUSTMENT, note, changes);
 
         log.info("[PRODUCT] Stock adjustment done for username={} products={}", username, results.size());
         return new StockAdjustmentResultResponseDto(results.size(), results);

@@ -138,14 +138,20 @@
             "method": "POST",
             "header": [
               { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
             ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"device-001\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
             "url": {
               "raw": "{{baseUrl}}/api/auth/logout",
               "host": ["{{baseUrl}}"],
               "path": ["api", "auth", "logout"]
             },
-            "description": "Invalidates the current JWT — it cannot be used again after logout. The test script clears `{{token}}` from the collection variables."
+            "description": "Invalidates the current JWT — it cannot be used again after logout. Optional body { deviceId } also clears that device's stored FCM token (the user's other devices are untouched); omit the body to just blacklist the token. The test script clears {{token}} from the collection variables."
           }
         }
       ]
@@ -693,7 +699,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    { \"productId\": 1, \"stock\": 8 },\n    { \"productId\": 2, \"stock\": 12 }\n  ]\n}",
+              "raw": "{\n  \"note\": \"opname sore\",\n  \"items\": [\n    { \"productId\": 1, \"stock\": 8 },\n    { \"productId\": 2, \"stock\": 12 }\n  ]\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -701,7 +707,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "products", "stock-adjustments"]
             },
-            "description": "Stock opname: sets several products' stock to their newly counted quantities at once. Each item's stock is the new absolute count. Atomic — if any productId isn't the merchant's, the whole adjustment is rejected. Returns a variance report (previousStock/newStock/difference) per product."
+            "description": "Stock opname: sets several products' stock to their newly counted quantities at once. Each item's stock is the new absolute count. Optional note is stored on the resulting ADJUSTMENT stock mutation. Atomic — if any productId isn't the merchant's, the whole adjustment is rejected. Returns a variance report (previousStock/newStock/difference) per product."
           }
         }
       ]

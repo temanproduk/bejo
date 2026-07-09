@@ -18,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Stock mutation tracker (backed by the {@code purchases}/{@code purchase_items}
@@ -114,9 +116,17 @@ public class StockMutationService {
     @Transactional(readOnly = true)
     public List<StockMutationResponseDto> list(String username) {
         log.info("[PURCHASE] List (stock mutations) for username={}", username);
-        // Summary only — items omitted to keep the list small
-        return stockMutationRepository.findByUsernameOrderByCreatedAtDesc(username).stream()
-                .map(p -> toDto(p, null))
+        List<StockMutation> mutations = stockMutationRepository.findByUsernameOrderByCreatedAtDesc(username);
+        if (mutations.isEmpty()) return List.of();
+
+        // Batch-load all line items in one query, then group by mutation (no N+1)
+        List<Long> ids = mutations.stream().map(StockMutation::getId).toList();
+        Map<Long, List<StockMutationItem>> itemsByMutation = stockMutationItemRepository
+                .findByMutationIdInOrderByIdAsc(ids).stream()
+                .collect(Collectors.groupingBy(StockMutationItem::getMutationId));
+
+        return mutations.stream()
+                .map(m -> toDto(m, itemsByMutation.getOrDefault(m.getId(), List.of())))
                 .toList();
     }
 

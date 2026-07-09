@@ -24,4 +24,11 @@ public interface SessionRepository extends JpaRepository<Session, Long> {
                         @Param("deviceId") String deviceId,
                         @Param("pushToken") String pushToken,
                         @Param("now") LocalDateTime now);
+
+    // Logout a device: drop its FCM token and mark the session logged out
+    @Modifying
+    @Query("UPDATE Session s SET s.pushToken = null, s.loginStatus = false, s.lastUpdated = :now WHERE s.username = :username AND s.deviceId = :deviceId")
+    int clearPushTokenAndLogout(@Param("username") String username,
+                                @Param("deviceId") String deviceId,
+                                @Param("now") LocalDateTime now);
 }

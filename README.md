@@ -289,6 +289,12 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
 
 Blacklists the current JWT server-side. The token is rejected on all subsequent requests, even before its natural expiry.
 
+**Optional body** — pass the device to also clear its stored FCM token (so it stops receiving pushes after logout). The user's *other* devices are untouched. Omitting the body (or `deviceId`) still logs out, just without clearing a token.
+
+```json
+{ "deviceId": "device-001" }
+```
+
 **Success — HTTP 200:** `{ "status": 1, "message": "Logged out successfully" }`
 
 **Errors:** `400 Authorization header tidak valid`
@@ -523,6 +529,8 @@ Soft-deletes a transaction: the row is kept in the database with a `deleted_at` 
 | 404 | `No FCM token registered for device: <deviceId>` | No FCM token on device |
 | 503 | `Firebase is not configured` | Firebase credentials missing |
 | 502 | `Failed to send notification: ...` | FCM delivery error |
+
+If FCM reports the token as no longer registered (`502` with `errorCode=UNREGISTERED` — "Requested entity was not found", i.e. the app was uninstalled or the token rotated) or `SENDER_ID_MISMATCH`, the stale token is **automatically cleared** from the device's session, so a subsequent call returns `404 No FCM token registered` until the app re-registers a fresh token.
 
 ---
 
@@ -817,18 +825,20 @@ Hard-deletes the product. **Success — HTTP 200:** `{ "status": 1, "message": "
 
 #### `POST /api/products/stock-adjustments` — Bulk stock adjustment (stock opname)
 
-Sets several products' stock to their **newly counted quantities** at once — for stock opname, when the physical count differs from the recorded stock. **Atomic:** if any line references a product the merchant doesn't own, the whole adjustment is rejected and no stock changes. Returns a **variance report**.
+Sets several products' stock to their **newly counted quantities** at once — for stock opname, when the physical count differs from the recorded stock. **Atomic:** if any line references a product the merchant doesn't own, the whole adjustment is rejected and no stock changes. Returns a **variance report**, and records an `ADJUSTMENT` entry in the [stock-mutation history](#stock-mutations) (with the note, if given).
 
 **Request body**
 
 | Field | Required | Description |
 |---|---|---|
+| `note` | no | Free text stored on the resulting stock mutation, max 255 chars |
 | `items` | yes | 1–500 lines |
 | `items[].productId` | yes | One of the merchant's products |
 | `items[].stock` | yes | New absolute counted quantity, ≥ 0 |
 
 ```json
 {
+  "note": "opname sore",
   "items": [
     { "productId": 12, "stock": 8 },
     { "productId": 15, "stock": 12 }
@@ -852,7 +862,7 @@ Sets several products' stock to their **newly counted quantities** at once — f
 }
 ```
 
-**Errors:** `400 items tidak boleh kosong`, `400 stock tidak boleh negatif`, `400 Produk tidak ditemukan: <id>`
+**Errors:** `400 items tidak boleh kosong`, `400 stock tidak boleh negatif`, `400 note maksimal 255 karakter`, `400 Produk tidak ditemukan: <id>`
 
 ---
 
@@ -912,7 +922,7 @@ Buying stock from a supplier: **raises the stock of several products at once** (
 
 #### `GET /api/stock-mutations` — Stock-change history
 
-Returns all mutations (PURCHASE/ADJUSTMENT/UPDATE) newest-first (`data` array + `count`). **Line items are omitted** from the list; fetch the detail for them. For non-purchase mutations `unitPrice`/`subtotal` are absent and `totalAmount` is 0.
+Returns all mutations (PURCHASE/ADJUSTMENT/UPDATE) newest-first (`data` array + `count`), each **with its line items** (product `sku`/`name` + `previousStock`/`newStock`/`quantityChange`). For non-purchase mutations `unitPrice`/`subtotal` are absent and `totalAmount` is 0.
 
 #### `GET /api/stock-mutations/{id}` — Stock mutation detail
 

@@ -6,6 +6,7 @@ import com.google.firebase.FirebaseApp;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.MessagingErrorCode;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -36,6 +37,15 @@ public class PushNotificationService {
 
     public boolean isConfigured() {
         return !FirebaseApp.getApps().isEmpty();
+    }
+
+    /**
+     * True when FCM's error means the token is dead and should be removed — the device
+     * unregistered (app uninstalled / token rotated → "Requested entity was not found")
+     * or the token belongs to a different Firebase sender. Retrying it is pointless.
+     */
+    public static boolean isTokenUnregistered(MessagingErrorCode code) {
+        return code == MessagingErrorCode.UNREGISTERED || code == MessagingErrorCode.SENDER_ID_MISMATCH;
     }
 
     /** Send to a single device token. Propagates FirebaseMessagingException to the caller. */
@@ -75,6 +85,12 @@ public class PushNotificationService {
             } catch (FirebaseMessagingException e) {
                 log.error("[PUSH] FCM rejected message for deviceId={} errorCode={}: {}",
                         s.getDeviceId(), e.getMessagingErrorCode(), e.getMessage(), e);
+                // Auto-cleanup: drop a token FCM says is no longer registered
+                if (isTokenUnregistered(e.getMessagingErrorCode())) {
+                    s.setPushToken(null);
+                    sessionRepository.save(s);
+                    log.info("[PUSH] Cleared stale FCM token for deviceId={} username={}", s.getDeviceId(), username);
+                }
             } catch (RuntimeException e) {
                 log.error("[PUSH] Unexpected error sending to deviceId={}: {}", s.getDeviceId(), e.getMessage(), e);
             }

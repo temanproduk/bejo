@@ -63,6 +63,14 @@ public class NotificationService {
         } catch (FirebaseMessagingException e) {
             log.error("[NOTIFY-TEST] Push to FCM FAILED deviceId={} errorCode={}: {}",
                     request.deviceId(), e.getMessagingErrorCode(), e.getMessage(), e);
+            // Auto-cleanup: drop the token if FCM says it's no longer registered
+            if (PushNotificationService.isTokenUnregistered(e.getMessagingErrorCode())) {
+                sessionRepository.findByUsernameAndDeviceId(username, request.deviceId()).ifPresent(s -> {
+                    s.setPushToken(null);
+                    sessionRepository.save(s);
+                    log.info("[NOTIFY-TEST] Cleared stale FCM token for deviceId={} username={}", request.deviceId(), username);
+                });
+            }
             throw e;
         }
     }

@@ -79,7 +79,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/users/register` | Public | Self-service registration; creates a `SELF_SERVICE` user + bank (no QRIS row — QRIS is optional) |
 | `POST` | `/api/users/internal/register` | JWT | Internal/system registration; same payload but creates a `MANAGED` user |
 | `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
-| `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti) |
+| `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti); optional body `{deviceId}` clears that device's FCM token |
 | `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive) |
 | `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header |
 | `POST` | `/api/transactions/bulk` | JWT | Bulk-sync MANUAL/PARSED transactions (offline entry); per-item `idempotencyKey`, partial-success result |
@@ -109,7 +109,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `DELETE` | `/api/products/{id}` | JWT | Delete a product (hard) |
 | `POST` | `/api/products/stock-adjustments` | JWT | Bulk stock adjustment (stock opname): set several products' stock to counted values; returns a variance report |
 | `POST` | `/api/stock-mutations` | JWT | Record a purchase (restock): raises stock of several products at once (a PURCHASE mutation) |
-| `GET` | `/api/stock-mutations` | JWT | Stock-change history — all mutations (PURCHASE/ADJUSTMENT/UPDATE), summary, omits line items |
+| `GET` | `/api/stock-mutations` | JWT | Stock-change history — all mutations (PURCHASE/ADJUSTMENT/UPDATE) with their line items |
 | `GET` | `/api/stock-mutations/{id}` | JWT | Get one stock mutation with its line items |
 | `GET` | `/api/app-settings` | JWT | Get the user's app settings (monitored apps + notification keywords); returns defaults if never synced |
 | `PUT` | `/api/app-settings/monitored-apps` | JWT | Replace the monitored-apps map (`packageName`→`issuer`) |
@@ -182,6 +182,8 @@ Registration lives in `UserService` (not `AuthService` — auth is only login/lo
 
 FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one device, propagates errors — used by the test-notification API) and `sendToUser` (all a user's device sessions, best-effort, never throws — used by the callback). `NotificationService` (the `/api/notifications/test` endpoint) only sends a push; it does not persist a transaction.
 
+**Stale-token auto-cleanup:** when FCM returns `UNREGISTERED` ("Requested entity was not found" — app uninstalled / token rotated) or `SENDER_ID_MISMATCH`, the dead token is cleared from its `bejo_sessions` row so it isn't retried. The classifier is `PushNotificationService.isTokenUnregistered(MessagingErrorCode)`; both `sendToUser` (per failing session) and `NotificationService` (the test endpoint, then rethrows) apply it. Transient/payload errors (`UNAVAILABLE`, `INVALID_ARGUMENT`, …) never delete the token.
+
 ### QRIS model
 
 QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
@@ -199,7 +201,7 @@ Basic per-merchant SKU catalog with simple inventory, scoped by `username`:
 
 - `POST /api/stock-mutations` — records a **PURCHASE** (restock): atomic two-pass (unknown product → 400, nothing changes), raises each product's `stock`, `total_amount` = Σ subtotals (unit price = provided, else `costPrice`, else 0).
 - **ADJUSTMENT** and **UPDATE** mutations are written by `ProductService` after it applies the change: `adjustStock` (stock opname) records one ADJUSTMENT mutation; `update` records an UPDATE mutation only when the edit actually changed `stock`. Both call `StockMutationService.recordStockChange`.
-- `GET /api/stock-mutations` lists all mutations (newest first, items omitted); `GET /api/stock-mutations/{id}` includes the line items.
+- `GET /api/stock-mutations` lists all mutations (newest first) **with their line items** (batched in one query, no N+1); `GET /api/stock-mutations/{id}` returns a single mutation with its items.
 
 ### App settings
 

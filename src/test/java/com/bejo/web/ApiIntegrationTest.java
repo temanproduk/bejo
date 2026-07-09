@@ -34,6 +34,7 @@ class ApiIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private com.bejo.repository.TransactionRepository transactionRepository;
     @Autowired private com.bejo.repository.UserRepository userRepository;
+    @Autowired private com.bejo.repository.SessionRepository sessionRepository;
 
     // ---------- helpers ----------
 
@@ -204,6 +205,27 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logoutWithDeviceIdClearsTheDeviceFcmToken() throws Exception {
+        String token = registerAndLogin("logout_dev1");
+        String deviceId = "device-logout_dev1";                 // registerAndLogin's device
+        // Login stored an FCM token for the device
+        assertThat(sessionRepository.findByUsernameAndDeviceId("logout_dev1", deviceId)
+                .orElseThrow().getPushToken()).isNotBlank();
+
+        mockMvc.perform(post("/api/auth/logout")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("deviceId", deviceId))))
+                .andExpect(status().isOk());
+
+        // The device's FCM token is cleared and the session is marked logged out
+        var session = sessionRepository.findByUsernameAndDeviceId("logout_dev1", deviceId).orElseThrow();
+        assertThat(session.getPushToken()).isNull();
+        assertThat(session.getLoginStatus()).isFalse();
     }
 
     // ---------- transactions ----------
@@ -1266,13 +1288,15 @@ class ApiIntegrationTest {
         assertThat(stockOf(token, p1)).isEqualTo(30);
         assertThat(stockOf(token, p2)).isEqualTo(8);
 
-        // History: list omits items, detail includes them
+        // History: list includes items (product summary + before/after stock)
         mockMvc.perform(get("/api/stock-mutations")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(1))
-                .andExpect(jsonPath("$.data[0].items").doesNotExist());
+                .andExpect(jsonPath("$.data[0].items.length()").value(2))
+                .andExpect(jsonPath("$.data[0].items[0].name").value("Product P1"))
+                .andExpect(jsonPath("$.data[0].items[0].newStock").value(30));
 
         mockMvc.perform(get("/api/stock-mutations/" + mutationId)
                         .header("X-API-TOKEN", API_TOKEN)
@@ -1328,13 +1352,14 @@ class ApiIntegrationTest {
                                 Map.of("productId", p1, "quantity", 5))))))
                 .andExpect(status().isCreated());
 
-        // 2) Stock opname (ADJUSTMENT): set to 20
+        // 2) Stock opname (ADJUSTMENT): set to 20, with an optional note
         mockMvc.perform(post("/api/products/stock-adjustments")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("items", List.of(
-                                Map.of("productId", p1, "stock", 20))))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "note", "opname sore",
+                                "items", List.of(Map.of("productId", p1, "stock", 20))))))
                 .andExpect(status().isOk());
 
         // 3) Product edit changing stock (UPDATE): set to 25
@@ -1361,6 +1386,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.count").value(3))
                 .andExpect(jsonPath("$.data[0].type").value("UPDATE"))
                 .andExpect(jsonPath("$.data[1].type").value("ADJUSTMENT"))
+                .andExpect(jsonPath("$.data[1].note").value("opname sore"))
                 .andExpect(jsonPath("$.data[2].type").value("PURCHASE"));
     }
 
