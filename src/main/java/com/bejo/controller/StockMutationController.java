@@ -4,7 +4,9 @@ import com.bejo.dto.request.CreatePurchaseRequestDto;
 import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.dto.response.StockMutationResponseDto;
 import com.bejo.service.StockMutationService;
+import com.bejo.util.Pagination;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -39,10 +41,16 @@ public class StockMutationController {
                 .body(ApiResponseDto.success("Pembelian berhasil dicatat", data));
     }
 
+    // Pagination is optional: omit page/size to get page 1 of 50. The response
+    // carries page/totalPages/total alongside the current page's items.
     @GetMapping
-    public ResponseEntity<ApiResponseDto<List<StockMutationResponseDto>>> list(Authentication authentication) {
-        List<StockMutationResponseDto> data = stockMutationService.list(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.list(data));
+    public ResponseEntity<ApiResponseDto<List<StockMutationResponseDto>>> list(
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            Authentication authentication) {
+        Page<StockMutationResponseDto> data = stockMutationService.list(
+                authentication.getName(), Pagination.of(page, size));
+        return ResponseEntity.ok(ApiResponseDto.page(data));
     }
 
     @GetMapping("/{id}")

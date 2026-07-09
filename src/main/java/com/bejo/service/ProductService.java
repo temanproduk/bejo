@@ -14,6 +14,8 @@ import com.bejo.repository.ProductCategoryRepository;
 import com.bejo.repository.ProductRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -74,17 +76,16 @@ public class ProductService {
     }
 
     @Transactional(readOnly = true)
-    public List<ProductResponseDto> list(String username, Long categoryId) {
-        log.info("[PRODUCT] List for username={} categoryId={}", username, categoryId);
-        List<Product> products = categoryId != null
-                ? productRepository.findByUsernameAndCategoryIdOrderByNameAsc(username, categoryId)
-                : productRepository.findByUsernameOrderByNameAsc(username);
+    public Page<ProductResponseDto> list(String username, Long categoryId, Pageable pageable) {
+        log.info("[PRODUCT] List for username={} categoryId={} page={} size={}",
+                username, categoryId, pageable.getPageNumber(), pageable.getPageSize());
+        Page<Product> products = categoryId != null
+                ? productRepository.findByUsernameAndCategoryIdOrderByNameAsc(username, categoryId, pageable)
+                : productRepository.findByUsernameOrderByNameAsc(username, pageable);
 
         // Resolve category names in one shot; omit photos to keep the list small
         Map<Long, String> names = categoryNames(username);
-        return products.stream()
-                .map(p -> toDto(p, names.get(p.getCategoryId()), false))
-                .toList();
+        return products.map(p -> toDto(p, names.get(p.getCategoryId()), false));
     }
 
     @Transactional(readOnly = true)

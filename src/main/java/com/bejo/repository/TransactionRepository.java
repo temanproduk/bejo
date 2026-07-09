@@ -1,26 +1,27 @@
 package com.bejo.repository;
 
 import com.bejo.entity.Transaction;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
 
-    List<Transaction> findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(String username);
+    Page<Transaction> findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(String username, Pageable pageable);
 
-    List<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(
-            String username, LocalDateTime start);
+    Page<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(
+            String username, LocalDateTime start, Pageable pageable);
 
-    List<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(
-            String username, LocalDateTime end);
+    Page<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(
+            String username, LocalDateTime end, Pageable pageable);
 
-    List<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
-            String username, LocalDateTime start, LocalDateTime end);
+    Page<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
+            String username, LocalDateTime start, LocalDateTime end, Pageable pageable);
 
     // Deliberately includes soft-deleted rows for the active user record check
     boolean existsByUsername(String username);

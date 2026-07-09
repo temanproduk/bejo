@@ -257,6 +257,56 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void transactionHistoryIsPaginated() throws Exception {
+        String token = registerAndLogin("txn_page1");
+
+        // Create 3 transactions
+        for (int i = 0; i < 3; i++) {
+            mockMvc.perform(post("/api/transactions")
+                            .header("X-API-TOKEN", API_TOKEN)
+                            .header("Authorization", "Bearer " + token)
+                            .header("Idempotency-Key", "page-key-" + i)
+                            .contentType(APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "type", "MANUAL",
+                                    "transactionDate", "2026-07-0" + (i + 1) + "T10:00:00",
+                                    "amount", 1000 * (i + 1)))))
+                    .andExpect(status().isCreated());
+        }
+
+        // Default (no params) = page 1, all 3 fit on one page of 50
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(3))
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.total").value(3));
+
+        // size=2 → page 1 has 2 items, total still 3 across 2 pages
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .param("page", "1").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2))
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.total").value(3));
+
+        // page 2 of size 2 → the remaining 1 item
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .param("page", "2").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.page").value(2))
+                .andExpect(jsonPath("$.total").value(3));
+    }
+
+    @Test
     void bulkCreateSyncsOfflineTransactionsIdempotently() throws Exception {
         String token = registerAndLogin("txn_bulk1");
 
@@ -671,7 +721,8 @@ class ApiIntegrationTest {
     }
 
     private long seedTxnCount() {
-        return transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("cb_seed").size();
+        return transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(
+                "cb_seed", org.springframework.data.domain.PageRequest.of(0, 1)).getTotalElements();
     }
 
     @Test

@@ -8,7 +8,9 @@ import com.bejo.dto.response.BulkTransactionResultResponseDto;
 import com.bejo.dto.response.TransactionCreatedResponseDto;
 import com.bejo.dto.response.TransactionResponseDto;
 import com.bejo.service.TransactionService;
+import com.bejo.util.Pagination;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -66,12 +68,17 @@ public class TransactionController {
         return ResponseEntity.ok(ApiResponseDto.success("Transaksi berhasil dihapus", null));
     }
 
+    // Pagination is optional: omit page/size to get page 1 of 50. The response
+    // carries page/totalPages/total alongside the current page's items.
     @GetMapping
     public ResponseEntity<ApiResponseDto<List<TransactionResponseDto>>> getHistory(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateStart,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateEnd,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
             Authentication authentication) {
-        List<TransactionResponseDto> data = transactionService.getHistory(authentication.getName(), dateStart, dateEnd);
-        return ResponseEntity.ok(ApiResponseDto.list(data));
+        Page<TransactionResponseDto> data = transactionService.getHistory(
+                authentication.getName(), dateStart, dateEnd, Pagination.of(page, size));
+        return ResponseEntity.ok(ApiResponseDto.page(data));
     }
 }

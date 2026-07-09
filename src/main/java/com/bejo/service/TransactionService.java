@@ -21,6 +21,8 @@ import jakarta.validation.Validator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -57,8 +59,9 @@ public class TransactionService {
         this.transactionFetchCounter = Counter.builder("transactions.fetched").register(meterRegistry);
     }
 
-    public List<TransactionResponseDto> getHistory(String username, LocalDate dateStart, LocalDate dateEnd) {
-        log.info("[HISTORY] username={} dateStart={} dateEnd={}", username, dateStart, dateEnd);
+    public Page<TransactionResponseDto> getHistory(String username, LocalDate dateStart, LocalDate dateEnd, Pageable pageable) {
+        log.info("[HISTORY] username={} dateStart={} dateEnd={} page={} size={}",
+                username, dateStart, dateEnd, pageable.getPageNumber(), pageable.getPageSize());
 
         String merchantName = userRepository.findByUsername(username)
                 .map(u -> u.getBusinessName())
@@ -67,23 +70,23 @@ public class TransactionService {
         LocalDateTime start = dateStart != null ? dateStart.atStartOfDay() : null;
         LocalDateTime end   = dateEnd   != null ? dateEnd.atTime(java.time.LocalTime.MAX) : null;
 
-        List<Transaction> txns;
+        Page<Transaction> txns;
         if (start == null && end == null) {
-            txns = transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(username);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(username, pageable);
         } else if (start != null && end != null) {
-            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(username, start, end);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(username, start, end, pageable);
         } else if (start != null) {
-            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(username, start);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(username, start, pageable);
         } else {
-            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(username, end);
+            txns = transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(username, end, pageable);
         }
 
-        List<TransactionResponseDto> result = txns.stream()
-                .map(t -> toDto(t, merchantName))
-                .toList();
+        Page<TransactionResponseDto> result = txns.map(t -> toDto(t, merchantName));
 
-        transactionFetchCounter.increment(result.size());
-        log.info("[HISTORY] Returning {} transactions for username={}", result.size(), username);
+        transactionFetchCounter.increment(result.getNumberOfElements());
+        log.info("[HISTORY] Returning {} of {} transactions (page {}/{}) for username={}",
+                result.getNumberOfElements(), result.getTotalElements(),
+                result.getNumber() + 1, result.getTotalPages(), username);
         return result;
     }
 

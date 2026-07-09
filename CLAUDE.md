@@ -80,7 +80,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/users/internal/register` | JWT | Internal/system registration; same payload but creates a `MANAGED` user |
 | `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti); optional body `{deviceId}` clears that device's FCM token |
-| `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive) |
+| `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive); paginated (`page`/`size`) |
 | `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header |
 | `POST` | `/api/transactions/bulk` | JWT | Bulk-sync MANUAL/PARSED transactions (offline entry); per-item `idempotencyKey`, partial-success result |
 | `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable) |
@@ -103,13 +103,13 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `GET` | `/api/categories` | JWT | List the merchant's categories |
 | `DELETE` | `/api/categories/{id}` | JWT | Delete a category (its products become uncategorized) |
 | `POST` | `/api/products` | JWT | Create a product (SKU); optional `categoryId`, `photo` (base64 ≤500 KB) |
-| `GET` | `/api/products` | JWT | List products; optional `?categoryId=` filter (omits `photo`) |
+| `GET` | `/api/products` | JWT | List products; optional `?categoryId=` filter (omits `photo`); paginated (`page`/`size`) |
 | `GET` | `/api/products/{id}` | JWT | Get one product (includes `photo`) |
 | `PATCH` | `/api/products/{id}` | JWT | Partial update (name, short description, price, cost, stock, category, photo) |
 | `DELETE` | `/api/products/{id}` | JWT | Delete a product (hard) |
 | `POST` | `/api/products/stock-adjustments` | JWT | Bulk stock adjustment (stock opname): set several products' stock to counted values; returns a variance report |
 | `POST` | `/api/stock-mutations` | JWT | Record a purchase (restock): raises stock of several products at once (a PURCHASE mutation) |
-| `GET` | `/api/stock-mutations` | JWT | Stock-change history — all mutations (PURCHASE/ADJUSTMENT/UPDATE) with their line items |
+| `GET` | `/api/stock-mutations` | JWT | Stock-change history — mutations (PURCHASE/ADJUSTMENT/UPDATE) with their line items; paginated (`page`/`size`) |
 | `GET` | `/api/stock-mutations/{id}` | JWT | Get one stock mutation with its line items |
 | `GET` | `/api/app-settings` | JWT | Get the user's app settings (monitored apps + notification keywords); returns defaults if never synced |
 | `PUT` | `/api/app-settings/monitored-apps` | JWT | Replace the monitored-apps map (`packageName`→`issuer`) |
@@ -117,7 +117,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `PUT` | `/api/app-settings/qris-with-profile-picture` | JWT | Toggle composing the QRIS image onto the profile picture (`{enabled}`; default false) |
 | `PUT` | `/api/app-settings/inventory` | JWT | Toggle inventory management (`{enabled}`; default false) |
 
-All responses follow `{ "status": 1\|0, "message": "...", "data": {...}, "count": N }` — null fields are omitted.
+All responses follow `{ "status": 1\|0, "message": "...", "data": {...}, "count": N }` — null fields are omitted. Paginated list endpoints (`GET /api/transactions`, `/api/products`, `/api/stock-mutations`) additionally return `page` (1-based), `totalPages`, and `total`; `count` is the size of the current page. Pagination is optional — omit `page`/`size` for page 1 of 50 (`size` cap 200). Built via `util/Pagination.of(page,size)` → `ApiResponseDto.page(Page<T>)`.
 
 Login success response `data` includes profile + bank fields plus `token`, `tokenType: "Bearer"`, `expiresIn` (seconds).
 

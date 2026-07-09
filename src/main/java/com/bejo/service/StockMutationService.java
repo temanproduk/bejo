@@ -13,6 +13,8 @@ import com.bejo.repository.StockMutationItemRepository;
 import com.bejo.repository.StockMutationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -114,20 +116,19 @@ public class StockMutationService {
     }
 
     @Transactional(readOnly = true)
-    public List<StockMutationResponseDto> list(String username) {
-        log.info("[PURCHASE] List (stock mutations) for username={}", username);
-        List<StockMutation> mutations = stockMutationRepository.findByUsernameOrderByCreatedAtDesc(username);
-        if (mutations.isEmpty()) return List.of();
+    public Page<StockMutationResponseDto> list(String username, Pageable pageable) {
+        log.info("[PURCHASE] List (stock mutations) for username={} page={} size={}",
+                username, pageable.getPageNumber(), pageable.getPageSize());
+        Page<StockMutation> mutations = stockMutationRepository.findByUsernameOrderByCreatedAtDesc(username, pageable);
+        if (mutations.isEmpty()) return mutations.map(m -> toDto(m, List.of()));
 
-        // Batch-load all line items in one query, then group by mutation (no N+1)
-        List<Long> ids = mutations.stream().map(StockMutation::getId).toList();
+        // Batch-load the line items for this page's mutations in one query, then group (no N+1)
+        List<Long> ids = mutations.getContent().stream().map(StockMutation::getId).toList();
         Map<Long, List<StockMutationItem>> itemsByMutation = stockMutationItemRepository
                 .findByMutationIdInOrderByIdAsc(ids).stream()
                 .collect(Collectors.groupingBy(StockMutationItem::getMutationId));
 
-        return mutations.stream()
-                .map(m -> toDto(m, itemsByMutation.getOrDefault(m.getId(), List.of())))
-                .toList();
+        return mutations.map(m -> toDto(m, itemsByMutation.getOrDefault(m.getId(), List.of())));
     }
 
     @Transactional(readOnly = true)

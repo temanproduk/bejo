@@ -15,6 +15,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -115,29 +119,31 @@ class TransactionServiceTest {
         assertThat(captor.getValue().getAcquirer()).isEqualTo("AstraPay");
     }
 
+    private static final Pageable PAGE = PageRequest.of(0, 50);
+
     @Test
     void historyWithoutDatesFetchesEverything() {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice"))
-                .thenReturn(List.of());
+        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice", PAGE))
+                .thenReturn(Page.empty());
 
-        List<TransactionResponseDto> result = transactionService.getHistory("alice", null, null);
+        Page<TransactionResponseDto> result = transactionService.getHistory("alice", null, null, PAGE);
 
         assertThat(result).isEmpty();
-        verify(transactionRepository).findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice");
+        verify(transactionRepository).findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice", PAGE);
     }
 
     @Test
     void historyWithBothDatesUsesInclusiveEndOfDay() {
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
         when(transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
-                eq("alice"), any(), any())).thenReturn(List.of());
+                eq("alice"), any(), any(), eq(PAGE))).thenReturn(Page.empty());
 
-        transactionService.getHistory("alice", LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 1));
+        transactionService.getHistory("alice", LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 1), PAGE);
 
         ArgumentCaptor<LocalDateTime> endCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(transactionRepository).findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
-                eq("alice"), eq(LocalDate.of(2026, 7, 1).atStartOfDay()), endCaptor.capture());
+                eq("alice"), eq(LocalDate.of(2026, 7, 1).atStartOfDay()), endCaptor.capture(), eq(PAGE));
         // End bound must cover the entire final day
         assertThat(endCaptor.getValue()).isAfter(LocalDateTime.of(2026, 7, 1, 23, 59, 59));
         assertThat(endCaptor.getValue()).isBefore(LocalDateTime.of(2026, 7, 2, 0, 0));
@@ -156,14 +162,14 @@ class TransactionServiceTest {
         t.setSource("GoPay");
 
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(u));
-        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice"))
-                .thenReturn(List.of(t));
+        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice", PAGE))
+                .thenReturn(new PageImpl<>(List.of(t)));
 
-        List<TransactionResponseDto> result = transactionService.getHistory("alice", null, null);
+        Page<TransactionResponseDto> result = transactionService.getHistory("alice", null, null, PAGE);
 
-        assertThat(result).hasSize(1);
-        assertThat(result.getFirst().merchantName()).isEqualTo("Warung Alice");
-        assertThat(result.getFirst().issuerName()).isEqualTo("GoPay");
+        assertThat(result.getContent()).hasSize(1);
+        assertThat(result.getContent().getFirst().merchantName()).isEqualTo("Warung Alice");
+        assertThat(result.getContent().getFirst().issuerName()).isEqualTo("GoPay");
     }
 
     private Transaction activeTransaction() {

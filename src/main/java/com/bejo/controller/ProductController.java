@@ -7,7 +7,9 @@ import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.dto.response.ProductResponseDto;
 import com.bejo.dto.response.StockAdjustmentResultResponseDto;
 import com.bejo.service.ProductService;
+import com.bejo.util.Pagination;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -34,12 +36,17 @@ public class ProductController {
                 .body(ApiResponseDto.success("Produk berhasil dibuat", data));
     }
 
+    // Pagination is optional: omit page/size to get page 1 of 50. The response
+    // carries page/totalPages/total alongside the current page's items.
     @GetMapping
     public ResponseEntity<ApiResponseDto<List<ProductResponseDto>>> list(
             @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
             Authentication authentication) {
-        List<ProductResponseDto> data = productService.list(authentication.getName(), categoryId);
-        return ResponseEntity.ok(ApiResponseDto.list(data));
+        Page<ProductResponseDto> data = productService.list(
+                authentication.getName(), categoryId, Pagination.of(page, size));
+        return ResponseEntity.ok(ApiResponseDto.page(data));
     }
 
     // Bulk stock adjustment (stock opname): set several products' stock to their

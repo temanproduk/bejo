@@ -313,6 +313,8 @@ Returns the authenticated user's transaction history, newest first. Soft-deleted
 |---|---|---|
 | `dateStart` | `yyyy-MM-dd` | Filter from this date (inclusive) |
 | `dateEnd` | `yyyy-MM-dd` | Filter to this date (inclusive) |
+| `page` | integer ≥ 1 | Page number (optional, default `1`) |
+| `size` | integer 1–200 | Page size (optional, default `50`) |
 
 **Success — HTTP 200**
 
@@ -332,11 +334,14 @@ Returns the authenticated user's transaction history, newest first. Soft-deleted
       "rrn": "000100000002"
     }
   ],
-  "count": 1
+  "count": 1,
+  "page": 1,
+  "totalPages": 1,
+  "total": 1
 }
 ```
 
-`issuerName`, `merchantPan`, `customerPan`, `rrn` are omitted when null.
+`issuerName`, `merchantPan`, `customerPan`, `rrn` are omitted when null. `count` is the number of rows in this page; `page` is the current (1-based) page, `totalPages` the number of pages, `total` the total matching rows.
 
 ---
 
@@ -807,7 +812,7 @@ Deletes the category and **un-categorizes** its products (their `categoryId` bec
 
 #### `GET /api/products` — List products
 
-Optional `?categoryId=<id>` filter. **The `photo` field is omitted from list items** to keep the payload small — fetch the detail endpoint for the image. Returns `data` array + `count`.
+Optional `?categoryId=<id>` filter. **The `photo` field is omitted from list items** to keep the payload small — fetch the detail endpoint for the image. Paginated: optional `page` (default `1`) + `size` (default `50`, max `200`); response includes `count` (this page), `page`, `totalPages`, `total`.
 
 #### `GET /api/products/{id}` — Get product
 
@@ -922,7 +927,7 @@ Buying stock from a supplier: **raises the stock of several products at once** (
 
 #### `GET /api/stock-mutations` — Stock-change history
 
-Returns all mutations (PURCHASE/ADJUSTMENT/UPDATE) newest-first (`data` array + `count`), each **with its line items** (product `sku`/`name` + `previousStock`/`newStock`/`quantityChange`). For non-purchase mutations `unitPrice`/`subtotal` are absent and `totalAmount` is 0.
+Returns mutations (PURCHASE/ADJUSTMENT/UPDATE) newest-first, each **with its line items** (product `sku`/`name` + `previousStock`/`newStock`/`quantityChange`). For non-purchase mutations `unitPrice`/`subtotal` are absent and `totalAmount` is 0. Paginated: optional `page` (default `1`) + `size` (default `50`, max `200`); response includes `count` (this page), `page`, `totalPages`, `total`.
 
 #### `GET /api/stock-mutations/{id}` — Stock mutation detail
 
