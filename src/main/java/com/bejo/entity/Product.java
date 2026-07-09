@@ -28,6 +28,9 @@ public class Product {
     @Column(nullable = false)
     private String name;
 
+    @Column(name = "short_description")
+    private String shortDescription;
+
     @Column(name = "category_id")
     private Long categoryId;
 
@@ -67,6 +70,8 @@ public class Product {
     public void setSku(String sku) { this.sku = sku; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+    public String getShortDescription() { return shortDescription; }
+    public void setShortDescription(String shortDescription) { this.shortDescription = shortDescription; }
     public Long getCategoryId() { return categoryId; }
     public void setCategoryId(Long categoryId) { this.categoryId = categoryId; }
     public long getPrice() { return price; }

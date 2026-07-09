@@ -27,6 +27,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class QrisCallbackService {
@@ -39,9 +40,7 @@ public class QrisCallbackService {
     private final ObjectMapper objectMapper;
     private final Counter callbackCounter;
 
-    // Callbacks that don't match a merchant by NMID fall back to this user
-    // (defaults to the seed user). Lets single-merchant deployments work
-    // out of the box while still routing by NMID when it matches.
+    // The seed/merchant account every callback is attributed to (default: seed user).
     @Value("${app.callback.default-username:admin}")
     private String defaultUsername;
 
@@ -57,67 +56,57 @@ public class QrisCallbackService {
         this.callbackCounter = Counter.builder("qris.callbacks.received").register(meterRegistry);
     }
 
+    /**
+     * PoC behavior: the provider's callback is currently buggy — it only sends a valid
+     * amount + status, with merchantPan / reference numbers / transactionId all null.
+     * So we can't route by NMID or dedupe by reference. For now, EVERY callback records
+     * a MANAGED transaction against the seed user and pushes a notification to its
+     * devices. Restore NMID routing + reference-based idempotency once the provider
+     * fixes the payload.
+     */
     @Transactional
     public QrMpmNotifyResponseDto processNotify(QrMpmNotifyRequestDto req, String xTimestamp) {
         callbackCounter.increment();
-        log.info("[CALLBACK] originalReferenceNo={} partnerRef={} status={}",
-                req.originalReferenceNo(), req.originalPartnerReferenceNo(), req.latestTransactionStatus());
+        log.info("[CALLBACK] status={} amount={}",
+                req.latestTransactionStatus(), req.amount() != null ? req.amount().value() : null);
+
+        User seedUser = userRepository.findByUsername(defaultUsername)
+                .orElseThrow(() -> {
+                    log.error("[CALLBACK] Seed user '{}' not found — payment NOT recorded", defaultUsername);
+                    return new ResourceNotFoundException("Seed user '" + defaultUsername + "' not found");
+                });
 
         QrMpmNotifyRequestDto.AdditionalInfo info = req.additionalInfo();
-        String merchantPan = info != null && info.merchantPan() != null ? info.merchantPan() : req.destinationNumber();
-
-        // Route to the merchant whose NMID matches, else the default user
-        User merchant = userRepository.findFirstByNmid(merchantPan)
-                .or(() -> userRepository.findByUsername(defaultUsername))
-                .orElseThrow(() -> {
-                    log.error("[CALLBACK] No merchant for merchantPan={} and default user '{}' missing — "
-                                    + "payment NOT recorded (originalReferenceNo={})",
-                            merchantPan, defaultUsername, req.originalReferenceNo());
-                    return new ResourceNotFoundException(
-                            "No merchant matches merchantPan=" + merchantPan
-                                    + " and default user '" + defaultUsername + "' not found");
-                });
-        String username = merchant.getUsername();
-
-        BigDecimal amount = parseAmount(req.amount().value());
+        BigDecimal amount = parseAmount(req.amount() != null ? req.amount().value() : null);
         BigDecimal tip = info != null && info.tip() != null ? parseAmount(info.tip()) : BigDecimal.ZERO;
-        String idempotencyKey = req.originalReferenceNo() + "|" + req.originalPartnerReferenceNo();
-
-        // Idempotency — callbacks may be delivered more than once
-        var existing = transactionRepository.findByIdempotencyKeyAndUsername(idempotencyKey, username);
-        if (existing.isPresent()) {
-            Transaction t = existing.get();
-            log.info("[CALLBACK] Idempotent replay key={} transactionId={}", idempotencyKey, t.getTransactionId());
-            return response(t.getId(), req, amount, tip);
-        }
-
         String status = mapStatus(req.latestTransactionStatus());
-        String transactionId = info != null && info.transactionId() != null
-                ? info.transactionId() : req.originalReferenceNo();
+        String transactionId = "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
 
         Transaction t = new Transaction();
         t.setTransactionId(transactionId);
-        t.setIdempotencyKey(idempotencyKey);
+        // PoC: no reference number to dedupe on, so no idempotency key — each callback
+        // creates a distinct transaction (Postgres allows multiple NULL unique values).
+        t.setIdempotencyKey(null);
         t.setInvoiceId(req.originalReferenceNo());
         t.setTransactionDate(parseTimestamp(xTimestamp));
         t.setAmount(amount.setScale(0, RoundingMode.HALF_UP).longValueExact());
         t.setStatus(status);
-        t.setUsername(username);
+        t.setUsername(seedUser.getUsername());
         t.setType(TransactionType.MANAGED);
         t.setAcquirer(info != null && info.deviceId() != null ? info.deviceId() : Acquirer.ASTRAPAY);
         t.setSource(info != null ? info.issuerName() : null);
-        t.setMerchantPan(merchantPan);
+        t.setMerchantPan(info != null ? info.merchantPan() : null);
         t.setCustomerPan(info != null && info.customerPan() != null ? info.customerPan() : req.customerNumber());
         t.setCustomerName(req.destinationAccountName());
         t.setScrapeDate(LocalDateTime.now());
         t.setAdditionalInfo(toJson(req));
         transactionRepository.save(t);
         log.info("[CALLBACK] Recorded transactionId={} username={} amount={} status={}",
-                transactionId, username, t.getAmount(), status);
+                transactionId, seedUser.getUsername(), t.getAmount(), status);
 
-        // Best-effort push to the merchant's devices — must never fail the callback
+        // Best-effort push to the seed user's devices — must never fail the callback
         try {
-            pushNotificationService.sendToUser(username, buildPushData(t, merchant.getBusinessName()));
+            pushNotificationService.sendToUser(seedUser.getUsername(), buildPushData(t, seedUser.getBusinessName()));
         } catch (RuntimeException e) {
             log.error("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
                     transactionId, e.getMessage(), e);
@@ -154,17 +143,20 @@ public class QrisCallbackService {
                 LocalDateTime.now());
     }
 
+    // Null/blank/invalid amount degrades to 0 so a buggy payload never drops the callback.
     private BigDecimal parseAmount(String value) {
+        if (value == null || value.isBlank()) return BigDecimal.ZERO;
         try {
             return new BigDecimal(value);
         } catch (NumberFormatException e) {
-            log.error("[CALLBACK] Invalid amount value '{}' in callback payload", value);
-            throw new IllegalArgumentException("Nilai amount tidak valid: " + value);
+            log.error("[CALLBACK] Invalid amount value '{}', using 0", value);
+            return BigDecimal.ZERO;
         }
     }
 
     // 00=SUCCESS, 01=PENDING, 02=FAILED, 03=REFUNDED, 04=CANCELLED, 05=EXPIRED
     private String mapStatus(String code) {
+        if (code == null) return TransactionStatus.UNKNOWN;
         return switch (code) {
             case "00" -> TransactionStatus.SUCCESS;
             case "01" -> TransactionStatus.PENDING;
@@ -177,7 +169,7 @@ public class QrisCallbackService {
     }
 
     // Accepts ISO-8601 with offset (2020-12-23T08:46:11+07:00), with Z, or without
-    // a zone; falls back to now() so a malformed header never drops the callback.
+    // a zone; falls back to now() so a missing/malformed header never drops the callback.
     private LocalDateTime parseTimestamp(String xTimestamp) {
         if (xTimestamp == null || xTimestamp.isBlank()) return LocalDateTime.now();
         try {

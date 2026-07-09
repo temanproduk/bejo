@@ -7,19 +7,22 @@ import java.util.List;
  * A purchase order with its line items. {@code items} is populated on create and on
  * the single-purchase detail; the list endpoint omits it (summary only).
  */
-public record PurchaseResponseDto(
+public record StockMutationResponseDto(
         Long id,
+        String type,
         long totalAmount,
         String note,
         LocalDateTime createdAt,
-        List<PurchaseItemResponseDto> items
+        List<StockMutationItemResponseDto> items
 ) {
-    public record PurchaseItemResponseDto(
+    public record StockMutationItemResponseDto(
             Long productId,
             String sku,
             String name,
-            long unitPrice,
-            int quantity,
-            long subtotal
+            int previousStock,
+            int newStock,
+            int quantityChange,
+            Long unitPrice,
+            Long subtotal
     ) {}
 }

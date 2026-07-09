@@ -617,8 +617,8 @@ class ApiIntegrationTest {
 
     // ---------- QRIS callback (snap qr-mpm-notify) ----------
 
-    // Unique merchantPan/refs per test so NMID routing is unambiguous and the
-    // global unique constraints on transaction_id/idempotency_key don't collide.
+    // Builds a well-formed callback payload. (PoC: the service ignores merchantPan/refs
+    // and records against the seed user regardless.)
     private String callbackBody(String merchantPan, String refNo, String partnerRef, String txnId) {
         return """
                 {
@@ -641,16 +641,21 @@ class ApiIntegrationTest {
                 """.formatted(refNo, partnerRef, merchantPan, merchantPan, txnId);
     }
 
-    private void registerWithNmid(String username, String nmid) throws Exception {
-        register(username);
-        com.bejo.entity.User u = userRepository.findByUsername(username).orElseThrow();
-        u.setNmid(nmid);
-        userRepository.save(u);
+    // PoC: the callback records against the seed user (app.callback.default-username =
+    // cb_seed in test config). Register it idempotently; count its transactions by delta
+    // so these tests are isolated from the shared H2 state.
+    private void ensureCallbackSeedUser() throws Exception {
+        if (userRepository.findByUsername("cb_seed").isEmpty()) register("cb_seed");
+    }
+
+    private long seedTxnCount() {
+        return transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("cb_seed").size();
     }
 
     @Test
-    void qrisCallbackRecordsTransactionWithoutAnyAuth() throws Exception {
-        registerWithNmid("cb_user1", "9360082232504524231");
+    void qrisCallbackRecordsTransactionForSeedUserWithoutAnyAuth() throws Exception {
+        ensureCallbackSeedUser();
+        long before = seedTxnCount();
         String body = callbackBody("9360082232504524231", "XCBS6Z450S", "DEV20250826422460",
                 "INV/QRM/4542BR/250826/2G4Y6CCZ");
 
@@ -660,33 +665,26 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.billNumber").value("XCBS6Z450S"))
-                .andExpect(jsonPath("$.referenceNumber").value("DEV20250826422460"))
                 .andExpect(jsonPath("$.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.id").isNumber());
 
-        // Recorded under the matched merchant and visible in history
-        String token = login("cb_user1", "password1", "device-cb_user1");
+        // Recorded as a MANAGED transaction against the seed user
+        assertThat(seedTxnCount()).isEqualTo(before + 1);
+        String token = login("cb_seed", "password1", "device-cb_seed");
         mockMvc.perform(get("/api/transactions")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
-                .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.data[0].amount").value(100))
-                .andExpect(jsonPath("$.data[0].acquirer").value("AstraPay"))
-                .andExpect(jsonPath("$.data[0].merchantPan").value("9360082232504524231"));
-
-        // Raw payload stored in additional_info
-        com.bejo.entity.Transaction t = transactionRepository
-                .findByTransactionIdAndUsernameAndDeletedAtIsNull("INV/QRM/4542BR/250826/2G4Y6CCZ", "cb_user1")
-                .orElseThrow();
-        assertThat(t.getAdditionalInfo()).contains("originalReferenceNo").contains("XCBS6Z450S");
+                .andExpect(jsonPath("$.data[0].acquirer").value("AstraPay"));
     }
 
     @Test
-    void qrisCallbackIsIdempotent() throws Exception {
-        registerWithNmid("cb_user2", "8888000011112222");
+    void qrisCallbackCreatesANewTransactionEachTime() throws Exception {
+        ensureCallbackSeedUser();
+        long before = seedTxnCount();
         String body = callbackBody("8888000011112222", "IDEMREF01", "IDEMPART01", "INV-IDEM-01");
 
+        // PoC: no reference to dedupe on — each callback creates a new transaction
         for (int i = 0; i < 2; i++) {
             mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
                             .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
@@ -695,32 +693,35 @@ class ApiIntegrationTest {
                     .andExpect(status().isOk());
         }
 
-        String token = login("cb_user2", "password1", "device-cb_user2");
-        mockMvc.perform(get("/api/transactions")
-                        .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(jsonPath("$.count").value(1));
+        assertThat(seedTxnCount()).isEqualTo(before + 2);
     }
 
     @Test
-    void qrisCallbackRejectsMissingAmount() throws Exception {
+    void qrisCallbackWithoutAmountDefaultsToZero() throws Exception {
+        ensureCallbackSeedUser();
+        long before = seedTxnCount();
+
+        // Buggy minimal payload — no amount; PoC records it with amount 0 (still 200)
         mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
                         .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
                         .contentType(APPLICATION_JSON)
                         .content("""
-                                { "originalReferenceNo": "A", "originalPartnerReferenceNo": "B",
-                                  "latestTransactionStatus": "00", "transactionStatusDesc": "OK" }
+                                { "latestTransactionStatus": "00", "transactionStatusDesc": "OK" }
                                 """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk());
+
+        assertThat(seedTxnCount()).isEqualTo(before + 1);
     }
 
     @Test
-    void qrisCallbackRequiresTimestampHeader() throws Exception {
-        // X-TIMESTAMP is mandatory per the spec — missing header is a 400, not a 500
+    void qrisCallbackWorksWithoutTimestampHeader() throws Exception {
+        ensureCallbackSeedUser();
+
+        // X-TIMESTAMP is now optional (PoC) — missing header falls back to now(), still 200
         mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
                         .contentType(APPLICATION_JSON)
                         .content(callbackBody("9360082232504524231", "NOTS01", "NOTS02", "INV-NOTS")))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk());
     }
 
     // ---------- devices ----------
@@ -1045,6 +1046,7 @@ class ApiIntegrationTest {
         Map<String, Object> body = new HashMap<>();
         body.put("sku", "KOPI-01");
         body.put("name", "Kopi Susu");
+        body.put("shortDescription", "Kopi + susu segar");
         body.put("categoryId", catId);
         body.put("price", 18000);
         body.put("costPrice", 10000);
@@ -1058,6 +1060,7 @@ class ApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.categoryName").value("Minuman"))
+                .andExpect(jsonPath("$.data.shortDescription").value("Kopi + susu segar"))
                 .andExpect(jsonPath("$.data.stock").value(25))
                 .andReturn();
         long productId = objectMapper.readTree(created.getResponse().getContentAsString()).at("/data/id").asLong();
@@ -1083,13 +1086,14 @@ class ApiIntegrationTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.count").value(1));
 
-        // Update stock (inventory management via PATCH)
+        // Update stock + short description (inventory + editable description via PATCH)
         mockMvc.perform(patch("/api/products/" + productId)
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("stock", 40))))
-                .andExpect(jsonPath("$.data.stock").value(40));
+                        .content(objectMapper.writeValueAsString(Map.of("stock", 40, "shortDescription", "Promo!"))))
+                .andExpect(jsonPath("$.data.stock").value(40))
+                .andExpect(jsonPath("$.data.shortDescription").value("Promo!"));
 
         // Deleting the category un-categorizes the product (not deletes it)
         mockMvc.perform(delete("/api/categories/" + catId)
@@ -1157,6 +1161,54 @@ class ApiIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void bulkStockAdjustmentSetsCountsAndReportsVariance() throws Exception {
+        String token = registerAndLogin("opname_user1");
+        long p1 = createProduct(token, "OP-1", 10, null);
+        long p2 = createProduct(token, "OP-2", 5, null);
+
+        String body = objectMapper.writeValueAsString(Map.of("items", List.of(
+                Map.of("productId", p1, "stock", 8),    // counted 8  (-2)
+                Map.of("productId", p2, "stock", 12)))); // counted 12 (+7)
+
+        mockMvc.perform(post("/api/products/stock-adjustments")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(2))
+                .andExpect(jsonPath("$.data.items[0].previousStock").value(10))
+                .andExpect(jsonPath("$.data.items[0].newStock").value(8))
+                .andExpect(jsonPath("$.data.items[0].difference").value(-2))
+                .andExpect(jsonPath("$.data.items[1].difference").value(7));
+
+        // Stock actually updated
+        assertThat(stockOf(token, p1)).isEqualTo(8);
+        assertThat(stockOf(token, p2)).isEqualTo(12);
+    }
+
+    @Test
+    void bulkStockAdjustmentUnknownProductRejectedAtomically() throws Exception {
+        String token = registerAndLogin("opname_user2");
+        long p1 = createProduct(token, "OP-1", 10, null);
+
+        String body = objectMapper.writeValueAsString(Map.of("items", List.of(
+                Map.of("productId", p1, "stock", 99),
+                Map.of("productId", 888888, "stock", 3))));
+
+        mockMvc.perform(post("/api/products/stock-adjustments")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // Atomic: the valid product's stock is unchanged
+        assertThat(stockOf(token, p1)).isEqualTo(10);
+    }
+
     // ---------- purchases (restock) ----------
 
     private long createProduct(String token, String sku, int stock, Integer costPrice) throws Exception {
@@ -1195,30 +1247,34 @@ class ApiIntegrationTest {
                         Map.of("productId", p1, "quantity", 20),                  // uses costPrice 5000
                         Map.of("productId", p2, "quantity", 5, "unitPrice", 9000)))); // override
 
-        MvcResult created = mockMvc.perform(post("/api/purchases")
+        MvcResult created = mockMvc.perform(post("/api/stock-mutations")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.type").value("PURCHASE"))
                 .andExpect(jsonPath("$.data.totalAmount").value(145000)) // 20*5000 + 5*9000
                 .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[0].previousStock").value(10))
+                .andExpect(jsonPath("$.data.items[0].newStock").value(30))
+                .andExpect(jsonPath("$.data.items[0].quantityChange").value(20))
                 .andReturn();
-        long purchaseId = objectMapper.readTree(created.getResponse().getContentAsString()).at("/data/id").asLong();
+        long mutationId = objectMapper.readTree(created.getResponse().getContentAsString()).at("/data/id").asLong();
 
         // Both products' stock rose
         assertThat(stockOf(token, p1)).isEqualTo(30);
         assertThat(stockOf(token, p2)).isEqualTo(8);
 
         // History: list omits items, detail includes them
-        mockMvc.perform(get("/api/purchases")
+        mockMvc.perform(get("/api/stock-mutations")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.data[0].items").doesNotExist());
 
-        mockMvc.perform(get("/api/purchases/" + purchaseId)
+        mockMvc.perform(get("/api/stock-mutations/" + mutationId)
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data.items.length()").value(2))
@@ -1234,7 +1290,7 @@ class ApiIntegrationTest {
                 Map.of("productId", p1, "quantity", 5),
                 Map.of("productId", 999999, "quantity", 2))));
 
-        mockMvc.perform(post("/api/purchases")
+        mockMvc.perform(post("/api/stock-mutations")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1250,12 +1306,62 @@ class ApiIntegrationTest {
     void purchaseEmptyItemsRejected() throws Exception {
         String token = registerAndLogin("buy_user3");
 
-        mockMvc.perform(post("/api/purchases")
+        mockMvc.perform(post("/api/stock-mutations")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("items", List.of()))))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void stockMutationHistoryCapturesPurchaseAdjustmentAndUpdate() throws Exception {
+        String token = registerAndLogin("mut_user1");
+        long p1 = createProduct(token, "M1", 10, 5000);
+
+        // 1) Restock (PURCHASE): +5
+        mockMvc.perform(post("/api/stock-mutations")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("items", List.of(
+                                Map.of("productId", p1, "quantity", 5))))))
+                .andExpect(status().isCreated());
+
+        // 2) Stock opname (ADJUSTMENT): set to 20
+        mockMvc.perform(post("/api/products/stock-adjustments")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("items", List.of(
+                                Map.of("productId", p1, "stock", 20))))))
+                .andExpect(status().isOk());
+
+        // 3) Product edit changing stock (UPDATE): set to 25
+        mockMvc.perform(patch("/api/products/" + p1)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("stock", 25))))
+                .andExpect(status().isOk());
+
+        // 4) A non-stock edit (name only) must NOT create a mutation
+        mockMvc.perform(patch("/api/products/" + p1)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("name", "Renamed"))))
+                .andExpect(status().isOk());
+
+        // History has exactly the 3 stock-changing mutations, newest first
+        mockMvc.perform(get("/api/stock-mutations")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(3))
+                .andExpect(jsonPath("$.data[0].type").value("UPDATE"))
+                .andExpect(jsonPath("$.data[1].type").value("ADJUSTMENT"))
+                .andExpect(jsonPath("$.data[2].type").value("PURCHASE"));
     }
 
     // ---------- app settings ----------

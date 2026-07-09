@@ -11,6 +11,7 @@ public record ProductResponseDto(
         Long id,
         String sku,
         String name,
+        String shortDescription,
         Long categoryId,
         String categoryName,
         long price,

@@ -105,11 +105,12 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/products` | JWT | Create a product (SKU); optional `categoryId`, `photo` (base64 ≤500 KB) |
 | `GET` | `/api/products` | JWT | List products; optional `?categoryId=` filter (omits `photo`) |
 | `GET` | `/api/products/{id}` | JWT | Get one product (includes `photo`) |
-| `PATCH` | `/api/products/{id}` | JWT | Partial update (name, price, cost, stock, category, photo) |
+| `PATCH` | `/api/products/{id}` | JWT | Partial update (name, short description, price, cost, stock, category, photo) |
 | `DELETE` | `/api/products/{id}` | JWT | Delete a product (hard) |
-| `POST` | `/api/purchases` | JWT | Record a purchase order (restock): raises stock of several products at once |
-| `GET` | `/api/purchases` | JWT | List purchase history (summary, omits line items) |
-| `GET` | `/api/purchases/{id}` | JWT | Get one purchase with its line items |
+| `POST` | `/api/products/stock-adjustments` | JWT | Bulk stock adjustment (stock opname): set several products' stock to counted values; returns a variance report |
+| `POST` | `/api/stock-mutations` | JWT | Record a purchase (restock): raises stock of several products at once (a PURCHASE mutation) |
+| `GET` | `/api/stock-mutations` | JWT | Stock-change history — all mutations (PURCHASE/ADJUSTMENT/UPDATE), summary, omits line items |
+| `GET` | `/api/stock-mutations/{id}` | JWT | Get one stock mutation with its line items |
 | `GET` | `/api/app-settings` | JWT | Get the user's app settings (monitored apps + notification keywords); returns defaults if never synced |
 | `PUT` | `/api/app-settings/monitored-apps` | JWT | Replace the monitored-apps map (`packageName`→`issuer`) |
 | `PUT` | `/api/app-settings/keywords` | JWT | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
@@ -141,7 +142,7 @@ converter/    → JPA AttributeConverters storing JSON in TEXT columns
 exception/    → GlobalExceptionHandler + ResourceNotFoundException
 ```
 
-Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults).
+Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults), `StockMutationType` (`PURCHASE`, `ADJUSTMENT`, `UPDATE`).
 
 Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by consulting `RequestMappingHandlerMapping`. It must be injected with `@Qualifier("requestMappingHandlerMapping")` (actuator registers a second bean of that type) and the request path must be parsed via `ServletRequestPathUtils.parseAndCache` because the entry point runs before `DispatcherServlet`.
 
@@ -150,7 +151,7 @@ Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by cons
 `AuthService.login()` authenticates against the local `users` table:
 1. Look up `users` row by `username` — `Invalid credentials` (400) if not found or BCrypt mismatch.
 2. Load the `user_banks` row for bank fields in the response.
-3. Upsert a row in `cuan_sessions` keyed on `(username, device_id)`; an existing FCM token is preserved when the login request has no `pushToken`.
+3. Upsert a row in `bejo_sessions` keyed on `(username, device_id)`; an existing FCM token is preserved when the login request has no `pushToken`.
 4. Return profile + bank data + JWT (`expiresIn` seconds).
 
 ### Registration & account types
@@ -171,11 +172,13 @@ Registration lives in `UserService` (not `AuthService` — auth is only login/lo
 
 ### Transaction soft delete
 
-`cuan_history.deleted_at = NULL` → active; non-null → deleted (V2 migration). `DELETE /api/transactions/{transactionId}` sets the timestamp; the row is never removed. History/edit/delete queries filter on `deleted_at IS NULL`, but `existsByTransactionId` and the idempotency-key replay lookup deliberately include deleted rows — the DB unique constraints span all rows, so a deleted `transaction_id`/`idempotency_key` still can't be reused.
+`bejo_history.deleted_at = NULL` → active; non-null → deleted. `DELETE /api/transactions/{transactionId}` sets the timestamp; the row is never removed. History/edit/delete queries filter on `deleted_at IS NULL`, but `existsByTransactionId` and the idempotency-key replay lookup deliberately include deleted rows — the DB unique constraints span all rows, so a deleted `transaction_id`/`idempotency_key` still can't be reused.
 
 ### QRIS payment callback
 
-`POST /snap/v1.0/qr/qr-mpm-notify` (`QrisCallbackController` → `QrisCallbackService`) receives SNAP-like QR MPM notifications from the QRIS merchant service (AstraPay), unauthenticated (server-to-server). It resolves the merchant by `User.nmid == payload.merchantPan` (falling back to `destinationNumber`, then to `app.callback.default-username`, default `admin`); is idempotent on `originalReferenceNo|originalPartnerReferenceNo` (stored as the transaction's `idempotencyKey`); maps SNAP status codes (`00`→SUCCESS…); records a `MANAGED`/`AstraPay` transaction; saves the raw payload JSON to `cuan_history.additional_info`; and sends a best-effort FCM push to all the merchant's devices. Returns the callback's own ack shape (`QrMpmNotifyResponse`), not the `ApiResponse` envelope. `findFirstByNmid` is used (not `findBy`) so a duplicate NMID degrades gracefully instead of throwing.
+`POST /snap/v1.0/qr/qr-mpm-notify` (`QrisCallbackController` → `QrisCallbackService`) receives SNAP-like QR MPM notifications from the QRIS merchant service (AstraPay), unauthenticated (server-to-server).
+
+**PoC mode (temporary):** the provider's callback is currently buggy — it only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So the DTO validation is lenient (all fields optional), `X-TIMESTAMP` is optional, and the service can't route by NMID or dedupe by reference. Instead, **every callback records a `MANAGED`/`AstraPay` transaction against the seed user** (`app.callback.default-username`, default `admin`) with a generated `transactionId`, null `idempotencyKey` (no dedupe — each callback creates a new row), amount/status from the payload, time from `X-TIMESTAMP` (else now()); saves the raw payload JSON to `bejo_history.additional_info`; and sends a best-effort FCM push to the seed user's devices. Returns the callback's own ack shape (`QrMpmNotifyResponse`). **Restore NMID routing + reference-based idempotency once the provider fixes the payload.**
 
 FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one device, propagates errors — used by the test-notification API) and `sendToUser` (all a user's device sessions, best-effort, never throws — used by the callback). `NotificationService` (the `/api/notifications/test` endpoint) only sends a push; it does not persist a transaction.
 
@@ -187,11 +190,16 @@ QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` re
 
 Basic per-merchant SKU catalog with simple inventory, scoped by `username`:
 - `ProductCategoryController` → `ProductCategoryService` — categories (`product_categories`); names unique per merchant. Deleting a category first **un-categorizes** its products (`ProductRepository.clearCategory` sets their `category_id` to null in the service, so behavior matches under both Flyway/Postgres and the H2 test schema) then removes the row — products are never deleted with it.
-- `ProductController` → `ProductService` — products (`products`); `sku` unique per merchant. `stock` is a plain column (inventory management = `PATCH` the value; no ledger). A product's `categoryId` must belong to the same merchant (else 400). `photo` is an optional base64 image validated ≤500 KB decoded; **list responses omit the photo** to keep payloads small, the single-product detail includes it. Prices are `BIGINT` IDR; `costPrice` is optional.
+- `ProductController` → `ProductService` — products (`products`); `sku` unique per merchant. Editable fields include an optional `shortDescription`. `stock` is a plain column (inventory management = `PATCH` the value; no ledger). A product's `categoryId` must belong to the same merchant (else 400). `photo` is an optional base64 image validated ≤500 KB decoded; **list responses omit the photo** to keep payloads small, the single-product detail includes it. Prices are `BIGINT` IDR; `costPrice` is optional.
+- **Stock opname** — `POST /api/products/stock-adjustments` (`ProductService.adjustStock`) bulk-sets several products' stock to their newly counted quantities. Atomic and two-pass (unknown product → 400, nothing changes); returns a per-product variance report (`previousStock`/`newStock`/`difference`). No ledger is persisted.
 
-### Purchases (restock)
+### Stock mutations (repurposed "purchases")
 
-`PurchaseController` → `PurchaseService` records purchase orders that **raise** the stock of several products at once (`purchases` + `purchase_items`). `POST /api/purchases` is atomic and two-pass: pass 1 resolves every line to one of the merchant's own products (unknown product → 400, nothing changes); pass 2 raises each product's `stock`, snapshots the line (`sku`/`name`/`unitPrice`) and persists the purchase + items. Line `unitPrice` is the provided value, else the product's `costPrice`, else 0; `total_amount` = Σ subtotals. `purchase_items.product_id` has no FK and the line snapshots product fields, so history survives a product edit/delete. `GET /api/purchases` returns summaries (items omitted); `GET /api/purchases/{id}` includes the items.
+`StockMutationController` → `StockMutationService` back a unified **stock-change history** in the `stock_mutations` + `stock_mutation_items` tables. Every recorded stock change is a mutation with a `type` (`StockMutationType`): `PURCHASE` (restock), `ADJUSTMENT` (stock opname), `UPDATE` (a product edit that changed stock). Each line snapshots the product (`sku`/`name`) plus `previous_stock`/`new_stock`/`quantity_change`; `unit_price`/`subtotal` are only set for PURCHASE. `stock_mutation_items.product_id` has no FK, so history survives a product edit/delete.
+
+- `POST /api/stock-mutations` — records a **PURCHASE** (restock): atomic two-pass (unknown product → 400, nothing changes), raises each product's `stock`, `total_amount` = Σ subtotals (unit price = provided, else `costPrice`, else 0).
+- **ADJUSTMENT** and **UPDATE** mutations are written by `ProductService` after it applies the change: `adjustStock` (stock opname) records one ADJUSTMENT mutation; `update` records an UPDATE mutation only when the edit actually changed `stock`. Both call `StockMutationService.recordStockChange`.
+- `GET /api/stock-mutations` lists all mutations (newest first, items omitted); `GET /api/stock-mutations/{id}` includes the line items.
 
 ### App settings
 
@@ -215,18 +223,18 @@ Basic per-merchant SKU catalog with simple inventory, scoped by `username`:
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/`, currently V1 init + V2 `deleted_at` + V3 `additional_info` + V4 `user_app_settings` + V5 profile picture + products/categories + purchases) at app startup; `ddl-auto: none`. Never edit an applied migration in place — add a new versioned one. (V5 was consolidated from three pre-production migrations; V1–V4 are in production and must never change.)
+Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup; `ddl-auto: none`. It is currently a **single `V1__init_schema.sql` baseline** holding the full schema — the production DB was rebuilt from scratch and reseeded, so the earlier V1–V6 were consolidated into one. Going forward, add new versioned migrations (`V2+`) for schema changes and never edit an applied migration in place (Flyway validates checksums against the live DB).
 
 Key tables:
 - `users` — credentials + profile + business info (with `initial_*` columns for reset); `account_type` is `MANAGED` (internal/seed) or `SELF_SERVICE` (self-registered); optional `profile_picture` (base64 TEXT, ≤1 MB decoded)
 - `user_banks` / `user_qris` — one row per username (unique FK)
-- `cuan_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
-- `cuan_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)
+- `bejo_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
+- `bejo_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)
 - `token_blacklist` — logged-out JWT jtis, purged hourly after expiry
 - `user_app_settings` — one row per username; monitored-apps map + notification keyword filters (JSON in TEXT columns) + blacklist/whitelist toggles + app config toggles (`qris_with_profile_picture`, `inventory_enabled`)
 - `product_categories` — per-merchant product categories; name unique per username
-- `products` — per-merchant SKUs; `sku` unique per username; nullable `category_id` FK; `stock` (INTEGER), `price`/`cost_price` (BIGINT IDR), optional base64 `photo` (TEXT, ≤500 KB decoded)
-- `purchases` / `purchase_items` — per-merchant restock orders; a purchase raises product stock and records line items (product snapshot + `unit_price`/`quantity`/`subtotal`); `total_amount` is the sum
+- `products` — per-merchant SKUs; `sku` unique per username; optional `short_description`; nullable `category_id` FK; `stock` (INTEGER), `price`/`cost_price` (BIGINT IDR), optional base64 `photo` (TEXT, ≤500 KB decoded)
+- `stock_mutations` / `stock_mutation_items` — per-merchant stock-change history (type `PURCHASE`/`ADJUSTMENT`/`UPDATE`); each line snapshots the product + `previous_stock`/`new_stock`/`quantity_change`, with `unit_price`/`subtotal` for purchases; `total_amount` is the purchase sum
 
 ## Tests
 

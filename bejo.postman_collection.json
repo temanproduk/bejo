@@ -598,7 +598,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sku\": \"KOPI-01\",\n  \"name\": \"Kopi Susu\",\n  \"categoryId\": 1,\n  \"price\": 18000,\n  \"costPrice\": 10000,\n  \"stock\": 25,\n  \"photo\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMFAgD5wKq2AAAAAElFTkSuQmCC\"\n}",
+              "raw": "{\n  \"sku\": \"KOPI-01\",\n  \"name\": \"Kopi Susu\",\n  \"shortDescription\": \"Kopi + susu segar\",\n  \"categoryId\": 1,\n  \"price\": 18000,\n  \"costPrice\": 10000,\n  \"stock\": 25,\n  \"photo\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMFAgD5wKq2AAAAAElFTkSuQmCC\"\n}",
               "options": { "raw": { "language": "json" } }
             },
             "url": {
@@ -681,14 +681,36 @@
             },
             "description": "Hard-deletes a product. Replace 1 with the product id."
           }
+        },
+        {
+          "name": "Bulk Stock Adjustment (opname)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"productId\": 1, \"stock\": 8 },\n    { \"productId\": 2, \"stock\": 12 }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/products/stock-adjustments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "products", "stock-adjustments"]
+            },
+            "description": "Stock opname: sets several products' stock to their newly counted quantities at once. Each item's stock is the new absolute count. Atomic — if any productId isn't the merchant's, the whole adjustment is rejected. Returns a variance report (previousStock/newStock/difference) per product."
+          }
         }
       ]
     },
     {
-      "name": "Purchases",
+      "name": "Stock Mutations",
       "item": [
         {
-          "name": "Create Purchase (restock)",
+          "name": "Record Purchase (restock)",
           "request": {
             "method": "POST",
             "header": [
@@ -702,15 +724,15 @@
               "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/purchases",
+              "raw": "{{baseUrl}}/api/stock-mutations",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "purchases"]
+              "path": ["api", "stock-mutations"]
             },
-            "description": "Records a purchase order (restock): raises the stock of every listed product at once and saves the purchase with line items. Atomic — if any productId isn't the merchant's, the whole purchase is rejected. Each line's unitPrice defaults to the product's costPrice when omitted. Returns HTTP 201 with totalAmount + item snapshots."
+            "description": "Records a PURCHASE (restock) stock mutation: raises the stock of every listed product at once and saves line items with before/after stock. Atomic — if any productId isn't the merchant's, the whole thing is rejected. unitPrice defaults to the product's costPrice when omitted. Returns HTTP 201 with type=PURCHASE, totalAmount + item snapshots."
           }
         },
         {
-          "name": "List Purchases",
+          "name": "List Stock Mutations (history)",
           "request": {
             "method": "GET",
             "header": [
@@ -718,15 +740,15 @@
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/purchases",
+              "raw": "{{baseUrl}}/api/stock-mutations",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "purchases"]
+              "path": ["api", "stock-mutations"]
             },
-            "description": "Lists purchase history newest-first. Line items are omitted from the list — use Get Purchase for them."
+            "description": "Stock-change history newest-first — all mutations (PURCHASE from restock, ADJUSTMENT from stock opname, UPDATE from a product edit that changed stock). Line items omitted; use Get Stock Mutation for detail."
           }
         },
         {
-          "name": "Get Purchase",
+          "name": "Get Stock Mutation",
           "request": {
             "method": "GET",
             "header": [
@@ -734,11 +756,11 @@
               { "key": "Authorization", "value": "Bearer {{token}}" }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/purchases/1",
+              "raw": "{{baseUrl}}/api/stock-mutations/1",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "purchases", "1"]
+              "path": ["api", "stock-mutations", "1"]
             },
-            "description": "Returns one purchase including its line items. Replace 1 with the purchase id."
+            "description": "Returns one stock mutation including its line items (previousStock/newStock/quantityChange). Replace 1 with the mutation id."
           }
         }
       ]

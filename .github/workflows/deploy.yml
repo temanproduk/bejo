@@ -86,6 +86,7 @@ jobs:
             --cpu=1 \
             --concurrency=80 \
             --cpu-throttling \
+            --cpu-boost \
             --allow-unauthenticated \
             --quiet
 

@@ -1,7 +1,7 @@
 package com.bejo.constant;
 
 /**
- * Canonical set of {@code cuan_history.type} values.
+ * Canonical set of {@code bejo_history.type} values.
  *
  * <ul>
  *   <li>{@link #MANUAL} — entered by the user by hand (defaults acquirer to {@link Acquirer#CASH})</li>

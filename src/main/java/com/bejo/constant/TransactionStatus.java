@@ -1,7 +1,7 @@
 package com.bejo.constant;
 
 /**
- * Canonical set of {@code cuan_history.status} values. The QRIS callback maps
+ * Canonical set of {@code bejo_history.status} values. The QRIS callback maps
  * SNAP status codes onto these (see {@code QrisCallbackService.mapStatus}).
  */
 public final class TransactionStatus {

@@ -105,6 +105,14 @@ public class GlobalExceptionHandler {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("Permintaan dengan Idempotency-Key ini sedang diproses, coba lagi sebentar"));
             }
+            if ("uq_product_sku".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponseDto.error("SKU sudah digunakan"));
+            }
+            if ("uq_category_name".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponseDto.error("Kategori sudah ada"));
+            }
         }
         log.error("Data integrity violation", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)

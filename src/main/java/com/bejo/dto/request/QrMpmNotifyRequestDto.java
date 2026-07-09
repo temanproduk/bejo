@@ -1,45 +1,33 @@
 package com.bejo.dto.request;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 
 /**
  * SNAP-like QR MPM payment notification (callback) from the QRIS merchant service.
  * Unknown fields are ignored so the contract tolerates payload additions.
+ *
+ * <p><b>PoC note:</b> the provider's callback is currently buggy and only sends a
+ * valid amount + status (reference numbers, merchantPan, transactionId all null), so
+ * validation is intentionally lenient — every field is optional. The service records
+ * the payment against the seed user regardless. Tighten this back up once the provider
+ * fixes the payload.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record QrMpmNotifyRequestDto(
-        @NotBlank(message = "originalReferenceNo wajib diisi")
         String originalReferenceNo,
-
-        @NotBlank(message = "originalPartnerReferenceNo wajib diisi")
         String originalPartnerReferenceNo,
-
-        @NotBlank(message = "latestTransactionStatus wajib diisi")
         String latestTransactionStatus,
-
-        @NotBlank(message = "transactionStatusDesc wajib diisi")
         String transactionStatusDesc,
-
         String customerNumber,
         String destinationNumber,
         String destinationAccountName,
         String externalStoreId,
-
-        @NotNull(message = "amount wajib diisi")
-        @Valid
         Amount amount,
-
         AdditionalInfo additionalInfo
 ) {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Amount(
-            @NotBlank(message = "amount.value wajib diisi")
             String value,
-
-            @NotBlank(message = "amount.currency wajib diisi")
             String currency
     ) {}
 

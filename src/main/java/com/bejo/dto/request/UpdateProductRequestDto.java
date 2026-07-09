@@ -15,6 +15,9 @@ public record UpdateProductRequestDto(
         @Size(max = 255, message = "name maksimal 255 karakter")
         String name,
 
+        @Size(max = 255, message = "shortDescription maksimal 255 karakter")
+        String shortDescription,
+
         Long categoryId,
 
         @PositiveOrZero(message = "price tidak boleh negatif")
@@ -30,7 +33,7 @@ public record UpdateProductRequestDto(
         String photo
 ) {
     public boolean isEmpty() {
-        return sku == null && name == null && categoryId == null && price == null
-                && costPrice == null && stock == null && photo == null;
+        return sku == null && name == null && shortDescription == null && categoryId == null
+                && price == null && costPrice == null && stock == null && photo == null;
     }
 }

@@ -1,8 +1,12 @@
 package com.bejo.service;
 
+import com.bejo.constant.StockMutationType;
 import com.bejo.dto.request.CreateProductRequestDto;
+import com.bejo.dto.request.StockAdjustmentItemDto;
+import com.bejo.dto.request.StockAdjustmentRequestDto;
 import com.bejo.dto.request.UpdateProductRequestDto;
 import com.bejo.dto.response.ProductResponseDto;
+import com.bejo.dto.response.StockAdjustmentResultResponseDto;
 import com.bejo.entity.Product;
 import com.bejo.entity.ProductCategory;
 import com.bejo.exception.ResourceNotFoundException;
@@ -13,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -34,11 +39,14 @@ public class ProductService {
 
     private final ProductRepository productRepository;
     private final ProductCategoryRepository categoryRepository;
+    private final StockMutationService stockMutationService;
 
     public ProductService(ProductRepository productRepository,
-                          ProductCategoryRepository categoryRepository) {
+                          ProductCategoryRepository categoryRepository,
+                          StockMutationService stockMutationService) {
         this.productRepository = productRepository;
         this.categoryRepository = categoryRepository;
+        this.stockMutationService = stockMutationService;
     }
 
     @Transactional
@@ -54,6 +62,7 @@ public class ProductService {
         p.setUsername(username);
         p.setSku(sku);
         p.setName(request.name().trim());
+        p.setShortDescription(request.shortDescription());
         p.setCategoryId(request.categoryId());
         p.setPrice(request.price() != null ? request.price() : 0L);
         p.setCostPrice(request.costPrice());
@@ -106,20 +115,66 @@ public class ProductService {
             if (request.name().isBlank()) throw new IllegalArgumentException("name tidak boleh kosong");
             p.setName(request.name().trim());
         }
+        if (request.shortDescription() != null) p.setShortDescription(request.shortDescription());
         if (request.categoryId() != null) {
             resolveCategoryName(username, request.categoryId()); // validates ownership
             p.setCategoryId(request.categoryId());
         }
         if (request.price() != null) p.setPrice(request.price());
         if (request.costPrice() != null) p.setCostPrice(request.costPrice());
+        int previousStock = p.getStock();
+        boolean stockChanged = request.stock() != null && request.stock() != previousStock;
         if (request.stock() != null) p.setStock(request.stock());
         if (request.photo() != null) {
             validatePhoto(request.photo());
             p.setPhoto(request.photo());
         }
         productRepository.save(p);
+        // Record a stock mutation only when the edit actually changed the stock
+        if (stockChanged) {
+            stockMutationService.recordStockChange(username, StockMutationType.UPDATE, "Product update",
+                    List.of(new StockMutationService.StockChangeLine(p, previousStock, p.getStock())));
+        }
         log.info("[PRODUCT] Updated id={} for username={}", id, username);
         return toDto(p, categoryName(username, p.getCategoryId()), true);
+    }
+
+    /**
+     * Bulk stock adjustment (stock opname): sets each listed product's stock to its new
+     * counted quantity. Atomic and two-pass — pass 1 resolves every line to one of the
+     * merchant's own products (unknown → 400, nothing changes); pass 2 applies the new
+     * counts and returns a variance report (previous → new → difference).
+     */
+    @Transactional
+    public StockAdjustmentResultResponseDto adjustStock(String username, StockAdjustmentRequestDto request) {
+        List<StockAdjustmentItemDto> items = request.items();
+        log.info("[PRODUCT] Stock adjustment for username={} lines={}", username, items.size());
+
+        // Pass 1 — resolve every line to an owned product before changing anything
+        List<Product> products = new ArrayList<>();
+        for (StockAdjustmentItemDto item : items) {
+            products.add(productRepository.findByIdAndUsername(item.productId(), username)
+                    .orElseThrow(() -> new IllegalArgumentException("Produk tidak ditemukan: " + item.productId())));
+        }
+
+        // Pass 2 — apply the new counts, record the mutation, build the variance report
+        List<StockAdjustmentResultResponseDto.ItemResult> results = new ArrayList<>();
+        List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            Product product = products.get(i);
+            int previous = product.getStock();
+            int counted = items.get(i).stock();
+            product.setStock(counted);
+            productRepository.save(product);
+            changes.add(new StockMutationService.StockChangeLine(product, previous, counted));
+            results.add(new StockAdjustmentResultResponseDto.ItemResult(
+                    product.getId(), product.getSku(), product.getName(),
+                    previous, counted, counted - previous));
+        }
+        stockMutationService.recordStockChange(username, StockMutationType.ADJUSTMENT, "Stock opname", changes);
+
+        log.info("[PRODUCT] Stock adjustment done for username={} products={}", username, results.size());
+        return new StockAdjustmentResultResponseDto(results.size(), results);
     }
 
     @Transactional
@@ -164,7 +219,7 @@ public class ProductService {
 
     private ProductResponseDto toDto(Product p, String categoryName, boolean includePhoto) {
         return new ProductResponseDto(
-                p.getId(), p.getSku(), p.getName(),
+                p.getId(), p.getSku(), p.getName(), p.getShortDescription(),
                 p.getCategoryId(), categoryName,
                 p.getPrice(), p.getCostPrice(), p.getStock(),
                 includePhoto ? p.getPhoto() : null,

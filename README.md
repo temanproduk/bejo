@@ -69,7 +69,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [Devices](#devices)
   - [User profile](#user-profile)
   - [Products & categories](#products--categories)
-  - [Purchases (restock)](#purchases-restock)
+  - [Stock mutations](#stock-mutations)
   - [App settings](#app-settings)
   - [QRIS](#qris)
   - [QRIS callback](#qris-callback)
@@ -281,7 +281,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
 }
 ```
 
-**Errors:** `400 Invalid credentials`, `400 username/deviceId is required`
+**Errors:** `400 Invalid credentials`, `400 username is required`, `400 deviceId is required` (field validation)
 
 ---
 
@@ -773,6 +773,7 @@ Deletes the category and **un-categorizes** its products (their `categoryId` bec
 |---|---|---|
 | `sku` | yes | Merchant product code, unique per merchant, max 64 chars |
 | `name` | yes | Max 255 chars |
+| `shortDescription` | no | Short description, max 255 chars |
 | `categoryId` | no | Must be one of the merchant's own categories |
 | `price` | no | Selling price in IDR, ≥ 0 (default 0) |
 | `costPrice` | no | Purchase cost in IDR, ≥ 0 |
@@ -786,7 +787,7 @@ Deletes the category and **un-categorizes** its products (their `categoryId` bec
   "status": 1,
   "message": "Produk berhasil dibuat",
   "data": {
-    "id": 12, "sku": "KOPI-01", "name": "Kopi Susu",
+    "id": 12, "sku": "KOPI-01", "name": "Kopi Susu", "shortDescription": "Kopi + susu segar",
     "categoryId": 3, "categoryName": "Minuman",
     "price": 18000, "costPrice": 10000, "stock": 25,
     "photo": "<base64>", "createdAt": "...", "updatedAt": "..."
@@ -806,7 +807,7 @@ Returns the full product **including `photo`**. `404` if not found / not owned.
 
 #### `PATCH /api/products/{id}` — Update product
 
-Partial update — any subset of `sku`, `name`, `categoryId`, `price`, `costPrice`, `stock`, `photo`; a `null`/omitted field is left unchanged. Managing inventory = send `{ "stock": 40 }`. Returns the updated product.
+Partial update — any subset of `sku`, `name`, `shortDescription`, `categoryId`, `price`, `costPrice`, `stock`, `photo`; a `null`/omitted field is left unchanged. Managing inventory = send `{ "stock": 40 }`. Returns the updated product.
 
 **Errors:** `400 Tidak ada field yang diubah`, `400 SKU sudah digunakan: <sku>`, `400 Kategori tidak ditemukan: <id>`, `404 Product not found`
 
@@ -814,15 +815,62 @@ Partial update — any subset of `sku`, `name`, `categoryId`, `price`, `costPric
 
 Hard-deletes the product. **Success — HTTP 200:** `{ "status": 1, "message": "Produk berhasil dihapus" }`
 
+#### `POST /api/products/stock-adjustments` — Bulk stock adjustment (stock opname)
+
+Sets several products' stock to their **newly counted quantities** at once — for stock opname, when the physical count differs from the recorded stock. **Atomic:** if any line references a product the merchant doesn't own, the whole adjustment is rejected and no stock changes. Returns a **variance report**.
+
+**Request body**
+
+| Field | Required | Description |
+|---|---|---|
+| `items` | yes | 1–500 lines |
+| `items[].productId` | yes | One of the merchant's products |
+| `items[].stock` | yes | New absolute counted quantity, ≥ 0 |
+
+```json
+{
+  "items": [
+    { "productId": 12, "stock": 8 },
+    { "productId": 15, "stock": 12 }
+  ]
+}
+```
+
+**Success — HTTP 200** — each product's stock is set, with the variance (`difference = newStock − previousStock`, negative = shrinkage):
+
+```json
+{
+  "status": 1,
+  "message": "Penyesuaian stok berhasil",
+  "data": {
+    "total": 2,
+    "items": [
+      { "productId": 12, "sku": "KOPI-01", "name": "Kopi Susu", "previousStock": 10, "newStock": 8,  "difference": -2 },
+      { "productId": 15, "sku": "TEH-01",  "name": "Teh Manis",  "previousStock": 5,  "newStock": 12, "difference": 7 }
+    ]
+  }
+}
+```
+
+**Errors:** `400 items tidak boleh kosong`, `400 stock tidak boleh negatif`, `400 Produk tidak ditemukan: <id>`
+
 ---
 
-### Purchases (restock)
+### Stock mutations
 
-Record a **purchase order** — buying stock from a supplier. One purchase **raises the stock of several products at once** and is saved with its line items. All endpoints require JWT, scoped to the merchant.
+The unified **stock-change history**. Every change to a product's stock is recorded as a *mutation* with a `type`:
 
-#### `POST /api/purchases` — Record a purchase
+| `type` | Source | Priced? |
+|---|---|---|
+| `PURCHASE` | Restock via `POST /api/stock-mutations` | yes |
+| `ADJUSTMENT` | Stock opname via `POST /api/products/stock-adjustments` | no |
+| `UPDATE` | A `PATCH /api/products/{id}` that changed `stock` | no |
 
-**Atomic:** if any line references a product the merchant doesn't own, the whole purchase is rejected and no stock changes.
+`ADJUSTMENT` and `UPDATE` mutations are created automatically by those product endpoints; this resource is where you **record a purchase** and **read the whole history**. All endpoints require JWT, scoped to the merchant. Each line snapshots the product and the stock before/after (`previousStock` → `newStock`, `quantityChange`).
+
+#### `POST /api/stock-mutations` — Record a purchase (restock)
+
+Buying stock from a supplier: **raises the stock of several products at once** (a `PURCHASE` mutation). **Atomic** — if any line references a product the merchant doesn't own, the whole thing is rejected and no stock changes.
 
 **Request body**
 
@@ -844,17 +892,17 @@ Record a **purchase order** — buying stock from a supplier. One purchase **rai
 }
 ```
 
-**Success — HTTP 201** — the saved purchase with line snapshots; each product's `stock` has been raised by its quantity:
+**Success — HTTP 201** — the saved mutation with line snapshots; each product's `stock` has been raised by its quantity:
 
 ```json
 {
   "status": 1,
   "message": "Pembelian berhasil dicatat",
   "data": {
-    "id": 7, "totalAmount": 145000, "note": "restock pagi", "createdAt": "...",
+    "id": 7, "type": "PURCHASE", "totalAmount": 145000, "note": "restock pagi", "createdAt": "...",
     "items": [
-      { "productId": 12, "sku": "KOPI-01", "name": "Kopi Susu", "unitPrice": 5000, "quantity": 20, "subtotal": 100000 },
-      { "productId": 15, "sku": "TEH-01",  "name": "Teh Manis",  "unitPrice": 9000, "quantity": 5,  "subtotal": 45000 }
+      { "productId": 12, "sku": "KOPI-01", "name": "Kopi Susu", "previousStock": 10, "newStock": 30, "quantityChange": 20, "unitPrice": 5000, "subtotal": 100000 },
+      { "productId": 15, "sku": "TEH-01",  "name": "Teh Manis",  "previousStock": 3,  "newStock": 8,  "quantityChange": 5,  "unitPrice": 9000, "subtotal": 45000 }
     ]
   }
 }
@@ -862,13 +910,13 @@ Record a **purchase order** — buying stock from a supplier. One purchase **rai
 
 **Errors:** `400 items tidak boleh kosong`, `400 quantity harus lebih dari 0`, `400 Produk tidak ditemukan: <id>`
 
-#### `GET /api/purchases` — Purchase history
+#### `GET /api/stock-mutations` — Stock-change history
 
-Returns purchases newest-first (`data` array + `count`). **Line items are omitted** from the list; fetch the detail for them.
+Returns all mutations (PURCHASE/ADJUSTMENT/UPDATE) newest-first (`data` array + `count`). **Line items are omitted** from the list; fetch the detail for them. For non-purchase mutations `unitPrice`/`subtotal` are absent and `totalAmount` is 0.
 
-#### `GET /api/purchases/{id}` — Purchase detail
+#### `GET /api/stock-mutations/{id}` — Stock mutation detail
 
-Returns one purchase **including its `items`**. `404` if not found / not owned.
+Returns one mutation **including its `items`** (each with `previousStock`/`newStock`/`quantityChange`). `404` if not found / not owned.
 
 ---
 
@@ -1026,12 +1074,14 @@ Inbound QRIS payment notification (SNAP-like QR MPM notify) from the QRIS mercha
 
 This endpoint does **not** use the standard `{ status, message, data }` envelope — it returns the callback contract's own acknowledgment shape.
 
+> **⚠️ PoC mode (temporary).** The provider's callback is currently buggy and only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So right now the endpoint is **lenient**: all body fields and the `X-TIMESTAMP` header are optional, and it **cannot** route by NMID or dedupe by reference. Instead, **every callback records a new transaction against the seed user** (`app.callback.default-username`) and pushes to *its* devices. NMID routing + idempotency will be restored once the provider fixes the payload.
+
 **Headers**
 
 | Header | Mandatory | Description |
 |---|---|---|
 | `Content-Type: application/json` | ✅ | |
-| `X-TIMESTAMP` | ✅ | ISO-8601 transaction time; accepts an offset (`2020-12-23T08:46:11+07:00`), `Z`, or none. Recorded as the transaction date; an *unparseable* value falls back to now, but a *missing* header is a `400`. |
+| `X-TIMESTAMP` | optional | ISO-8601 transaction time (offset / `Z` / none). Recorded as the transaction date; missing or unparseable falls back to now. |
 
 **Request body** (unknown fields are ignored)
 
@@ -1053,15 +1103,16 @@ This endpoint does **not** use the standard `{ status, message, data }` envelope
 }
 ```
 
-Required fields: `originalReferenceNo`, `originalPartnerReferenceNo`, `latestTransactionStatus`, `transactionStatusDesc`, `amount.value`, `amount.currency`.
+All fields are optional in PoC mode; only `amount.value` (when present) and `latestTransactionStatus` are used.
 
-**Behavior**
+**Behavior (PoC)**
 
-- **Merchant routing** — the payment is attributed to the Bejo user whose `nmid` equals the payload's `merchantPan` (falling back to `destinationNumber`). If none matches, it falls back to the configured default user (`app.callback.default-username`, default `admin`); if that user doesn't exist either, returns `404`.
-- **Idempotency** — keyed on `originalReferenceNo` + `originalPartnerReferenceNo`; a duplicate delivery returns the existing transaction without inserting again.
-- **Status mapping** — `00`→SUCCESS, `01`→PENDING, `02`→FAILED, `03`→REFUNDED, `04`→CANCELLED, `05`→EXPIRED, else UNKNOWN.
-- **Records a `MANAGED` transaction** and saves the full payload JSON to its `additionalInfo` (a general-purpose column, added in migration V3).
-- **Sends an FCM push** to all of the merchant's registered devices (best-effort — a push failure never fails the callback; skipped if Firebase isn't configured).
+- **Attribution** — every callback is recorded against the seed user (`app.callback.default-username`); if that user doesn't exist, returns `404`.
+- **No idempotency** — there's no reference to dedupe on, so each callback creates a new transaction (generated `transactionId`, null idempotency key).
+- **Status mapping** — `00`→SUCCESS, `01`→PENDING, `02`→FAILED, `03`→REFUNDED, `04`→CANCELLED, `05`→EXPIRED, else/absent UNKNOWN.
+- **Amount** — parsed from `amount.value`; missing/invalid → `0` (never fails the callback).
+- **Records a `MANAGED` transaction** and saves the full payload JSON to its `additionalInfo`.
+- **Sends an FCM push** to all of the seed user's registered devices (best-effort — a push failure never fails the callback; skipped if Firebase isn't configured).
 
 **Success — HTTP 200** (acknowledgment)
 
@@ -1079,7 +1130,7 @@ Required fields: `originalReferenceNo`, `originalPartnerReferenceNo`, `latestTra
 
 `status` is the **acknowledgment** status (processing succeeded) — always `SUCCESS` on `200`, independent of the payment's own status, which is derived from `latestTransactionStatus` and stored on the transaction.
 
-**Errors:** `400` invalid body, missing required field, or missing `X-TIMESTAMP`; `404` no merchant match and no default user
+**Errors:** `404` seed user (`app.callback.default-username`) not found
 
 ---
 

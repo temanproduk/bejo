@@ -1,7 +1,7 @@
 package com.bejo.constant;
 
 /**
- * Well-known {@code cuan_history.acquirer} values. Acquirer is otherwise free-form
+ * Well-known {@code bejo_history.acquirer} values. Acquirer is otherwise free-form
  * (it can name any payment channel), but these two are used as defaults:
  *
  * <ul>

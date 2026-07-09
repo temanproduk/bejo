@@ -20,3 +20,5 @@ app:
     expiration-ms: 86400000
   seed:
     password: ""
+  callback:
+    default-username: cb_seed

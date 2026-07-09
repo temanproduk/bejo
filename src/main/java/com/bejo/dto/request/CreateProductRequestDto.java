@@ -19,6 +19,9 @@ public record CreateProductRequestDto(
         @Size(max = 255, message = "name maksimal 255 karakter")
         String name,
 
+        @Size(max = 255, message = "shortDescription maksimal 255 karakter")
+        String shortDescription,
+
         Long categoryId,
 
         @PositiveOrZero(message = "price tidak boleh negatif")

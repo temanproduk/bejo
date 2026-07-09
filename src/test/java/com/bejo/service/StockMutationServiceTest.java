@@ -2,16 +2,17 @@ package com.bejo.service;
 
 import com.bejo.dto.request.CreatePurchaseRequestDto;
 import com.bejo.dto.request.PurchaseItemRequestDto;
-import com.bejo.dto.response.PurchaseResponseDto;
+import com.bejo.dto.response.StockMutationResponseDto;
 import com.bejo.entity.Product;
-import com.bejo.entity.Purchase;
-import com.bejo.entity.PurchaseItem;
+import com.bejo.entity.StockMutation;
+import com.bejo.entity.StockMutationItem;
 import com.bejo.repository.ProductRepository;
-import com.bejo.repository.PurchaseItemRepository;
-import com.bejo.repository.PurchaseRepository;
+import com.bejo.repository.StockMutationItemRepository;
+import com.bejo.repository.StockMutationRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -28,31 +29,31 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class PurchaseServiceTest {
+class StockMutationServiceTest {
 
-    @Mock private PurchaseRepository purchaseRepository;
-    @Mock private PurchaseItemRepository purchaseItemRepository;
+    @Mock private StockMutationRepository stockMutationRepository;
+    @Mock private StockMutationItemRepository stockMutationItemRepository;
     @Mock private ProductRepository productRepository;
 
-    private PurchaseService service;
+    private StockMutationService service;
 
     @BeforeEach
     void setUp() {
-        service = new PurchaseService(purchaseRepository, purchaseItemRepository, productRepository);
-        // Purchase gets an id on save (needed for line items). Lenient: the reject
+        service = new StockMutationService(stockMutationRepository, stockMutationItemRepository, productRepository);
+        // StockMutation gets an id on save (needed for line items). Lenient: the reject
         // test never reaches the persist step.
-        lenient().when(purchaseRepository.save(any(Purchase.class))).thenAnswer(inv -> {
-            Purchase p = inv.getArgument(0);
+        lenient().when(stockMutationRepository.save(any(StockMutation.class))).thenAnswer(inv -> {
+            StockMutation p = inv.getArgument(0);
             if (p.getId() == null) {
                 try {
-                    var f = Purchase.class.getDeclaredField("id");
+                    var f = StockMutation.class.getDeclaredField("id");
                     f.setAccessible(true);
                     f.set(p, 100L);
                 } catch (ReflectiveOperationException ignored) { }
             }
             return p;
         });
-        lenient().when(purchaseItemRepository.save(any(PurchaseItem.class))).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(stockMutationItemRepository.save(any(StockMutationItem.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     private Product product(long id, String sku, Long costPrice, int stock) {
@@ -81,7 +82,7 @@ class PurchaseServiceTest {
                 new PurchaseItemRequestDto(1L, 20, null),      // 20 * 5000 (cost) = 100000
                 new PurchaseItemRequestDto(2L, 5, 9_000L)));    // 5 * 9000 (override) = 45000
 
-        PurchaseResponseDto data = service.create("alice", request);
+        StockMutationResponseDto data = service.create("alice", request);
 
         // Stock raised
         assertThat(a.getStock()).isEqualTo(30);
@@ -89,11 +90,34 @@ class PurchaseServiceTest {
         verify(productRepository, times(2)).save(any(Product.class));
 
         // Total = 100000 + 45000
+        assertThat(data.type()).isEqualTo("PURCHASE");
         assertThat(data.totalAmount()).isEqualTo(145_000L);
         assertThat(data.items()).hasSize(2);
         assertThat(data.items().get(0).unitPrice()).isEqualTo(5_000L);   // fell back to cost
         assertThat(data.items().get(0).subtotal()).isEqualTo(100_000L);
+        assertThat(data.items().get(0).previousStock()).isEqualTo(10);
+        assertThat(data.items().get(0).newStock()).isEqualTo(30);
+        assertThat(data.items().get(0).quantityChange()).isEqualTo(20);
         assertThat(data.items().get(1).unitPrice()).isEqualTo(9_000L);   // explicit override
+    }
+
+    @Test
+    void recordStockChangePersistsAdjustmentMutationWithoutPrices() {
+        Product a = product(1L, "A", null, 8);
+
+        service.recordStockChange("alice", "ADJUSTMENT", "Stock opname",
+                List.of(new StockMutationService.StockChangeLine(a, 5, 8)));
+
+        ArgumentCaptor<StockMutation> mc = ArgumentCaptor.forClass(StockMutation.class);
+        verify(stockMutationRepository).save(mc.capture());
+        assertThat(mc.getValue().getType()).isEqualTo("ADJUSTMENT");
+
+        ArgumentCaptor<StockMutationItem> ic = ArgumentCaptor.forClass(StockMutationItem.class);
+        verify(stockMutationItemRepository).save(ic.capture());
+        assertThat(ic.getValue().getPreviousStock()).isEqualTo(5);
+        assertThat(ic.getValue().getNewStock()).isEqualTo(8);
+        assertThat(ic.getValue().getQuantityChange()).isEqualTo(3);
+        assertThat(ic.getValue().getUnitPrice()).isNull();   // non-purchase mutations aren't priced
     }
 
     @Test
@@ -102,7 +126,7 @@ class PurchaseServiceTest {
         when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
 
         var request = new CreatePurchaseRequestDto(null, List.of(new PurchaseItemRequestDto(1L, 4, null)));
-        PurchaseResponseDto data = service.create("alice", request);
+        StockMutationResponseDto data = service.create("alice", request);
 
         assertThat(a.getStock()).isEqualTo(4);
         assertThat(data.totalAmount()).isZero();
@@ -126,7 +150,7 @@ class PurchaseServiceTest {
         // No stock change and nothing persisted (validation happens in pass 1)
         assertThat(a.getStock()).isEqualTo(10);
         verify(productRepository, never()).save(any());
-        verify(purchaseRepository, never()).save(any());
-        verify(purchaseItemRepository, never()).save(any());
+        verify(stockMutationRepository, never()).save(any());
+        verify(stockMutationItemRepository, never()).save(any());
     }
 }

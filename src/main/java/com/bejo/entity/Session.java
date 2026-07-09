@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "cuan_sessions",
+@Table(name = "bejo_sessions",
         uniqueConstraints = @UniqueConstraint(columnNames = {"username", "device_id"}))
 public class Session {
 
