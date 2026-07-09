@@ -7,6 +7,7 @@ import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.dto.response.BulkTransactionResultResponseDto;
 import com.bejo.dto.response.TransactionCreatedResponseDto;
 import com.bejo.dto.response.TransactionResponseDto;
+import com.bejo.dto.response.TransactionSummaryResponseDto;
 import com.bejo.service.TransactionService;
 import com.bejo.util.Pagination;
 import jakarta.validation.Valid;
@@ -66,6 +67,18 @@ public class TransactionController {
             Authentication authentication) {
         transactionService.delete(authentication.getName(), transactionId);
         return ResponseEntity.ok(ApiResponseDto.success("Transaksi berhasil dihapus", null));
+    }
+
+    // Dashboard totals (amount + count) for today / yesterday / this month. Needed
+    // because the history list is paginated, so the client can't sum it locally.
+    // Optional `date` = the client's local "today" (for timezone correctness);
+    // defaults to the server date when omitted.
+    @GetMapping("/summary")
+    public ResponseEntity<ApiResponseDto<TransactionSummaryResponseDto>> getSummary(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            Authentication authentication) {
+        TransactionSummaryResponseDto data = transactionService.summary(authentication.getName(), date);
+        return ResponseEntity.ok(ApiResponseDto.success(data));
     }
 
     // Pagination is optional: omit page/size to get page 1 of 50. The response

@@ -10,6 +10,7 @@ import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.TransactionRepository;
 import com.bejo.repository.UserRepository;
+import com.bejo.util.AppTime;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
@@ -170,10 +171,12 @@ public class QrisCallbackService {
 
     // Accepts ISO-8601 with offset (2020-12-23T08:46:11+07:00), with Z, or without
     // a zone; falls back to now() so a missing/malformed header never drops the callback.
+    // When an offset is present it's normalized to WIB wall-clock (so a `Z`/UTC stamp is
+    // shifted +7), keeping stored transaction_date consistent with the app timezone.
     private LocalDateTime parseTimestamp(String xTimestamp) {
         if (xTimestamp == null || xTimestamp.isBlank()) return LocalDateTime.now();
         try {
-            return OffsetDateTime.parse(xTimestamp).toLocalDateTime();
+            return OffsetDateTime.parse(xTimestamp).atZoneSameInstant(AppTime.ZONE).toLocalDateTime();
         } catch (DateTimeParseException withOffset) {
             try {
                 return LocalDateTime.parse(xTimestamp);

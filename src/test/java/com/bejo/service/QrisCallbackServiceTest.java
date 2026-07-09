@@ -90,7 +90,22 @@ class QrisCallbackServiceTest {
         assertThat(t.getAmount()).isEqualTo(100L);
         assertThat(t.getStatus()).isEqualTo("SUCCESS");
         assertThat(t.getType()).isEqualTo("MANAGED");
+        // +07:00 is already WIB — wall-clock stays as sent
+        assertThat(t.getTransactionDate()).isEqualTo(java.time.LocalDateTime.of(2020, 12, 23, 8, 46, 11));
         assertThat(res.status()).isEqualTo("SUCCESS");             // ack, not payment status
+    }
+
+    @Test
+    void normalizesUtcTimestampToWibWallClock() {
+        seedUserExists();
+
+        // 01:46:11Z is 08:46:11 in WIB (UTC+7) — the stored wall-clock must be shifted
+        service.processNotify(request("00"), "2020-12-23T01:46:11Z");
+
+        ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(captor.capture());
+        assertThat(captor.getValue().getTransactionDate())
+                .isEqualTo(java.time.LocalDateTime.of(2020, 12, 23, 8, 46, 11));
     }
 
     @Test

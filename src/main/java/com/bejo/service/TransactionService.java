@@ -10,10 +10,12 @@ import com.bejo.dto.request.UpdateTransactionRequestDto;
 import com.bejo.dto.response.BulkTransactionResultResponseDto;
 import com.bejo.dto.response.TransactionCreatedResponseDto;
 import com.bejo.dto.response.TransactionResponseDto;
+import com.bejo.dto.response.TransactionSummaryResponseDto;
 import com.bejo.entity.Transaction;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.TransactionRepository;
 import com.bejo.repository.UserRepository;
+import com.bejo.util.AppTime;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.validation.ConstraintViolation;
@@ -88,6 +90,32 @@ public class TransactionService {
                 result.getNumberOfElements(), result.getTotalElements(),
                 result.getNumber() + 1, result.getTotalPages(), username);
         return result;
+    }
+
+    /**
+     * Dashboard totals for {@code referenceDate} (the client's "today", or the server
+     * date when null): summed amount + count for that day, the day before, and the
+     * whole calendar month it falls in. Ranges are half-open [start, next) on
+     * {@code transactionDate} and exclude soft-deleted rows.
+     */
+    public TransactionSummaryResponseDto summary(String username, LocalDate referenceDate) {
+        LocalDate today = referenceDate != null ? referenceDate : LocalDate.now(AppTime.ZONE);
+        log.info("[SUMMARY] username={} date={}", username, today);
+
+        LocalDate yesterday = today.minusDays(1);
+        LocalDate monthStart = today.withDayOfMonth(1);
+        LocalDate nextMonth = monthStart.plusMonths(1);
+
+        var todaySum = period(username, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+        var yesterdaySum = period(username, yesterday.atStartOfDay(), today.atStartOfDay());
+        var monthSum = period(username, monthStart.atStartOfDay(), nextMonth.atStartOfDay());
+
+        return new TransactionSummaryResponseDto(today, todaySum, yesterdaySum, monthSum);
+    }
+
+    private TransactionSummaryResponseDto.PeriodSummary period(String username, LocalDateTime start, LocalDateTime end) {
+        var agg = transactionRepository.sumBetween(username, start, end);
+        return new TransactionSummaryResponseDto.PeriodSummary(agg.getTotalAmount(), agg.getCount());
     }
 
     @Transactional

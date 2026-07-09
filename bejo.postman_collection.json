@@ -202,6 +202,25 @@
           }
         },
         {
+          "name": "Get Transaction Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactions", "summary"],
+              "query": [
+                { "key": "date", "value": "2026-07-15", "description": "The client's local today (yyyy-MM-dd). Optional; drives the today/yesterday/month buckets. Defaults to the server date.", "disabled": true }
+              ]
+            },
+            "description": "Dashboard totals: summed amount + count for today, yesterday, and the current calendar month. Use this instead of summing the (now paginated) history.\n\nResponse data: { date, today: {totalAmount, count}, yesterday: {...}, month: {...} }. Empty ranges return zeros. Pass ?date= to align the buckets with the merchant's timezone."
+          }
+        },
+        {
           "name": "Add Transaction (Manual)",
           "request": {
             "method": "POST",

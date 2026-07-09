@@ -81,6 +81,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti); optional body `{deviceId}` clears that device's FCM token |
 | `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive); paginated (`page`/`size`) |
+| `GET` | `/api/transactions/summary` | JWT | Dashboard totals (summed amount + count) for today / yesterday / this month; optional `date` = client's local "today" (defaults to server date) |
 | `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header |
 | `POST` | `/api/transactions/bulk` | JWT | Bulk-sync MANUAL/PARSED transactions (offline entry); per-item `idempotencyKey`, partial-success result |
 | `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable) |
@@ -212,6 +213,10 @@ Basic per-merchant SKU catalog with simple inventory, scoped by `username`:
 - **App config toggles** — `qrisWithProfilePicture` (compose the QRIS image onto the profile picture) and `inventoryEnabled` (enable inventory management), both boolean columns defaulting false, each set via its own `PUT` (`{enabled}`).
 
 `GET /api/app-settings` returns defaults (empty lists/map, blacklist on, whitelist off, both toggles off) when no row exists yet — it never 404s. `PUT /api/app-settings/monitored-apps` replaces the whole map; `PUT /api/app-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
+
+### Timezone
+
+The whole app is pinned to **WIB (`Asia/Jakarta`, UTC+7)**: `BejoApplication.main` calls `TimeZone.setDefault(AppTime.ZONE)` before Spring starts, so every `LocalDate/LocalDateTime.now()` (transaction/session times, soft-delete stamps, the summary buckets) is Jakarta wall-clock regardless of the container zone (Cloud Run is UTC). `TIMESTAMP` columns are zoneless wall-clock, so this only affects new `now()` values, never reinterprets stored rows. `util/AppTime.ZONE` is the single source of truth — reference it where the zone must be explicit (e.g. `TransactionService.summary` default, `QrisCallbackService` normalizes an offset-bearing `X-TIMESTAMP` to WIB via `atZoneSameInstant`). Jackson also serializes dates in this zone (`spring.jackson.time-zone`).
 
 ### Observability
 

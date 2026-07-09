@@ -345,6 +345,34 @@ Returns the authenticated user's transaction history, newest first. Soft-deleted
 
 ---
 
+#### `GET /api/transactions/summary`
+
+Aggregated totals for the merchant dashboard — the summed `amount` and transaction `count` for **today**, **yesterday**, and the **current calendar month**. Introduced because the history endpoint is now paginated, so the client can no longer sum a full page. Soft-deleted transactions are excluded.
+
+**Query parameters**
+
+| Parameter | Format | Description |
+|---|---|---|
+| `date` | `yyyy-MM-dd` | The client's local "today" (optional). Pass it so the day/month buckets match the merchant's device; defaults to the current date in the app timezone (**WIB, UTC+7**) when omitted. |
+
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "data": {
+    "date": "2026-07-15",
+    "today": { "totalAmount": 25000, "count": 2 },
+    "yesterday": { "totalAmount": 7000, "count": 1 },
+    "month": { "totalAmount": 37000, "count": 4 }
+  }
+}
+```
+
+`month` covers the whole calendar month that `date` falls in (and includes `today`/`yesterday` when they're in that month). Every period is always present; empty ranges return `totalAmount: 0, count: 0`.
+
+---
+
 #### `POST /api/transactions`
 
 Adds a transaction manually or from an external acquirer. The server generates `transactionId`.

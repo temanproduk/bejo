@@ -80,6 +80,20 @@ class ApiIntegrationTest {
         return login(username, "password1", "device-" + username);
     }
 
+    // Posts a MANUAL transaction with an explicit date + amount; used by summary tests.
+    private void addManualTxn(String token, String idempotencyKey, String transactionDate, int amount) throws Exception {
+        mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "type", "MANUAL",
+                                "transactionDate", transactionDate,
+                                "amount", amount))))
+                .andExpect(status().isCreated());
+    }
+
     // ---------- API token filter ----------
 
     @Test
@@ -304,6 +318,48 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.page").value(2))
                 .andExpect(jsonPath("$.total").value(3));
+    }
+
+    @Test
+    void transactionSummaryReturnsTodayYesterdayAndMonthSums() throws Exception {
+        String token = registerAndLogin("txn_summary1");
+        // Reference "today" — use a fixed date so the buckets are deterministic
+        String today = "2026-07-15";
+
+        // 2 today (10k + 15k), 1 yesterday (7k), 1 earlier same month (5k), 1 previous month (99k)
+        addManualTxn(token, "sum-1", "2026-07-15T09:00:00", 10000);
+        addManualTxn(token, "sum-2", "2026-07-15T18:30:00", 15000);
+        addManualTxn(token, "sum-3", "2026-07-14T12:00:00", 7000);
+        addManualTxn(token, "sum-4", "2026-07-03T08:00:00", 5000);
+        addManualTxn(token, "sum-5", "2026-06-30T20:00:00", 99000);
+
+        mockMvc.perform(get("/api/transactions/summary")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .param("date", today))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.date").value(today))
+                .andExpect(jsonPath("$.data.today.totalAmount").value(25000))
+                .andExpect(jsonPath("$.data.today.count").value(2))
+                .andExpect(jsonPath("$.data.yesterday.totalAmount").value(7000))
+                .andExpect(jsonPath("$.data.yesterday.count").value(1))
+                // July only: 10k + 15k + 7k + 5k = 37k across 4 txns (June's 99k excluded)
+                .andExpect(jsonPath("$.data.month.totalAmount").value(37000))
+                .andExpect(jsonPath("$.data.month.count").value(4));
+    }
+
+    @Test
+    void transactionSummaryIsZeroWhenNoTransactions() throws Exception {
+        String token = registerAndLogin("txn_summary2");
+
+        mockMvc.perform(get("/api/transactions/summary")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .param("date", "2026-07-15"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.today.totalAmount").value(0))
+                .andExpect(jsonPath("$.data.today.count").value(0))
+                .andExpect(jsonPath("$.data.month.totalAmount").value(0));
     }
 
     @Test
