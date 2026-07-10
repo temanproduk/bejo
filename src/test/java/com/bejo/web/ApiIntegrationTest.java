@@ -129,6 +129,14 @@ class ApiIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    @Test
+    void actuatorPrometheusRequiresApiToken() throws Exception {
+        // Must NOT be public — otherwise it would be exposed on Cloud Run. The local
+        // Prometheus scraper authenticates via http_headers (docker/prometheus.yml).
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isUnauthorized());
+    }
+
     // ---------- auth ----------
 
     @Test

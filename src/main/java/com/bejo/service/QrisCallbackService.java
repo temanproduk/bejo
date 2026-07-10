@@ -89,7 +89,8 @@ public class QrisCallbackService {
         // creates a distinct transaction (Postgres allows multiple NULL unique values).
         t.setIdempotencyKey(null);
         t.setInvoiceId(req.originalReferenceNo());
-        t.setTransactionDate(parseTimestamp(xTimestamp));
+        //t.setTransactionDate(parseTimestamp(xTimestamp));
+        t.setTransactionDate(LocalDateTime.now());
         t.setAmount(amount.setScale(0, RoundingMode.HALF_UP).longValueExact());
         t.setStatus(status);
         t.setUsername(seedUser.getUsername());

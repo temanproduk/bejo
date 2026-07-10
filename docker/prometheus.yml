@@ -2,12 +2,16 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-# NOTE: /actuator/prometheus now requires the X-API-TOKEN header. Prometheus
-# scrape configs can't send arbitrary headers, so local scraping of this job
-# will 401 until you expose the endpoint differently (e.g. a sidecar proxy that
-# injects the header). Production is unaffected — nothing scrapes it externally.
+# /actuator/prometheus requires X-API-TOKEN (so it is not publicly reachable on
+# Cloud Run). We send it here from a file mounted by docker-compose (the compose
+# `prometheus_api_token` config, sourced from the API_TOKEN env). Requires
+# Prometheus >= 2.50 for http_headers.
 scrape_configs:
   - job_name: bejo
     metrics_path: /actuator/prometheus
+    http_headers:
+      X-API-TOKEN:
+        files:
+          - /etc/prometheus/api_token
     static_configs:
       - targets: ["app:8080"]

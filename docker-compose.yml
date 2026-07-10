@@ -57,11 +57,22 @@ services:
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+    # The API token is written to a file (from the same API_TOKEN env as the app) and
+    # read by the scrape job's http_headers, so /actuator/prometheus stays token-protected.
+    configs:
+      - source: prometheus_api_token
+        target: /etc/prometheus/api_token
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=7d"
     depends_on:
       - app
+
+configs:
+  # Inline content, interpolated from the environment — kept in sync with the app's
+  # API_TOKEN automatically; no secret is committed. (Plain scalar → no trailing newline.)
+  prometheus_api_token:
+    content: ${API_TOKEN:-change-me-in-production}
 
 volumes:
   postgres_data:

@@ -33,8 +33,10 @@ public class ApiTokenFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         String uri = request.getRequestURI();
         // Only /actuator/health (+ liveness/readiness groups) is open — it must be
-        // reachable by Cloud Run probes, which can't send X-API-TOKEN. Metrics,
-        // prometheus and info require the API token like every other endpoint.
+        // reachable by Cloud Run probes, which can't send X-API-TOKEN. Everything else,
+        // including /actuator/prometheus and /actuator/metrics, requires the API token so
+        // it is NOT publicly reachable on Cloud Run (which exposes the whole app port).
+        // The local Prometheus scraper sends the token via http_headers (docker/prometheus.yml).
         if (uri.startsWith("/actuator/health") || uri.startsWith("/snap/")) {
             chain.doFilter(request, response);
             return;
