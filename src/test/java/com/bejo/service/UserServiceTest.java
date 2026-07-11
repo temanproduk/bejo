@@ -43,19 +43,24 @@ class UserServiceTest {
     @Mock private AppSettingsService appSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
 
+    // Real (not mocked): a simple config-backed value object
+    private static final BusinessOptions BUSINESS_OPTIONS = new BusinessOptions(
+            java.util.List.of("Mikro", "Kecil", "Menengah", "Besar", "Non-Profit"), "Mikro",
+            java.util.List.of("Makanan & Minuman", "Otomotif", "Asuransi"), "Makanan & Minuman");
+
     private UserService userService;
 
     @BeforeEach
     void setUp() {
         userService = new UserService(userRepository, businessRepository, businessBankRepository,
-                businessContext, appSettingsService, passwordEncoder);
+                businessContext, appSettingsService, BUSINESS_OPTIONS, passwordEncoder);
         lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads / business+bank edits
         lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // picture mutations (super admin)
     }
 
     private RegisterRequestDto registerRequest() {
         return new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null);
+                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -80,6 +85,9 @@ class UserServiceTest {
         ArgumentCaptor<Business> businessCaptor = ArgumentCaptor.forClass(Business.class);
         verify(businessRepository).save(businessCaptor.capture());
         assertThat(businessCaptor.getValue().getName()).isEqualTo("Warung Alice");
+        // size/industry omitted → configured defaults
+        assertThat(businessCaptor.getValue().getSize()).isEqualTo("Mikro");
+        assertThat(businessCaptor.getValue().getIndustry()).isEqualTo("Makanan & Minuman");
 
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(userCaptor.capture());
@@ -122,6 +130,38 @@ class UserServiceTest {
         assertThat(me.bankName()).isEqualTo("BCA");
         assertThat(me.profilePicture()).isEqualTo("aW1n");
         assertThat(me.appSettings()).isNotNull();
+    }
+
+    @Test
+    void registerAppliesProvidedSizeIndustryAndStorePhoto() {
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
+        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
+        String photo = java.util.Base64.getEncoder().encodeToString("img".getBytes());
+        var req = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
+                "+628111111111", "Warung Alice", null, null, null, null, null, "Kecil", "Otomotif", photo);
+
+        userService.register(req);
+
+        ArgumentCaptor<Business> captor = ArgumentCaptor.forClass(Business.class);
+        verify(businessRepository).save(captor.capture());
+        assertThat(captor.getValue().getSize()).isEqualTo("Kecil");
+        assertThat(captor.getValue().getIndustry()).isEqualTo("Otomotif");
+        assertThat(captor.getValue().getStorePhoto()).isEqualTo(photo);
+    }
+
+    @Test
+    void registerRejectsInvalidSizeOrIndustry() {
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
+        var badSize = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
+                "+628111111111", "Warung Alice", null, null, null, null, null, "Raksasa", null, null);
+        assertThatThrownBy(() -> userService.register(badSize))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("size tidak valid");
+
+        var badIndustry = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
+                "+628111111111", "Warung Alice", null, null, null, null, null, null, "Antariksa", null);
+        assertThatThrownBy(() -> userService.register(badIndustry))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("industry tidak valid");
+        verify(businessRepository, never()).save(any());
     }
 
     @Test

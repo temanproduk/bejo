@@ -79,6 +79,8 @@ class AuthServiceTest {
         b.setName("Warung Alice");
         b.setAddress("Jakarta");
         b.setNmid("ID123");
+        b.setSize("Mikro");
+        b.setIndustry("Makanan & Minuman");
         return b;
     }
 
@@ -132,6 +134,9 @@ class AuthServiceTest {
         assertThat(data.bankName()).isEqualTo("BCA");
         assertThat(data.businessName()).isEqualTo("Warung Alice");
         assertThat(data.businessRole()).isEqualTo("SUPER_ADMIN");
+        // Immutable business classification is returned on login (not on /me)
+        assertThat(data.size()).isEqualTo("Mikro");
+        assertThat(data.industry()).isEqualTo("Makanan & Minuman");
         // Bundled app settings so the client can render its home screen without extra round trips
         assertThat(data.appSettings()).isNotNull();
         assertThat(meterRegistry.counter("login.attempts", "result", "success").count()).isEqualTo(1.0);

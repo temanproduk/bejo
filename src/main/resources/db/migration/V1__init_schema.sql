@@ -15,6 +15,9 @@ CREATE TABLE businesses (
     initial_name   VARCHAR(255),
     initial_address TEXT,
     initial_nmid   VARCHAR(50),
+    size           VARCHAR(30)   NOT NULL DEFAULT 'Mikro',                -- set once at registration, immutable
+    industry       VARCHAR(100)  NOT NULL DEFAULT 'Makanan & Minuman',    -- set once at registration, immutable
+    store_photo    TEXT,                              -- optional store photo, base64, <= 1 MB decoded
     picture        TEXT,                              -- shared business picture, base64, <= 1 MB decoded
     created_at     TIMESTAMP     NOT NULL DEFAULT NOW()
 );

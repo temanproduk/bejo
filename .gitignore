@@ -9,6 +9,8 @@ github-actions-key.json
 *.json
 !package.json
 !bejo.postman_collection.json
+!bejo.local.postman_environment.json
+!bejo.production.postman_environment.json
 
 .idea/
 *.iml

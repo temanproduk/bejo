@@ -48,5 +48,15 @@ public record RegisterRequestDto(
         String bankNumber,
 
         @Size(max = 100, message = "bankAccountName maksimal 100 karakter")
-        String bankAccountName
+        String bankAccountName,
+
+        // Business classification — set ONCE at registration, cannot be changed later.
+        // Optional: omitting size/industry applies the configured default. Validated against
+        // the configurable app.business.sizes / app.business.industries lists in the service.
+        String size,
+
+        String industry,
+
+        // Optional store photo — base64, <= 1 MB decoded (same spec as the business picture)
+        String storePhoto
 ) {}

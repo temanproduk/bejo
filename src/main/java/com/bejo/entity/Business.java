@@ -36,6 +36,18 @@ public class Business {
     @Column(name = "initial_nmid")
     private String initialNmid;
 
+    // Set once at registration and never changed afterwards (validated against the
+    // configurable app.business.sizes / app.business.industries option lists).
+    @Column(nullable = false)
+    private String size;
+
+    @Column(nullable = false)
+    private String industry;
+
+    // Optional store photo (base64, compressed, <= 1 MB decoded — same spec as the picture)
+    @Column(name = "store_photo", columnDefinition = "TEXT")
+    private String storePhoto;
+
     // Shared business picture (base64, compressed, <= 1 MB decoded); null when unset
     @Column(columnDefinition = "TEXT")
     private String picture;
@@ -61,6 +73,12 @@ public class Business {
     public void setInitialAddress(String initialAddress) { this.initialAddress = initialAddress; }
     public String getInitialNmid() { return initialNmid; }
     public void setInitialNmid(String initialNmid) { this.initialNmid = initialNmid; }
+    public String getSize() { return size; }
+    public void setSize(String size) { this.size = size; }
+    public String getIndustry() { return industry; }
+    public void setIndustry(String industry) { this.industry = industry; }
+    public String getStorePhoto() { return storePhoto; }
+    public void setStorePhoto(String storePhoto) { this.storePhoto = storePhoto; }
     public String getPicture() { return picture; }
     public void setPicture(String picture) { this.picture = picture; }
     public LocalDateTime getCreatedAt() { return createdAt; }

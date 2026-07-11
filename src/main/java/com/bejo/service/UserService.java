@@ -47,6 +47,7 @@ public class UserService {
     private final BusinessBankRepository businessBankRepository;
     private final BusinessContext businessContext;
     private final AppSettingsService appSettingsService;
+    private final BusinessOptions businessOptions;
     private final PasswordEncoder passwordEncoder;
 
     public UserService(UserRepository userRepository,
@@ -54,12 +55,14 @@ public class UserService {
                        BusinessBankRepository businessBankRepository,
                        BusinessContext businessContext,
                        AppSettingsService appSettingsService,
+                       BusinessOptions businessOptions,
                        PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.businessRepository = businessRepository;
         this.businessBankRepository = businessBankRepository;
         this.businessContext = businessContext;
         this.appSettingsService = appSettingsService;
+        this.businessOptions = businessOptions;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -102,6 +105,14 @@ public class UserService {
         business.setInitialName(request.businessName());
         business.setInitialAddress(request.businessAddress());
         business.setInitialNmid(request.nmid());
+        // Set once at registration, immutable afterwards. size/industry validated + defaulted
+        // against the configurable option lists; store photo is optional (same spec as picture).
+        business.setSize(businessOptions.resolveSize(request.size()));
+        business.setIndustry(businessOptions.resolveIndustry(request.industry()));
+        if (request.storePhoto() != null) {
+            validateImage(request.storePhoto(), "storePhoto");
+            business.setStorePhoto(request.storePhoto());
+        }
         businessRepository.save(business);
 
         User user = new User();
@@ -215,7 +226,7 @@ public class UserService {
     @Transactional
     public ProfilePictureResponseDto updateProfilePicture(String username, String base64Image) {
         Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
-        validatePicture(base64Image);
+        validateImage(base64Image, "profilePicture");
         business.setPicture(base64Image);
         businessRepository.save(business);
         log.info("[PICTURE] Updated ({} base64 chars) for businessId={}", base64Image.length(), business.getId());
@@ -249,15 +260,16 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
     }
 
-    private void validatePicture(String base64Image) {
+    // Validates a base64 image field (business picture / store photo) — same 1 MB limit.
+    private void validateImage(String base64, String field) {
         byte[] decoded;
         try {
-            decoded = Base64.getDecoder().decode(base64Image);
+            decoded = Base64.getDecoder().decode(base64);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("profilePicture bukan format base64 yang valid");
+            throw new IllegalArgumentException(field + " bukan format base64 yang valid");
         }
         if (decoded.length > MAX_PICTURE_BYTES) {
-            throw new IllegalArgumentException("profilePicture terlalu besar (maksimal 1MB)");
+            throw new IllegalArgumentException(field + " terlalu besar (maksimal 1MB)");
         }
     }
 }

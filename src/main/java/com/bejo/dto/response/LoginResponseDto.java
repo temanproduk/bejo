@@ -16,6 +16,11 @@ public record LoginResponseDto(
         String businessName,
         String businessAddress,
         String nmid,
+        // Set once at registration, immutable — only on login (not on /me), so the app caches
+        // them from the login response.
+        String size,
+        String industry,
+        String storePhoto,
         String bankName,
         String bankNumber,
         String bankAccountName,

@@ -1058,6 +1058,64 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void registerWithBusinessSizeIndustryAndStorePhotoSurfacesOnLogin() throws Exception {
+        String photo = java.util.Base64.getEncoder().encodeToString("store".getBytes());
+        Map<String, Object> body = new HashMap<>(registerBody("biz_class1"));
+        body.put("size", "Menengah");
+        body.put("industry", "Otomotif");
+        body.put("storePhoto", photo);
+        mockMvc.perform(post("/api/users/register")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated());
+
+        // On login they come back; NOT on /me (immutable → app caches from login)
+        mockMvc.perform(post("/api/auth/login")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "biz_class1", "password", "password1", "deviceId", "d-bc1"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.size").value("Menengah"))
+                .andExpect(jsonPath("$.data.industry").value("Otomotif"))
+                .andExpect(jsonPath("$.data.storePhoto").value(photo));
+
+        String token = login("biz_class1", "password1", "d-bc1b");
+        mockMvc.perform(get("/api/users/me")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.size").doesNotExist())
+                .andExpect(jsonPath("$.data.industry").doesNotExist())
+                .andExpect(jsonPath("$.data.storePhoto").doesNotExist());
+    }
+
+    @Test
+    void registerDefaultsSizeAndIndustryWhenOmitted() throws Exception {
+        register("biz_class2");  // no size/industry in the body
+        mockMvc.perform(post("/api/auth/login")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "biz_class2", "password", "password1", "deviceId", "d-bc2"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.size").value("Mikro"))
+                .andExpect(jsonPath("$.data.industry").value("Makanan & Minuman"));
+    }
+
+    @Test
+    void registerRejectsInvalidBusinessSize() throws Exception {
+        Map<String, Object> body = new HashMap<>(registerBody("biz_class3"));
+        body.put("size", "Raksasa");
+        mockMvc.perform(post("/api/users/register")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("size tidak valid")));
+    }
+
+    @Test
     void onlySuperAdminCanChangeBusinessSettingsPictureAndQris() throws Exception {
         String adminToken = registerAndLogin("biz_admin6");
         mockMvc.perform(post("/api/users/members")

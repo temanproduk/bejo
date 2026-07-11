@@ -57,6 +57,7 @@ public class DataSeeder implements ApplicationRunner {
     private final BusinessBankRepository businessBankRepository;
     private final BusinessQrisRepository businessQrisRepository;
     private final TransactionRepository transactionRepository;
+    private final com.bejo.service.BusinessOptions businessOptions;
     private final PasswordEncoder passwordEncoder;
 
     public DataSeeder(UserRepository userRepository,
@@ -64,8 +65,10 @@ public class DataSeeder implements ApplicationRunner {
                       BusinessBankRepository businessBankRepository,
                       BusinessQrisRepository businessQrisRepository,
                       TransactionRepository transactionRepository,
+                      com.bejo.service.BusinessOptions businessOptions,
                       PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
+        this.businessOptions = businessOptions;
         this.businessRepository = businessRepository;
         this.businessBankRepository = businessBankRepository;
         this.businessQrisRepository = businessQrisRepository;
@@ -92,6 +95,8 @@ public class DataSeeder implements ApplicationRunner {
             business.setInitialAddress(addr);
             String nmid = seedNmid.isBlank() ? null : seedNmid;
             business.setNmid(nmid);
+            business.setSize(businessOptions.resolveSize(null));          // configured default
+            business.setIndustry(businessOptions.resolveIndustry(null));  // configured default
             business.setInitialNmid(nmid);
             businessRepository.save(business);
             businessId = business.getId();

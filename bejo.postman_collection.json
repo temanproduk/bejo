@@ -1,40 +1,9 @@
 {
   "info": {
     "name": "Bejo API",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Select a Postman environment before sending requests — import bejo.local.postman_environment.json (Bejo — Local) or bejo.production.postman_environment.json (Bejo — Production). Each defines baseUrl, apiToken, and token. The Login request auto-saves the JWT into the active environment's `token`."
   },
-  "variable": [
-    {
-      "key": "baseUrl",
-      "value": "{{prodUrl}}",
-      "type": "string",
-      "description": "Active base URL used by every request. Switch environments by setting this to {{prodUrl}} or {{localUrl}}."
-    },
-    {
-      "key": "localUrl",
-      "value": "http://localhost:8080",
-      "type": "string",
-      "description": "Local dev server (docker compose / mvn spring-boot:run)."
-    },
-    {
-      "key": "prodUrl",
-      "value": "https://api.bejo.temanproduk.com",
-      "type": "string",
-      "description": "Production (Cloud Run, us-central1). Until the custom domain's DNS/SSL is live, use the direct Cloud Run URL https://bejo-7d3jwuvixa-uc.a.run.app instead."
-    },
-    {
-      "key": "apiToken",
-      "value": "REPLACE_WITH_YOUR_API_TOKEN",
-      "type": "string",
-      "description": "Matches API_TOKEN in .env — set this locally, do NOT commit the real value. Sent as X-API-TOKEN header on every request."
-    },
-    {
-      "key": "token",
-      "value": "",
-      "type": "string",
-      "description": "JWT Bearer token — auto-populated by the Login request test script"
-    }
-  ],
   "item": [
     {
       "name": "Auth",
@@ -225,7 +194,7 @@
                 "exec": [
                   "const res = pm.response.json();",
                   "if (res.status === 1 && res.data && res.data.token) {",
-                  "    pm.collectionVariables.set('token', res.data.token);",
+                  "    pm.environment.set('token', res.data.token);",
                   "    console.log('JWT saved to {{token}}');",
                   "}"
                 ],
@@ -276,7 +245,7 @@
               "script": {
                 "exec": [
                   "if (pm.response.code === 200) {",
-                  "    pm.collectionVariables.set('token', '');",
+                  "    pm.environment.set('token', '');",
                   "    console.log('Token cleared from {{token}}');",
                   "}"
                 ],

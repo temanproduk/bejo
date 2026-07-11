@@ -76,6 +76,21 @@ app:
   business:
     # Max users per business, INCLUDING the super admin (default 5)
     max-users: ${BUSINESS_MAX_USERS:5}
+    # Allowed business sizes + industries (comma-separated), validated at registration.
+    # Configurable so the option lists can change without a code change. The default-*
+    # value is applied when the client omits the field; it must be one of the list values.
+    sizes: ${BUSINESS_SIZES:Mikro,Kecil,Menengah,Besar,Non-Profit}
+    default-size: ${BUSINESS_DEFAULT_SIZE:Mikro}
+    industries: "${BUSINESS_INDUSTRIES:Makanan & Minuman,Otomotif,Event & Hiburan,Alat Tulis/Kantor,Peralatan Rumah Tangga,Pakaian & Aksesoris,Kesehatan & Kecantikan,Layanan Keuangan,SPBU,Pendidikan,Asuransi}"
+    default-industry: "${BUSINESS_DEFAULT_INDUSTRY:Makanan & Minuman}"
+  callback:
+    # Seed user whose business every (PoC) QRIS callback is attributed to. Defaults to the
+    # seed username so callbacks land on the seeded business (avoids an admin/seed mismatch).
+    default-username: ${CALLBACK_DEFAULT_USERNAME:${SEED_USERNAME:admin}}
+  request-logging:
+    # Log the request body on 4xx/5xx (secrets masked, capped). Toggle + cap here.
+    log-body-on-error: ${REQUEST_LOG_BODY_ON_ERROR:true}
+    max-body-length: ${REQUEST_LOG_MAX_BODY_LENGTH:2048}
 
 logging:
   level:

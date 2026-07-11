@@ -225,6 +225,7 @@ The following are **business-level** (shared by all of the business's users), ed
 | `nmid` | National Merchant ID from QRIS registration |
 | `bankName` / `bankNumber` / `bankAccountName` | Payout bank details |
 | business picture | Shared image (see `/api/business/picture`) |
+| `size` / `industry` / `storePhoto` | **Immutable** — set once at registration, returned only on login |
 
 Initial values (`initialName`, `initialAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored on the business and used by the reset endpoints. The initial values themselves are never returned directly, but each reset endpoint returns the resulting (reverted) current values so the client can repopulate its form without a re-login.
 
@@ -285,6 +286,9 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
     "nmid": "ID1026540778978",
+    "size": "Mikro",
+    "industry": "Makanan & Minuman",
+    "storePhoto": null,
     "bankName": "Bank BCA",
     "bankNumber": "1234567890",
     "bankAccountName": "Alice",
@@ -297,7 +301,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
 }
 ```
 
-`appSettings` and the business `profilePicture` are **bundled** so the client can render its home screen in one round trip; the individual endpoints ([app settings](#app-settings), [business picture](#user-profile)) and `GET /api/users/me` still return them on their own. `profilePicture` is `null` when unset (omitted from the envelope's non-null fields). `id` is the user's own id (use it to identify yourself in the [members](#business-members) list).
+`appSettings` and the business `profilePicture` are **bundled** so the client can render its home screen in one round trip; the individual endpoints ([app settings](#app-settings), [business picture](#user-profile)) and `GET /api/users/me` still return them on their own. `profilePicture` is `null` when unset (omitted from the envelope's non-null fields). `id` is the user's own id (use it to identify yourself in the [members](#business-members) list). **`size`, `industry`, and `storePhoto` are immutable (set once at registration) and appear only here — not on `/me` — so cache them from this login response.**
 
 **Errors:** `400 Invalid credentials`, `400 username is required`, `400 deviceId is required` (field validation)
 
@@ -671,6 +675,11 @@ Self-service registration. Creates a **new business** and its first user as the 
 | `bankName` | no | Max 100 chars |
 | `bankNumber` | no | Digits only, 6–20 digits |
 | `bankAccountName` | no | Max 100 chars |
+| `size` | no | Business size — one of the configured options (default `Mikro`): `Mikro`, `Kecil`, `Menengah`, `Besar`, `Non-Profit` |
+| `industry` | no | Business industry — one of the configured options (default `Makanan & Minuman`): `Makanan & Minuman`, `Otomotif`, `Event & Hiburan`, `Alat Tulis/Kantor`, `Peralatan Rumah Tangga`, `Pakaian & Aksesoris`, `Kesehatan & Kecantikan`, `Layanan Keuangan`, `SPBU`, `Pendidikan`, `Asuransi` |
+| `storePhoto` | no | Base64 store photo, **≤ 1 MB decoded** (same spec as the business picture) |
+
+> **`size`, `industry`, and `storePhoto` are set once at registration and are immutable** — they are **not** editable via `PATCH /api/users/me/business`, and are returned **only on login** (not on `/me`), so the client caches them from the login response. The `size`/`industry` option lists (and defaults) are server-configurable via `app.business.*` — an invalid value returns `400 size tidak valid …` / `industry tidak valid …`.
 
 ```json
 {
@@ -681,7 +690,9 @@ Self-service registration. Creates a **new business** and its first user as the 
   "phone": "+628100000000",
   "businessName": "Alice Shop",
   "businessAddress": "Jl. Contoh No. 1",
-  "nmid": "ID1026540778978"
+  "nmid": "ID1026540778978",
+  "size": "Mikro",
+  "industry": "Makanan & Minuman"
 }
 ```
 
@@ -1355,6 +1366,10 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `JWT_SECRET` | yes | Base64-encoded signing key, min 256 bits — `openssl rand -base64 32` |
 | `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `604800000` (7 days); `0` disables expiry |
 | `BUSINESS_MAX_USERS` | no | Max users per business, **including** the super admin. Default `5` |
+| `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` | no | Allowed business sizes + default (comma-separated). Default `Mikro,Kecil,Menengah,Besar,Non-Profit` / `Mikro` |
+| `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | no | Allowed industries + default (comma-separated). Default is the 11-industry list / `Makanan & Minuman` |
+| `CALLBACK_DEFAULT_USERNAME` | no | Seed user PoC QRIS callbacks attribute to. Defaults to `SEED_USERNAME` |
+| `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | no | Log request bodies on 4xx/5xx (redacted, capped). Default `true` / `2048` |
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | PostgreSQL username |
 | `DB_PASSWORD` | yes | PostgreSQL password |

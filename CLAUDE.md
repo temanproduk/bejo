@@ -45,6 +45,8 @@ podman compose restart app
 | `JWT_SECRET` | Base64-encoded secret, min 256 bits. Generate: `openssl rand -base64 32` |
 | `JWT_EXPIRATION_MS` | Token TTL in milliseconds (default `604800000` = 7 days; `0` disables expiry) |
 | `BUSINESS_MAX_USERS` | Max users per business, incl. the super admin (`app.business.max-users`, default `5`) |
+| `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` | Allowed business sizes + the default (comma-separated; `app.business.sizes`) |
+| `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | Allowed industries + the default (comma-separated; `app.business.industries`) |
 | `DB_URL` | JDBC URL, e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` / `DB_PASSWORD` | PostgreSQL credentials |
 | `FIREBASE_CREDENTIALS_BASE64` | Base64-encoded Firebase service account JSON |
@@ -129,7 +131,7 @@ All responses follow `{ "status": 1\|0, "message": "...", "data": {...}, "count"
 
 Login success response `data` includes profile + `businessRole` + business + bank fields plus `token`, `tokenType: "Bearer"`, `expiresIn` (seconds).
 
-A Postman collection is at `bejo.postman_collection.json`. The Login request has a test script that auto-saves the token to the `{{token}}` collection variable used by all other requests.
+A Postman collection is at `bejo.postman_collection.json`, driven by **Postman environments** — import `bejo.local.postman_environment.json` (Bejo — Local) or `bejo.production.postman_environment.json` (Bejo — Production) and select one; each defines `baseUrl`, `apiToken`, and `token`. The Login request's test script auto-saves the JWT into the active environment's `token` (used by all other requests).
 
 ## Architecture
 
@@ -161,13 +163,13 @@ Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by cons
 1. Look up the **active** `users` row by `username` (`findByUsernameAndDeletedAtIsNull`) — `Invalid credentials` (400) if not found or BCrypt mismatch (a soft-deleted user can't log in).
 2. Load the `businesses` + `business_banks` rows (by the user's `business_id`) for business + bank fields in the response.
 3. Upsert a row in `bejo_sessions` keyed on `(username, device_id)`; an existing FCM token is preserved when the login request has no `pushToken`.
-4. Return `id` + profile + `businessRole` + business + bank + **`profilePicture` (business picture) + `appSettings`** + JWT (`expiresIn` seconds). The bundled picture/app-settings save the client round trips on the home screen; the individual endpoints (`/api/app-settings`, `/api/business/picture`, `GET /api/users/me`) still exist. `GET /api/users/me` returns the same bundle minus the token.
+4. Return `id` + profile + `businessRole` + business + bank + **`size` + `industry` + `storePhoto` + `profilePicture` (business picture) + `appSettings`** + JWT (`expiresIn` seconds). The bundled picture/app-settings save the client round trips on the home screen; the individual endpoints (`/api/app-settings`, `/api/business/picture`, `GET /api/users/me`) still exist. `GET /api/users/me` returns the same bundle minus the token **and minus `size`/`industry`/`storePhoto`** — those are immutable (set once at registration), so the client caches them from the login response.
 
 ### Registration, businesses & members
 
 Registration/user-management live in `UserService` + `MemberService` (not `AuthService` — auth is only login/logout/session). Scoping is resolved by `BusinessContext.requireBusinessId(username)` (a `@Component` mapping the authenticated username → `business_id`; throws 404 if the user is gone/soft-deleted).
 
-- `POST /api/users/register` (public) → creates a **new `businesses` row + its first `users` row** (`SUPER_ADMIN`, `AccountType.SELF_SERVICE`) + `business_banks` row (bank fields optional, empty by default). **No** `business_qris` row (QRIS optional — added later via upload).
+- `POST /api/users/register` (public) → creates a **new `businesses` row + its first `users` row** (`SUPER_ADMIN`, `AccountType.SELF_SERVICE`) + `business_banks` row (bank fields optional, empty by default). **No** `business_qris` row (QRIS optional — added later via upload). Accepts optional **`size`** + **`industry`** (validated + defaulted against the configurable `BusinessOptions` = `app.business.sizes`/`industries`; 400 on an invalid value) and an optional **`storePhoto`** (base64 ≤1 MB, same spec as the picture). These three are **set once at registration and immutable** — `PATCH /api/users/me/business` does **not** touch them, and they're returned only on login (not `/me`).
 - `MemberService` (super-admin-gated): `POST /api/users/members` adds a `MEMBER` to the caller's business (rejected once the business hits `app.business.max-users` active users, default 5, super admin included); `PATCH`/`DELETE .../members/{id}` update/soft-delete a member; `GET .../members` lists them (any member). A `SUPER_ADMIN` can never be modified or deleted here. **Delete is a soft delete** (`users.deleted_at` set) that **releases the username**: uniqueness is enforced only among active users (app check + a Postgres partial unique index `WHERE deleted_at IS NULL`), and the member's `bejo_sessions` are removed so a reused username starts clean.
 
 `DataSeeder` also creates a seed `businesses` + `SUPER_ADMIN`/`MANAGED` seed user at startup when `SEED_PASSWORD` is set — but seed data (including `seed-qris.b64`) is for the seed/test user only and must never back any other feature.
@@ -251,7 +253,7 @@ The whole app is pinned to **WIB (`Asia/Jakarta`, UTC+7)**: `BejoApplication.mai
 Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup; `ddl-auto: none`. `V1__init_schema.sql` is the single consolidated baseline — it was **rewritten** for the user↔business decoupling (there were no production users to preserve), so the DB must be **dropped & recreated** rather than migrated (`podman compose down -v` to drop the volume). Going forward, add new versioned migrations (`V2+`) for schema changes and never edit an applied migration in place (Flyway validates checksums against the live DB).
 
 Key tables:
-- `businesses` — the merchant; business name/address/nmid (+ `initial_*` for reset) + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `nmid WHERE nmid IS NOT NULL` (callback routing)
+- `businesses` — the merchant; business name/address/nmid (+ `initial_*` for reset) + `size`/`industry` (NOT NULL, immutable, config-validated) + optional `store_photo` + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `nmid WHERE nmid IS NOT NULL` (callback routing)
 - `users` — credentials + profile (name/email/phone); `business_id` FK; `business_role` (`SUPER_ADMIN`/`MEMBER`); `account_type` (`MANAGED`/`SELF_SERVICE`); soft delete via `deleted_at` (username unique only among active users — partial index `uq_users_username_active`)
 - `business_banks` / `business_qris` / `business_app_settings` — one row per `business_id` (unique FK); app settings = monitored-apps map + keyword filters (JSON) + blacklist/whitelist + toggles (`qris_with_profile_picture`, `inventory_enabled`)
 - `bejo_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window (no FK — username uniqueness is partial)
