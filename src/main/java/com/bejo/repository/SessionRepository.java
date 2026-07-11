@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -16,7 +17,14 @@ public interface SessionRepository extends JpaRepository<Session, Long> {
 
     Optional<Session> findByUsernameAndDeviceId(String username, String deviceId);
 
+    // Remove all of a (soft-deleted) user's device sessions so a reused username starts clean
+    void deleteByUsername(String username);
+
     List<Session> findByUsername(String username);
+
+    // All sessions across a set of users — used to fan a business-wide push out to every
+    // member's devices
+    List<Session> findByUsernameIn(Collection<String> usernames);
 
     @Modifying
     @Query("UPDATE Session s SET s.pushToken = :pushToken, s.lastUpdated = :now WHERE s.username = :username AND s.deviceId = :deviceId")

@@ -1,9 +1,16 @@
 package com.bejo.entity;
 
-import com.bejo.constant.AccountType;
+import com.bejo.constant.BusinessRole;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
+/**
+ * A user account. Identity + credentials only — business info (name, bank, QRIS, picture)
+ * lives on {@link Business}, which many users may share. Each user belongs to exactly one
+ * business ({@code businessId}) with a {@link BusinessRole}. Soft-deletable: a non-null
+ * {@code deletedAt} means the account is removed and its {@code username} is released for
+ * reuse (uniqueness is enforced only among active users).
+ */
 @Entity
 @Table(name = "users")
 public class User {
@@ -12,7 +19,9 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, nullable = false)
+    // Not DB-unique: a soft-deleted user keeps its row but its username is reusable.
+    // Uniqueness among ACTIVE users is enforced in-app (+ a partial unique index in Postgres).
+    @Column(nullable = false)
     private String username;
 
     @Column(name = "password_hash", nullable = false)
@@ -21,23 +30,11 @@ public class User {
     @Column(nullable = false)
     private String name;
 
-    @Column(name = "business_name", nullable = false)
-    private String businessName;
+    @Column(name = "business_id", nullable = false)
+    private Long businessId;
 
-    @Column(name = "business_address")
-    private String businessAddress;
-
-    @Column(name = "nmid")
-    private String nmid;
-
-    @Column(name = "initial_business_name")
-    private String initialBusinessName;
-
-    @Column(name = "initial_business_address")
-    private String initialBusinessAddress;
-
-    @Column(name = "initial_nmid")
-    private String initialNmid;
+    @Column(name = "business_role", nullable = false)
+    private String businessRole = BusinessRole.MEMBER;
 
     @Column(nullable = false)
     private String email;
@@ -52,11 +49,11 @@ public class User {
     private boolean isPhoneVerified = false;
 
     @Column(name = "account_type", nullable = false)
-    private String accountType = AccountType.MANAGED;
+    private String accountType = com.bejo.constant.AccountType.MANAGED;
 
-    // Optional base64-encoded (compressed) profile picture; null when unset
-    @Column(name = "profile_picture", columnDefinition = "TEXT")
-    private String profilePicture;
+    // Soft delete: NULL = active, non-NULL = when the account was removed
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -73,18 +70,10 @@ public class User {
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
-    public String getBusinessName() { return businessName; }
-    public void setBusinessName(String businessName) { this.businessName = businessName; }
-    public String getBusinessAddress() { return businessAddress; }
-    public void setBusinessAddress(String businessAddress) { this.businessAddress = businessAddress; }
-    public String getNmid() { return nmid; }
-    public void setNmid(String nmid) { this.nmid = nmid; }
-    public String getInitialBusinessName() { return initialBusinessName; }
-    public void setInitialBusinessName(String v) { this.initialBusinessName = v; }
-    public String getInitialBusinessAddress() { return initialBusinessAddress; }
-    public void setInitialBusinessAddress(String v) { this.initialBusinessAddress = v; }
-    public String getInitialNmid() { return initialNmid; }
-    public void setInitialNmid(String initialNmid) { this.initialNmid = initialNmid; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
+    public String getBusinessRole() { return businessRole; }
+    public void setBusinessRole(String businessRole) { this.businessRole = businessRole; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
     public String getPhone() { return phone; }
@@ -95,8 +84,11 @@ public class User {
     public void setPhoneVerified(boolean phoneVerified) { isPhoneVerified = phoneVerified; }
     public String getAccountType() { return accountType; }
     public void setAccountType(String accountType) { this.accountType = accountType; }
-    public String getProfilePicture() { return profilePicture; }
-    public void setProfilePicture(String profilePicture) { this.profilePicture = profilePicture; }
+    public LocalDateTime getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public boolean isSuperAdmin() { return BusinessRole.SUPER_ADMIN.equals(businessRole); }
+    public boolean isDeleted() { return deletedAt != null; }
 }

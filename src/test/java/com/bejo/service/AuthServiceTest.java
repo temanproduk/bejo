@@ -1,12 +1,16 @@
 package com.bejo.service;
 
+import com.bejo.constant.BusinessRole;
 import com.bejo.dto.request.LoginRequestDto;
+import com.bejo.dto.response.AppSettingsResponseDto;
 import com.bejo.dto.response.LoginResponseDto;
+import com.bejo.entity.Business;
+import com.bejo.entity.BusinessBank;
 import com.bejo.entity.Session;
 import com.bejo.entity.User;
-import com.bejo.entity.UserBank;
+import com.bejo.repository.BusinessBankRepository;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.SessionRepository;
-import com.bejo.repository.UserBankRepository;
 import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +21,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,9 +38,13 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
 
+    private static final Long BIZ = 1L;
+
     @Mock private UserRepository userRepository;
-    @Mock private UserBankRepository userBankRepository;
+    @Mock private BusinessRepository businessRepository;
+    @Mock private BusinessBankRepository businessBankRepository;
     @Mock private SessionRepository sessionRepository;
+    @Mock private AppSettingsService appSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtService jwtService;
     @Mock private TokenBlacklistService tokenBlacklistService;
@@ -44,8 +55,10 @@ class AuthServiceTest {
     @BeforeEach
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
-        authService = new AuthService(userRepository, userBankRepository,
-                sessionRepository, passwordEncoder, jwtService, tokenBlacklistService, meterRegistry);
+        authService = new AuthService(userRepository, businessRepository, businessBankRepository,
+                sessionRepository, appSettingsService, passwordEncoder, jwtService, tokenBlacklistService, meterRegistry);
+        lenient().when(appSettingsService.getSettings("alice")).thenReturn(
+                new AppSettingsResponseDto(Map.of(), List.of(), List.of(), true, false, false, false));
     }
 
     private User user(String username) {
@@ -55,14 +68,23 @@ class AuthServiceTest {
         u.setName("Alice");
         u.setEmail("alice@example.com");
         u.setPhone("+628111111111");
-        u.setBusinessName("Warung Alice");
+        u.setBusinessId(BIZ);
+        u.setBusinessRole(BusinessRole.SUPER_ADMIN);
         u.setAccountType("MANAGED");
         return u;
     }
 
-    private UserBank bank(String username) {
-        UserBank b = new UserBank();
-        b.setUsername(username);
+    private Business business() {
+        Business b = new Business();
+        b.setName("Warung Alice");
+        b.setAddress("Jakarta");
+        b.setNmid("ID123");
+        return b;
+    }
+
+    private BusinessBank bank() {
+        BusinessBank b = new BusinessBank();
+        b.setBusinessId(BIZ);
         b.setBankName("BCA");
         b.setBankNumber("1234567890");
         b.setBankAccountName("Alice");
@@ -71,7 +93,7 @@ class AuthServiceTest {
 
     @Test
     void loginWithUnknownUserFailsAndCountsFailure() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameAndDeletedAtIsNull("ghost")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> authService.login(new LoginRequestDto("ghost", "pw", "dev-1", null)))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -82,7 +104,7 @@ class AuthServiceTest {
 
     @Test
     void loginWithWrongPasswordFails() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user("alice")));
+        when(userRepository.findByUsernameAndDeletedAtIsNull("alice")).thenReturn(Optional.of(user("alice")));
         when(passwordEncoder.matches("wrong", "$hash")).thenReturn(false);
 
         assertThatThrownBy(() -> authService.login(new LoginRequestDto("alice", "wrong", "dev-1", null)))
@@ -94,9 +116,10 @@ class AuthServiceTest {
 
     @Test
     void successfulLoginReturnsTokenAndCreatesSession() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user("alice")));
+        when(userRepository.findByUsernameAndDeletedAtIsNull("alice")).thenReturn(Optional.of(user("alice")));
         when(passwordEncoder.matches("pw", "$hash")).thenReturn(true);
-        when(userBankRepository.findByUsername("alice")).thenReturn(Optional.of(bank("alice")));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank()));
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.empty());
         when(jwtService.generateToken("alice")).thenReturn("jwt-token");
         when(jwtService.getExpiresInSeconds()).thenReturn(86_400L);
@@ -107,6 +130,10 @@ class AuthServiceTest {
         assertThat(data.tokenType()).isEqualTo("Bearer");
         assertThat(data.expiresIn()).isEqualTo(86_400L);
         assertThat(data.bankName()).isEqualTo("BCA");
+        assertThat(data.businessName()).isEqualTo("Warung Alice");
+        assertThat(data.businessRole()).isEqualTo("SUPER_ADMIN");
+        // Bundled app settings so the client can render its home screen without extra round trips
+        assertThat(data.appSettings()).isNotNull();
         assertThat(meterRegistry.counter("login.attempts", "result", "success").count()).isEqualTo(1.0);
 
         ArgumentCaptor<Session> captor = ArgumentCaptor.forClass(Session.class);
@@ -122,9 +149,10 @@ class AuthServiceTest {
         existing.setDeviceId("dev-1");
         existing.setPushToken("existing-fcm-token");
 
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user("alice")));
+        when(userRepository.findByUsernameAndDeletedAtIsNull("alice")).thenReturn(Optional.of(user("alice")));
         when(passwordEncoder.matches("pw", "$hash")).thenReturn(true);
-        when(userBankRepository.findByUsername("alice")).thenReturn(Optional.of(bank("alice")));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank()));
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.of(existing));
         when(jwtService.generateToken("alice")).thenReturn("jwt-token");
 
@@ -142,9 +170,10 @@ class AuthServiceTest {
         existing.setDeviceId("dev-1");
         existing.setPushToken("old-token");
 
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user("alice")));
+        when(userRepository.findByUsernameAndDeletedAtIsNull("alice")).thenReturn(Optional.of(user("alice")));
         when(passwordEncoder.matches("pw", "$hash")).thenReturn(true);
-        when(userBankRepository.findByUsername("alice")).thenReturn(Optional.of(bank("alice")));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank()));
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.of(existing));
         when(jwtService.generateToken("alice")).thenReturn("jwt-token");
 

@@ -1,5 +1,6 @@
 package com.bejo.dto.request;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -7,6 +8,7 @@ import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record AddTransactionRequestDto(
         @NotBlank(message = "type wajib diisi")
@@ -34,5 +36,11 @@ public record AddTransactionRequestDto(
 
         // Required when type = PARSED; validated in service (cross-field rule)
         @Size(max = 255, message = "acquirer maksimal 255 karakter")
-        String acquirer
+        String acquirer,
+
+        // Optional products sold in this transaction. When present, each item's stock is
+        // validated (rejects the whole transaction if any is insufficient) and reduced.
+        @Valid
+        @Size(max = 200, message = "items maksimal 200 baris")
+        List<TransactionItemRequestDto> items
 ) {}

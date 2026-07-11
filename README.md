@@ -17,19 +17,24 @@ Bejo closes that gap.
 - **Manual & external entries** — record cash sales, or log transactions from another acquirer, alongside QRIS payments. Entries can be edited or removed.
 - **QRIS management** — display the merchant's managed QRIS or upload their own image (no image is synthesized; accounts without one return `null`).
 - **Business & bank profile** — keep merchant name, address, National Merchant ID (NMID), and payout bank details up to date, with one-tap reset back to the officially registered values.
+- **Team access** — a business can have several users (staff), all sharing the same products, transactions, and settings. The creator is the **super admin** and manages who has access; a business holds up to a configurable number of users (default 5).
 
-## Account types
+## Businesses & users
 
-| Type | Who it's for | How it's created |
+A **business** (merchant) owns everything — bank, QRIS, products, transactions, settings, and the shared business picture. **Many users can belong to one business** (flat role):
+
+| Role | Who | Can |
 |---|---|---|
-| **MANAGED** | Merchants provisioned by Bejo internally | Created by the seed process or the internal registration API (`/api/users/internal/register`). |
-| **SELF_SERVICE** | Merchants who sign up themselves | Created through the public registration API (`/api/users/register`) from the app. |
+| **SUPER_ADMIN** | The user who registered the business (its creator) | Everything, plus add/update/delete the business's other users. Immutable & undeletable. |
+| **MEMBER** | Staff added by the super admin | Everything except managing users. |
+
+Registration creates a new business + its super admin. The super admin adds members via the [Users](#users) endpoints; deleting a member frees their username for reuse.
 
 ## How a payment flows
 
 1. A customer scans the merchant's QRIS and pays from any Indonesian e-wallet or bank app.
-2. For MANAGED accounts, the payment gateway notifies Bejo, which sends an FCM push (with a ring sound) to the merchant's registered device and records the transaction.
-3. The transaction appears in the merchant's history, available for filtering, reconciliation, and manual correction.
+2. The payment gateway notifies Bejo, which records the transaction and sends an FCM push (with a ring sound) to **every device of every user in that business** — so the whole team is alerted.
+3. The transaction appears in the shared business history, available for filtering, reconciliation, and manual correction.
 
 <br />
 
@@ -202,28 +207,35 @@ Null fields are omitted.
 
 | Field | Editable | Description |
 |---|---|---|
-| `username` | No | 3–50 chars, alphanumeric + underscore |
+| `username` | No | 3–50 chars, alphanumeric + underscore. Unique among active users; a deleted user's username is released |
 | `accountType` | No | `MANAGED` or `SELF_SERVICE` — see below |
-| `name` | Yes | Display name |
+| `businessRole` | No | `SUPER_ADMIN` (business creator) or `MEMBER` |
+| `name` | Yes (self / super admin) | Display name |
 | `email` | Yes | Email address |
 | `isEmailVerified` | System | Always `false` (verification not yet implemented) |
 | `phone` | Yes | International format e.g. `+628123456789` |
 | `isPhoneVerified` | System | Always `false` (verification not yet implemented) |
-| `businessName` | Yes | Current business name |
-| `businessAddress` | Yes | Current business address |
-| `nmid` | Yes | National Merchant ID from QRIS registration |
-| `bankName` | Yes | Bank name |
-| `bankNumber` | Yes | Account number (digits only) |
-| `bankAccountName` | Yes | Account holder name |
 
-Initial values (`initialBusinessName`, `initialBusinessAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored server-side and used by the reset endpoints. The initial values themselves are never returned directly, but each reset endpoint returns the resulting (reverted) current values so the client can repopulate its form without a re-login.
+The following are **business-level** (shared by all of the business's users), edited via the profile endpoints by any member:
+
+| Field | Description |
+|---|---|
+| `businessName` | Current business name |
+| `businessAddress` | Current business address |
+| `nmid` | National Merchant ID from QRIS registration |
+| `bankName` / `bankNumber` / `bankAccountName` | Payout bank details |
+| business picture | Shared image (see `/api/business/picture`) |
+
+Initial values (`initialName`, `initialAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored on the business and used by the reset endpoints. The initial values themselves are never returned directly, but each reset endpoint returns the resulting (reverted) current values so the client can repopulate its form without a re-login.
 
 ### Account types
 
+`account_type` records **how the QRIS merchant account was provisioned** — a separate axis from `businessRole` (which is the user's power *within* its business).
+
 | Value | Description |
 |---|---|
-| `MANAGED` | Created internally by Bejo (seed data or the internal registration API) |
-| `SELF_SERVICE` | Self-registered through the public registration API |
+| `MANAGED` | Bejo registered this merchant with the QRIS payment provider, so it **receives inbound QRIS payment callbacks** (seed data / internal provisioning) |
+| `SELF_SERVICE` | Self-registered through the public API; no provider registration, so no inbound callbacks by default (QRIS optional) |
 
 ### Transaction types
 
@@ -265,21 +277,27 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "accountType": "MANAGED",
     "name": "Alice",
     "email": "alice@example.com",
+    "id": 1,
     "isEmailVerified": false,
     "phone": "+628100000000",
     "isPhoneVerified": false,
+    "businessRole": "SUPER_ADMIN",
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
     "nmid": "ID1026540778978",
     "bankName": "Bank BCA",
     "bankNumber": "1234567890",
     "bankAccountName": "Alice",
+    "profilePicture": null,
+    "appSettings": { "monitoredApps": {}, "includeKeywords": [], "excludeKeywords": [], "blacklistEnabled": true, "whitelistEnabled": false, "qrisWithProfilePicture": false, "inventoryEnabled": false },
     "token": "eyJhbGciOiJIUzI1NiJ9...",
     "tokenType": "Bearer",
     "expiresIn": 604800
   }
 }
 ```
+
+`appSettings` and the business `profilePicture` are **bundled** so the client can render its home screen in one round trip; the individual endpoints ([app settings](#app-settings), [business picture](#user-profile)) and `GET /api/users/me` still return them on their own. `profilePicture` is `null` when unset (omitted from the envelope's non-null fields). `id` is the user's own id (use it to identify yourself in the [members](#business-members) list).
 
 **Errors:** `400 Invalid credentials`, `400 username is required`, `400 deviceId is required` (field validation)
 
@@ -385,12 +403,15 @@ Adds a transaction manually or from an external acquirer. The server generates `
 |---|---|---|
 | `type` | yes | `MANUAL` or `PARSED` |
 | `transactionDate` | yes | ISO 8601 e.g. `2026-06-28T09:14:00` |
-| `amount` | yes | Amount in IDR, must be > 0 |
+| `amount` | yes | Amount in IDR, must be > 0. **When `items` are present it is overridden** by the sum of line subtotals |
 | `acquirer` | PARSED only | Acquirer name; required when `type` is `PARSED` |
 | `issuerName` | no | Payment issuer name, max 255 chars |
 | `merchantPan` | no | Max 50 chars |
 | `customerPan` | no | Max 50 chars |
 | `rrn` | no | Max 255 chars |
+| `items` | no | Products sold: array of `{ productId, quantity }` (max 200). Validates + reduces stock, records a `SALE` [stock mutation](#stock-mutations), and derives `amount` from the line subtotals |
+
+When `items` are supplied the sale is atomic: an unknown product, a duplicate product line, or **insufficient stock** rejects the whole transaction (`400`, nothing changes). Each line's unit price is snapshotted from the product's current selling price. Read them back on `GET /api/transactions/{transactionId}` (the history list omits items).
 
 **Success — HTTP 201**
 
@@ -456,6 +477,28 @@ Each item carries its **own** `idempotencyKey` (generated by the client when the
 | `FAILED` | Validation error (see `error`) | Fix and re-sync |
 
 **Errors:** `400 transactions tidak boleh kosong`, `400 maksimal 500 transaksi per batch` (batch-level, reject the whole request). Per-item problems are reported as `FAILED` entries with HTTP 200, not a request-level error.
+
+---
+
+#### `GET /api/transactions/{transactionId}`
+
+Returns a single transaction **with its sold-product line items** (`data.items`). The [history list](#get-apitransactions) omits items to keep its payload small; this detail endpoint includes them. `items` is absent when the transaction has none.
+
+```json
+{
+  "status": 1,
+  "data": {
+    "transactionId": "TXN-A1B2C3D4E5F6", "transactionDate": "2026-06-28T09:14:00", "amount": 61000,
+    "type": "MANUAL", "acquirer": "Cash", "merchantName": "Warung Bejo",
+    "items": [
+      { "productId": 12, "sku": "KOPI-01", "name": "Kopi Susu", "quantity": 3, "unitPrice": 15000, "subtotal": 45000 },
+      { "productId": 15, "sku": "TEH-01",  "name": "Teh Manis",  "quantity": 2, "unitPrice": 8000,  "subtotal": 16000 }
+    ]
+  }
+}
+```
+
+**Errors:** `404 Transaction not found` (unknown, deleted, or another business's transaction)
 
 ---
 
@@ -567,6 +610,24 @@ If FCM reports the token as no longer registered (`502` with `errorCode=UNREGIST
 
 ---
 
+#### `POST /api/notifications/user`
+
+**Test/utility** — broadcasts an FCM push to **all** of the caller's devices at once (no `deviceId`). Best-effort: a dead token never fails the call (and is auto-cleaned), and delivery to zero devices still returns `200`. Does **not** record a transaction.
+
+**Request body** — same as the test endpoint but **without** `deviceId`:
+
+| Field | Required | Description |
+|---|---|---|
+| `title` | yes | Notification title |
+| `body` | yes | Notification body text |
+| `data` | yes | Same object as `POST /api/notifications/test` (`transactionId`, `transactionDate`, `amount`, `issuerName`, optional `merchantPan`/`customerPan`/`rrn`) |
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Notification sent to N device(s)" }`
+
+**Errors:** `400` field validation, `503 Firebase is not configured`
+
+---
+
 ### Devices
 
 #### `PUT /api/devices/{deviceId}/fcm-token`
@@ -593,7 +654,7 @@ Updates the FCM push token for a device. Only devices belonging to the authentic
 
 #### `POST /api/users/register`
 
-Self-service registration. Creates a `SELF_SERVICE` user + bank profile. **No QRIS row is created — QRIS is optional** and can be added later via `POST /api/qris/upload`. `X-API-TOKEN` required, no JWT.
+Self-service registration. Creates a **new business** and its first user as the `SUPER_ADMIN` (`SELF_SERVICE`) + bank profile. **No QRIS row is created — QRIS is optional** and can be added later via `POST /api/qris/upload`. `X-API-TOKEN` required, no JWT.
 
 **Request body**
 
@@ -634,23 +695,77 @@ Self-service registration. Creates a `SELF_SERVICE` user + bank profile. **No QR
 
 ---
 
-#### `POST /api/users/internal/register`
+#### Business members
 
-Internal/system registration. Same request body as above, but creates a `MANAGED` account. **Requires JWT** (in addition to `X-API-TOKEN`) — it is not public.
+Managing the users of a business. All require JWT. **Only the `SUPER_ADMIN` may add, update, or delete users**; any member may list them. A super admin can never be modified or deleted here.
 
-**Responses**
+##### `GET /api/users/members` — List members
+
+Returns the business's active users (`data` array + `count`), the super admin first.
+
+```json
+{
+  "status": 1,
+  "count": 2,
+  "data": [
+    { "id": 1, "username": "alice", "name": "Alice", "email": "alice@example.com", "phone": "+628100000000", "businessRole": "SUPER_ADMIN", "createdAt": "..." },
+    { "id": 2, "username": "member1", "name": "Member One", "email": "member1@example.com", "phone": "+628100000001", "businessRole": "MEMBER", "createdAt": "..." }
+  ]
+}
+```
+
+##### `POST /api/users/members` — Add member (super admin only)
+
+Adds a user to the caller's business as a `MEMBER`. Same identity fields as registration, **without** the business/bank fields (they belong to the existing business).
+
+| Field | Required | Validation |
+|---|---|---|
+| `username` | yes | 3–50 chars, alphanumeric + underscore, unique among active users |
+| `password` | yes | Min 8 chars, at least 1 letter and 1 digit |
+| `name` | yes | 2–100 chars |
+| `email` | yes | Valid email |
+| `phone` | yes | International format e.g. `+628123456789` |
 
 | HTTP | Result |
 |---|---|
-| 201 | `{ "status": 1, "message": "Registrasi internal berhasil" }` |
-| 400 | Validation error / `Username sudah digunakan` |
-| 401 | Missing or invalid JWT |
+| 201 | `{ "status": 1, "message": "Pengguna berhasil ditambahkan", "data": { ...member... } }` |
+| 400 | `Username sudah digunakan` / `Jumlah pengguna bisnis sudah mencapai batas maksimal (5)` / validation error |
+| 403 | `Hanya super admin yang dapat mengelola pengguna` (caller is a plain member) |
+
+##### `PATCH /api/users/members/{id}` — Update member (super admin only)
+
+Partial update of a member: any subset of `name`, `email`, `phone`, `password` (a `password` resets it). A super admin can't be modified here.
+
+| HTTP | Result |
+|---|---|
+| 200 | `{ "status": 1, "message": "Pengguna berhasil diperbarui", "data": { ...member... } }` |
+| 400 | `Tidak ada field yang diubah` / validation error |
+| 403 | Caller not a super admin, or target is a super admin (`Super admin tidak dapat diubah`) |
+| 404 | `User not found: <id>` (unknown or another business's user) |
+
+##### `DELETE /api/users/members/{id}` — Delete member (super admin only)
+
+**Soft-deletes** the member — the row is kept but the account is removed, its **username is released** for reuse, and its device sessions are cleared.
+
+| HTTP | Result |
+|---|---|
+| 200 | `{ "status": 1, "message": "Pengguna berhasil dihapus" }` |
+| 403 | Caller not a super admin, or target is a super admin (`Super admin tidak dapat dihapus`) |
+| 404 | `User not found: <id>` |
 
 ---
 
 ### User profile
 
 All endpoints below require JWT.
+
+#### `GET /api/users/me` — Get own account bundle
+
+Returns the caller's own account: `id`, profile, `businessRole`, and the shared business/bank/`profilePicture`/`appSettings` — the **same shape as the login `data` minus the token fields**, so the client can refresh its full state without re-authenticating. `id` also lets the client identify itself in the [members](#business-members) list.
+
+**Success — HTTP 200:** `{ "status": 1, "data": { "id": 1, "username": "alice", "businessRole": "SUPER_ADMIN", ...business/bank/profilePicture/appSettings... } }`
+
+---
 
 #### `PATCH /api/users/me` — Update personal info
 
@@ -747,9 +862,11 @@ Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, 
 
 ---
 
-#### `GET /api/users/me/profile-picture` — Get profile picture
+> The picture is **business-level** — a single image shared by all of the business's users. **Any member can read it (`GET`), but only the super admin can change it (`PUT`/`DELETE`) — a member gets `403`.** The response/request field is named `profilePicture`.
 
-Returns the user's profile picture as a base64 string. The picture is **optional** — when the user has never set one, `profilePicture` is explicitly **`null`** (no placeholder image).
+#### `GET /api/business/picture` — Get business picture
+
+Returns the business picture as a base64 string. The picture is **optional** — when it has never been set, `profilePicture` is explicitly **`null`** (no placeholder image).
 
 **Success — HTTP 200**
 
@@ -762,23 +879,23 @@ Returns the user's profile picture as a base64 string. The picture is **optional
 
 ---
 
-#### `PUT /api/users/me/profile-picture` — Set profile picture
+#### `PUT /api/business/picture` — Set business picture
 
-Stores a base64-encoded image as the user's profile picture. The image should be **compressed client-side**; the decoded image must be **≤ 1 MB**. Returns the saved picture.
+Stores a base64-encoded image as the business picture (shared by all members). The image should be **compressed client-side**; the decoded image must be **≤ 1 MB**. Returns the saved picture.
 
 **Request body:** `{ "profilePicture": "<base64-encoded image>" }`
 
-**Success — HTTP 200:** `{ "status": 1, "message": "Foto profil berhasil disimpan", "data": { "profilePicture": "<base64>" } }`
+**Success — HTTP 200:** `{ "status": 1, "message": "Foto bisnis berhasil disimpan", "data": { "profilePicture": "<base64>" } }`
 
 **Errors:** `400 profilePicture wajib diisi`, `400 profilePicture bukan format base64 yang valid`, `400 profilePicture terlalu besar (maksimal 1MB)`
 
 ---
 
-#### `DELETE /api/users/me/profile-picture` — Remove profile picture
+#### `DELETE /api/business/picture` — Remove business picture
 
-Clears the user's profile picture (sets it back to `null`). Idempotent — succeeds whether or not a picture was set.
+Clears the business picture (sets it back to `null`). Idempotent — succeeds whether or not a picture was set.
 
-**Success — HTTP 200:** `{ "status": 1, "message": "Foto profil berhasil dihapus" }`
+**Success — HTTP 200:** `{ "status": 1, "message": "Foto bisnis berhasil dihapus" }`
 
 ---
 
@@ -965,11 +1082,11 @@ Returns one mutation **including its `items`** (each with `previousStock`/`newSt
 
 ### App settings
 
-Per-user settings synced from the app: the **monitored apps** (which apps' notifications to watch), the **notification keywords** (blacklist/whitelist filters), and app **config toggles**. All endpoints require JWT. Settings are created on first save; a user who has never synced gets sensible defaults.
+Per-**business** settings synced from the app (shared by all of the business's users): the **monitored apps** (which apps' notifications to watch), the **notification keywords** (blacklist/whitelist filters), and app **config toggles**. All endpoints require JWT. **Reading is open to any member; every change (the four `PUT`s) is super-admin-only — a plain member gets `403`.** Settings are created on first save; a business that has never synced gets sensible defaults.
 
 #### `GET /api/app-settings` — Get app settings
 
-Returns the user's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`, both config toggles `false`. Empty lists mean the client should fall back to its own bundled defaults.
+Returns the business's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`, both config toggles `false`. Empty lists mean the client should fall back to its own bundled defaults.
 
 **Success — HTTP 200**
 
@@ -1061,6 +1178,8 @@ Updates the keyword filters. **Partial update:** a `null` field is left unchange
 
 ### QRIS
 
+> Any member can read the QRIS (`GET /api/qris`), but **only the super admin can change the image** (`POST /api/qris/upload` and `/reset`) — a member gets `403`.
+
 #### `GET /api/qris` — Get QRIS image
 
 Returns the QRIS image and business info. `type` indicates whether the image is Bejo-managed or user-uploaded.
@@ -1113,18 +1232,18 @@ Clears the uploaded image and reverts to the initial/managed QRIS image (which m
 
 #### `POST /snap/v1.0/qr/qr-mpm-notify`
 
-Inbound QRIS payment notification (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). **Server-to-server — no `X-API-TOKEN` and no JWT.** Records the payment as a `MANAGED` transaction and stores the **raw payload** in the transaction's `additionalInfo` column.
+Inbound QRIS payment notification (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). **Server-to-server — no `X-API-TOKEN` and no JWT.** Records the payment as a `MANAGED` transaction and stores the **raw payload** in the transaction's `info` column (the provider's `additionalInfo` object is stored under the shorter name).
 
 This endpoint does **not** use the standard `{ status, message, data }` envelope — it returns the callback contract's own acknowledgment shape.
 
-> **⚠️ PoC mode (temporary).** The provider's callback is currently buggy and only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So right now the endpoint is **lenient**: all body fields and the `X-TIMESTAMP` header are optional, and it **cannot** route by NMID or dedupe by reference. Instead, **every callback records a new transaction against the seed user** (`app.callback.default-username`) and pushes to *its* devices. NMID routing + idempotency will be restored once the provider fixes the payload.
+> **⚠️ PoC mode (temporary).** The provider's callback is currently buggy and only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So right now the endpoint is **lenient**: all body fields and the `X-TIMESTAMP` header are optional, and it **cannot** route by NMID or dedupe by reference. Instead, **every callback records a new transaction against the seed user's business** (`app.callback.default-username` → its `business_id`) and pushes to **every device of every user in that business**. NMID routing + idempotency + `X-TIMESTAMP` parsing will be restored once the provider fixes the payload — currently the transaction date is always the server time (`now()`).
 
 **Headers**
 
 | Header | Mandatory | Description |
 |---|---|---|
 | `Content-Type: application/json` | ✅ | |
-| `X-TIMESTAMP` | optional | ISO-8601 transaction time (offset / `Z` / none). Recorded as the transaction date; missing or unparseable falls back to now. |
+| `X-TIMESTAMP` | optional | ISO-8601 transaction time (offset / `Z` / none). **Currently ignored** (PoC) — the transaction date is recorded as `now()`. |
 
 **Request body** (unknown fields are ignored)
 
@@ -1150,12 +1269,12 @@ All fields are optional in PoC mode; only `amount.value` (when present) and `lat
 
 **Behavior (PoC)**
 
-- **Attribution** — every callback is recorded against the seed user (`app.callback.default-username`); if that user doesn't exist, returns `404`.
+- **Attribution** — every callback is recorded against the seed user's business (`app.callback.default-username` → its `business_id`); if that user doesn't exist, returns `404`.
 - **No idempotency** — there's no reference to dedupe on, so each callback creates a new transaction (generated `transactionId`, null idempotency key).
 - **Status mapping** — `00`→SUCCESS, `01`→PENDING, `02`→FAILED, `03`→REFUNDED, `04`→CANCELLED, `05`→EXPIRED, else/absent UNKNOWN.
 - **Amount** — parsed from `amount.value`; missing/invalid → `0` (never fails the callback).
-- **Records a `MANAGED` transaction** and saves the full payload JSON to its `additionalInfo`.
-- **Sends an FCM push** to all of the seed user's registered devices (best-effort — a push failure never fails the callback; skipped if Firebase isn't configured).
+- **Records a `MANAGED` transaction** and saves the full payload JSON to its `info` column.
+- **Sends an FCM push to every device of every user in the business** (best-effort — a push failure never fails the callback; skipped if Firebase isn't configured).
 
 **Success — HTTP 200** (acknowledgment)
 
@@ -1187,9 +1306,12 @@ Errors shared across all endpoints:
 | 400 | `Format parameter tidak valid: <param>` | Invalid query parameter type |
 | 401 | `Missing or invalid X-API-TOKEN` | Wrong or absent API token |
 | 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing, expired, or logged-out (blacklisted) JWT |
+| 403 | `Hanya super admin yang dapat mengelola pengguna` / `Super admin tidak dapat dihapus` | Non–super-admin managing users, or acting on a super admin |
+| 403 | `Hanya super admin yang dapat mengubah pengaturan bisnis` | Non–super-admin changing app config, business picture, or QRIS image |
 | 404 | `Route not found` | Unknown path |
 | 405 | `Method not allowed: <METHOD>` | Wrong HTTP method |
 | 409 | `Username sudah digunakan` | Username already registered |
+| 409 | `NMID sudah digunakan oleh bisnis lain` | Another business already uses this NMID |
 | 409 | `transactionId sudah terdaftar` | Duplicate `transaction_id` |
 | 409 | `Permintaan dengan Idempotency-Key ini sedang diproses, coba lagi sebentar` | Concurrent request with the same `Idempotency-Key` |
 | 409 | `Data tidak valid atau sudah terdaftar` | Other database constraint violation |
@@ -1215,7 +1337,7 @@ Errors shared across all endpoints:
 
 **Request logging**
 
-Every request is logged as `METHOD PATH[?query] STATUS DURATIONms`. Requests that fail with a `4xx` also log the reason (`[400] METHOD /path — <reason>`) and, on any `4xx`/`5xx`, the request body (`[BODY] …`). Body logging is production-safe: secrets (`password`/`token`/`pushToken`) are masked, the body is single-line and capped at 2 KB, and auth endpoints (`/api/auth/**`, register) are never captured. Under `SPRING_PROFILES_ACTIVE=prod` all logs are emitted as JSON (one object per line) for Cloud Logging.
+Every request is logged as `METHOD PATH[?query] STATUS DURATIONms`. Requests that fail with a `4xx` also log the reason (`[400] METHOD /path — <reason>`) and, on any `4xx`/`5xx`, the request body (`[BODY] …`). Body logging is production-safe: secrets (`password`/`token`/`pushToken`) are masked, the body is single-line and capped at 2 KB, and auth/credential endpoints (`/api/auth/**`, register, `/api/users/members**`) are never captured. Under `SPRING_PROFILES_ACTIVE=prod` all logs are emitted as JSON (one object per line) for Cloud Logging.
 
 The QRIS payment callback (`/snap/v1.0/qr/qr-mpm-notify`) is logged more verbosely to aid debugging: on any `4xx`/`5xx` it dumps `[CALLBACK-REQ]` with **all request headers** (credential headers masked) and the **full body** (capped 8 KB), captured even when the request is rejected before the body is read. This fuller logging is intentionally scoped to that one endpoint.
 
@@ -1232,6 +1354,7 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
 | `JWT_SECRET` | yes | Base64-encoded signing key, min 256 bits — `openssl rand -base64 32` |
 | `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `604800000` (7 days); `0` disables expiry |
+| `BUSINESS_MAX_USERS` | no | Max users per business, **including** the super admin. Default `5` |
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | PostgreSQL username |
 | `DB_PASSWORD` | yes | PostgreSQL password |

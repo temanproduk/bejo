@@ -44,7 +44,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     private static boolean isSensitivePath(String uri) {
         return uri.startsWith("/api/auth/")
                 || uri.equals("/api/users/register")
-                || uri.equals("/api/users/internal/register");
+                || uri.equals("/api/users/members")   // add-member carries a password
+                || uri.startsWith("/api/users/members/");
     }
 
     // Capture request bodies only on 4xx/5xx (default on; disable via env). Keeps normal
@@ -68,7 +69,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             // before the body is read (e.g. a missing required header).
             req = new CachedBodyHttpServletRequest(request);
         } else if (logBodyOnError && !isSensitivePath(uri)) {
-            req = new ContentCachingRequestWrapper(request);
+            // Cap the cached body at the max we'd ever log — bounds memory + non-deprecated ctor
+            req = new ContentCachingRequestWrapper(request, maxBodyLength);
         } else {
             req = request;
         }

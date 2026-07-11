@@ -46,24 +46,28 @@ public class StockMutationService {
     private final StockMutationRepository stockMutationRepository;
     private final StockMutationItemRepository stockMutationItemRepository;
     private final ProductRepository productRepository;
+    private final BusinessContext businessContext;
 
     public StockMutationService(StockMutationRepository stockMutationRepository,
                            StockMutationItemRepository stockMutationItemRepository,
-                           ProductRepository productRepository) {
+                           ProductRepository productRepository,
+                           BusinessContext businessContext) {
         this.stockMutationRepository = stockMutationRepository;
         this.stockMutationItemRepository = stockMutationItemRepository;
         this.productRepository = productRepository;
+        this.businessContext = businessContext;
     }
 
     /** Restock (PURCHASE): resolves + raises stock of several products atomically. */
     @Transactional
     public StockMutationResponseDto create(String username, CreatePurchaseRequestDto request) {
-        log.info("[PURCHASE] username={} lines={}", username, request.items().size());
+        Long businessId = businessContext.requireBusinessId(username);
+        log.info("[PURCHASE] businessId={} lines={}", businessId, request.items().size());
 
         // Pass 1 — resolve every line to an owned product before changing anything
         List<Line> lines = new ArrayList<>();
         for (PurchaseItemRequestDto item : request.items()) {
-            Product product = productRepository.findByIdAndUsername(item.productId(), username)
+            Product product = productRepository.findByIdAndBusinessId(item.productId(), businessId)
                     .orElseThrow(() -> new IllegalArgumentException("Produk tidak ditemukan: " + item.productId()));
             long unitPrice = item.unitPrice() != null ? item.unitPrice()
                     : (product.getCostPrice() != null ? product.getCostPrice() : 0L);
@@ -71,7 +75,7 @@ public class StockMutationService {
         }
 
         // Pass 2 — raise stock and persist the mutation + its items
-        StockMutation purchase = newMutation(username, StockMutationType.PURCHASE, request.note());
+        StockMutation purchase = newMutation(businessId, StockMutationType.PURCHASE, request.note());
         stockMutationRepository.save(purchase);
 
         long total = 0;
@@ -94,32 +98,33 @@ public class StockMutationService {
         purchase.setTotalAmount(total);
         stockMutationRepository.save(purchase);
 
-        log.info("[PURCHASE] Recorded id={} username={} lines={} total={}",
-                purchase.getId(), username, savedItems.size(), total);
+        log.info("[PURCHASE] Recorded id={} businessId={} lines={} total={}",
+                purchase.getId(), businessId, savedItems.size(), total);
         return toDto(purchase, savedItems);
     }
 
     /**
-     * Records a non-purchase stock mutation (ADJUSTMENT / UPDATE). The caller must have
-     * already applied the stock change to the products; this only writes the history.
+     * Records a non-purchase stock mutation (ADJUSTMENT / UPDATE / SALE). The caller must
+     * have already applied the stock change to the products; this only writes the history.
      */
     @Transactional
-    public void recordStockChange(String username, String type, String note, List<StockChangeLine> changes) {
+    public void recordStockChange(Long businessId, String type, String note, List<StockChangeLine> changes) {
         if (changes.isEmpty()) return;
-        StockMutation mutation = newMutation(username, type, note);
+        StockMutation mutation = newMutation(businessId, type, note);
         stockMutationRepository.save(mutation);
         for (StockChangeLine c : changes) {
             stockMutationItemRepository.save(baseItem(mutation.getId(), c.product(), c.previousStock(), c.newStock()));
         }
-        log.info("[STOCK-MUT] Recorded type={} id={} username={} lines={}",
-                type, mutation.getId(), username, changes.size());
+        log.info("[STOCK-MUT] Recorded type={} id={} businessId={} lines={}",
+                type, mutation.getId(), businessId, changes.size());
     }
 
     @Transactional(readOnly = true)
     public Page<StockMutationResponseDto> list(String username, Pageable pageable) {
-        log.info("[PURCHASE] List (stock mutations) for username={} page={} size={}",
-                username, pageable.getPageNumber(), pageable.getPageSize());
-        Page<StockMutation> mutations = stockMutationRepository.findByUsernameOrderByCreatedAtDesc(username, pageable);
+        Long businessId = businessContext.requireBusinessId(username);
+        log.info("[PURCHASE] List (stock mutations) for businessId={} page={} size={}",
+                businessId, pageable.getPageNumber(), pageable.getPageSize());
+        Page<StockMutation> mutations = stockMutationRepository.findByBusinessIdOrderByCreatedAtDesc(businessId, pageable);
         if (mutations.isEmpty()) return mutations.map(m -> toDto(m, List.of()));
 
         // Batch-load the line items for this page's mutations in one query, then group (no N+1)
@@ -133,15 +138,16 @@ public class StockMutationService {
 
     @Transactional(readOnly = true)
     public StockMutationResponseDto get(String username, Long id) {
-        log.info("[PURCHASE] Get stock mutation id={} for username={}", id, username);
-        StockMutation purchase = stockMutationRepository.findByIdAndUsername(id, username)
+        Long businessId = businessContext.requireBusinessId(username);
+        log.info("[PURCHASE] Get stock mutation id={} for businessId={}", id, businessId);
+        StockMutation purchase = stockMutationRepository.findByIdAndBusinessId(id, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Stock mutation not found: " + id));
         return toDto(purchase, stockMutationItemRepository.findByMutationIdOrderByIdAsc(id));
     }
 
-    private StockMutation newMutation(String username, String type, String note) {
+    private StockMutation newMutation(Long businessId, String type, String note) {
         StockMutation p = new StockMutation();
-        p.setUsername(username);
+        p.setBusinessId(businessId);
         p.setType(type);
         p.setNote(note);
         p.setTotalAmount(0);

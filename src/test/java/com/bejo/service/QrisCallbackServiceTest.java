@@ -2,9 +2,11 @@ package com.bejo.service;
 
 import com.bejo.dto.request.QrMpmNotifyRequestDto;
 import com.bejo.dto.response.QrMpmNotifyResponseDto;
+import com.bejo.entity.Business;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.TransactionRepository;
 import com.bejo.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,21 +33,25 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * PoC behavior: every callback records a MANAGED transaction against the seed user and
- * pushes to its devices, regardless of the (currently buggy) payload contents.
+ * PoC behavior: every callback records a MANAGED transaction against the seed user's
+ * business and pushes to every device of every user in that business, regardless of the
+ * (currently buggy) payload contents.
  */
 @ExtendWith(MockitoExtension.class)
 class QrisCallbackServiceTest {
 
+    private static final Long BIZ = 1L;
+
     @Mock private TransactionRepository transactionRepository;
     @Mock private UserRepository userRepository;
+    @Mock private BusinessRepository businessRepository;
     @Mock private PushNotificationService pushNotificationService;
 
     private QrisCallbackService service;
 
     @BeforeEach
     void setUp() {
-        service = new QrisCallbackService(transactionRepository, userRepository,
+        service = new QrisCallbackService(transactionRepository, userRepository, businessRepository,
                 pushNotificationService, new ObjectMapper(), new SimpleMeterRegistry());
         ReflectionTestUtils.setField(service, "defaultUsername", "admin");
     }
@@ -52,8 +59,11 @@ class QrisCallbackServiceTest {
     private void seedUserExists() {
         User admin = new User();
         admin.setUsername("admin");
-        admin.setBusinessName("Seed Merchant");
-        lenient().when(userRepository.findByUsername("admin")).thenReturn(Optional.of(admin));
+        admin.setBusinessId(BIZ);
+        Business business = new Business();
+        business.setName("Seed Merchant");
+        lenient().when(userRepository.findByUsernameAndDeletedAtIsNull("admin")).thenReturn(Optional.of(admin));
+        lenient().when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
     }
 
     // Full (well-formed) payload
@@ -76,7 +86,7 @@ class QrisCallbackServiceTest {
     }
 
     @Test
-    void recordsManagedTransactionForSeedUser() {
+    void recordsManagedTransactionForSeedBusiness() {
         seedUserExists();
 
         QrMpmNotifyResponseDto res = service.processNotify(request("00"), "2020-12-23T08:46:11+07:00");
@@ -84,35 +94,33 @@ class QrisCallbackServiceTest {
         ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(captor.capture());
         Transaction t = captor.getValue();
-        assertThat(t.getUsername()).isEqualTo("admin");           // always the seed user
+        assertThat(t.getBusinessId()).isEqualTo(BIZ);              // always the seed user's business
         assertThat(t.getTransactionId()).startsWith("TXN-");       // generated, not from payload
         assertThat(t.getIdempotencyKey()).isNull();                // PoC: no dedupe
         assertThat(t.getAmount()).isEqualTo(100L);
         assertThat(t.getStatus()).isEqualTo("SUCCESS");
         assertThat(t.getType()).isEqualTo("MANAGED");
-        // +07:00 is already WIB — wall-clock stays as sent
-        assertThat(t.getTransactionDate()).isEqualTo(java.time.LocalDateTime.of(2020, 12, 23, 8, 46, 11));
         assertThat(res.status()).isEqualTo("SUCCESS");             // ack, not payment status
     }
 
     @Test
-    void normalizesUtcTimestampToWibWallClock() {
+    void transactionDateDefaultsToNow() {
         seedUserExists();
 
-        // 01:46:11Z is 08:46:11 in WIB (UTC+7) — the stored wall-clock must be shifted
+        // PoC: X-TIMESTAMP parsing is currently disabled, so the stored time is now().
+        LocalDateTime before = LocalDateTime.now().minusMinutes(1);
         service.processNotify(request("00"), "2020-12-23T01:46:11Z");
 
         ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(captor.capture());
-        assertThat(captor.getValue().getTransactionDate())
-                .isEqualTo(java.time.LocalDateTime.of(2020, 12, 23, 8, 46, 11));
+        assertThat(captor.getValue().getTransactionDate()).isAfter(before);
     }
 
     @Test
-    void pushesToSeedUserDevices() {
+    void pushesToEveryDeviceInTheBusiness() {
         seedUserExists();
         service.processNotify(request("00"), null);
-        verify(pushNotificationService).sendToUser(eq("admin"), any());
+        verify(pushNotificationService).sendToBusiness(eq(BIZ), any());
     }
 
     @Test
@@ -134,7 +142,7 @@ class QrisCallbackServiceTest {
         ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(captor.capture());
         assertThat(captor.getValue().getAmount()).isEqualTo(1002L);
-        assertThat(captor.getValue().getUsername()).isEqualTo("admin");
+        assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
     }
 
     @Test
@@ -155,7 +163,7 @@ class QrisCallbackServiceTest {
 
     @Test
     void seedUserMissingIsRejected() {
-        when(userRepository.findByUsername("admin")).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameAndDeletedAtIsNull("admin")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.processNotify(request("00"), null))
                 .isInstanceOf(ResourceNotFoundException.class);

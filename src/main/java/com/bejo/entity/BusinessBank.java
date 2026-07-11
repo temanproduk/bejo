@@ -2,16 +2,17 @@ package com.bejo.entity;
 
 import jakarta.persistence.*;
 
+/** A business's bank account details (one row per business). */
 @Entity
-@Table(name = "user_banks")
-public class UserBank {
+@Table(name = "business_banks")
+public class BusinessBank {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
-    private String username;
+    @Column(name = "business_id", nullable = false, unique = true)
+    private Long businessId;
 
     @Column(name = "bank_name", nullable = false)
     private String bankName = "";
@@ -32,8 +33,8 @@ public class UserBank {
     private String initialBankAccountName;
 
     public Long getId() { return id; }
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
     public String getBankName() { return bankName; }
     public void setBankName(String bankName) { this.bankName = bankName; }
     public String getBankNumber() { return bankNumber; }

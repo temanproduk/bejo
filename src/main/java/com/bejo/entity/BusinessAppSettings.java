@@ -11,20 +11,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Per-user app settings synced from the mobile client: the monitored-apps map
- * ({@code packageName -> issuer}) and the notification keyword filters
- * (include/exclude lists + blacklist/whitelist toggles). One row per username.
+ * Per-business app settings synced from the mobile client (shared by all of the
+ * business's users): the monitored-apps map ({@code packageName -> issuer}) and the
+ * notification keyword filters (include/exclude lists + blacklist/whitelist toggles),
+ * plus the app config toggles. One row per business.
  */
 @Entity
-@Table(name = "user_app_settings")
-public class UserAppSettings {
+@Table(name = "business_app_settings")
+public class BusinessAppSettings {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, nullable = false)
-    private String username;
+    @Column(name = "business_id", unique = true, nullable = false)
+    private Long businessId;
 
     @Convert(converter = StringMapJsonConverter.class)
     @Column(name = "monitored_apps", columnDefinition = "TEXT")
@@ -62,8 +63,8 @@ public class UserAppSettings {
     }
 
     public Long getId() { return id; }
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
     public Map<String, String> getMonitoredApps() { return monitoredApps; }
     public void setMonitoredApps(Map<String, String> monitoredApps) { this.monitoredApps = monitoredApps; }
     public List<String> getIncludeKeywords() { return includeKeywords; }

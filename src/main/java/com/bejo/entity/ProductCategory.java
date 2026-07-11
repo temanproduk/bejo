@@ -16,8 +16,8 @@ public class ProductCategory {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private String username;
+    @Column(name = "business_id", nullable = false)
+    private Long businessId;
 
     @Column(nullable = false)
     private String name;
@@ -31,8 +31,8 @@ public class ProductCategory {
     }
 
     public Long getId() { return id; }
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public LocalDateTime getCreatedAt() { return createdAt; }

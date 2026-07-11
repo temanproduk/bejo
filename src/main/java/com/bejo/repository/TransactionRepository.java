@@ -14,30 +14,30 @@ import java.util.Optional;
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, Long> {
 
-    // Sum + count of a user's active transactions in [start, end) — for the summary endpoint
+    // Sum + count of a business's active transactions in [start, end) — for the summary endpoint
     @Query("""
             SELECT COALESCE(SUM(t.amount), 0) AS totalAmount, COUNT(t) AS count
             FROM Transaction t
-            WHERE t.username = :username AND t.deletedAt IS NULL
+            WHERE t.businessId = :businessId AND t.deletedAt IS NULL
               AND t.transactionDate >= :start AND t.transactionDate < :end
             """)
-    TransactionSummaryProjection sumBetween(@Param("username") String username,
+    TransactionSummaryProjection sumBetween(@Param("businessId") Long businessId,
                                             @Param("start") LocalDateTime start,
                                             @Param("end") LocalDateTime end);
 
-    Page<Transaction> findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(String username, Pageable pageable);
+    Page<Transaction> findByBusinessIdAndDeletedAtIsNullOrderByTransactionDateDesc(Long businessId, Pageable pageable);
 
-    Page<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(
-            String username, LocalDateTime start, Pageable pageable);
+    Page<Transaction> findByBusinessIdAndDeletedAtIsNullAndTransactionDateGreaterThanEqualOrderByTransactionDateDesc(
+            Long businessId, LocalDateTime start, Pageable pageable);
 
-    Page<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(
-            String username, LocalDateTime end, Pageable pageable);
+    Page<Transaction> findByBusinessIdAndDeletedAtIsNullAndTransactionDateLessThanEqualOrderByTransactionDateDesc(
+            Long businessId, LocalDateTime end, Pageable pageable);
 
-    Page<Transaction> findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
-            String username, LocalDateTime start, LocalDateTime end, Pageable pageable);
+    Page<Transaction> findByBusinessIdAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
+            Long businessId, LocalDateTime start, LocalDateTime end, Pageable pageable);
 
-    // Deliberately includes soft-deleted rows for the active user record check
-    boolean existsByUsername(String username);
+    // Deliberately includes soft-deleted rows for the seeded-data check
+    boolean existsByBusinessId(Long businessId);
 
     // Deliberately includes soft-deleted rows: the DB unique constraint on
     // transaction_id spans all rows, so a deleted id still can't be reused
@@ -45,7 +45,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
     // Deliberately includes soft-deleted rows: replaying a create after deleting
     // the result must not attempt a second insert with the same unique key
-    Optional<Transaction> findByIdempotencyKeyAndUsername(String idempotencyKey, String username);
+    Optional<Transaction> findByIdempotencyKeyAndBusinessId(String idempotencyKey, Long businessId);
 
-    Optional<Transaction> findByTransactionIdAndUsernameAndDeletedAtIsNull(String transactionId, String username);
+    Optional<Transaction> findByTransactionIdAndBusinessIdAndDeletedAtIsNull(String transactionId, Long businessId);
 }

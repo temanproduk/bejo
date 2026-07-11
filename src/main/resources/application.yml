@@ -73,6 +73,9 @@ app:
   firebase:
     credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
     credentials-base64: ${FIREBASE_CREDENTIALS_BASE64:}
+  business:
+    # Max users per business, INCLUDING the super admin (default 5)
+    max-users: ${BUSINESS_MAX_USERS:5}
 
 logging:
   level:

@@ -5,9 +5,11 @@ import com.bejo.constant.TransactionStatus;
 import com.bejo.constant.TransactionType;
 import com.bejo.dto.request.QrMpmNotifyRequestDto;
 import com.bejo.dto.response.QrMpmNotifyResponseDto;
+import com.bejo.entity.Business;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.TransactionRepository;
 import com.bejo.repository.UserRepository;
 import com.bejo.util.AppTime;
@@ -37,6 +39,7 @@ public class QrisCallbackService {
 
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
+    private final BusinessRepository businessRepository;
     private final PushNotificationService pushNotificationService;
     private final ObjectMapper objectMapper;
     private final Counter callbackCounter;
@@ -47,11 +50,13 @@ public class QrisCallbackService {
 
     public QrisCallbackService(TransactionRepository transactionRepository,
                                UserRepository userRepository,
+                               BusinessRepository businessRepository,
                                PushNotificationService pushNotificationService,
                                ObjectMapper objectMapper,
                                MeterRegistry meterRegistry) {
         this.transactionRepository = transactionRepository;
         this.userRepository = userRepository;
+        this.businessRepository = businessRepository;
         this.pushNotificationService = pushNotificationService;
         this.objectMapper = objectMapper;
         this.callbackCounter = Counter.builder("qris.callbacks.received").register(meterRegistry);
@@ -71,11 +76,13 @@ public class QrisCallbackService {
         log.info("[CALLBACK] status={} amount={}",
                 req.latestTransactionStatus(), req.amount() != null ? req.amount().value() : null);
 
-        User seedUser = userRepository.findByUsername(defaultUsername)
+        User seedUser = userRepository.findByUsernameAndDeletedAtIsNull(defaultUsername)
                 .orElseThrow(() -> {
                     log.error("[CALLBACK] Seed user '{}' not found — payment NOT recorded", defaultUsername);
                     return new ResourceNotFoundException("Seed user '" + defaultUsername + "' not found");
                 });
+        Long businessId = seedUser.getBusinessId();
+        String businessName = businessRepository.findById(businessId).map(Business::getName).orElse(null);
 
         QrMpmNotifyRequestDto.AdditionalInfo info = req.additionalInfo();
         BigDecimal amount = parseAmount(req.amount() != null ? req.amount().value() : null);
@@ -93,22 +100,24 @@ public class QrisCallbackService {
         t.setTransactionDate(LocalDateTime.now());
         t.setAmount(amount.setScale(0, RoundingMode.HALF_UP).longValueExact());
         t.setStatus(status);
-        t.setUsername(seedUser.getUsername());
+        t.setBusinessId(businessId);
         t.setType(TransactionType.MANAGED);
         t.setAcquirer(info != null && info.deviceId() != null ? info.deviceId() : Acquirer.ASTRAPAY);
-        t.setSource(info != null ? info.issuerName() : null);
+        // Issuer is hard-coded: every QRIS callback comes from AstraPay, and the provider's
+        // payload doesn't reliably carry issuerName (PoC mode).
+        t.setSource(Acquirer.ASTRAPAY);
         t.setMerchantPan(info != null ? info.merchantPan() : null);
         t.setCustomerPan(info != null && info.customerPan() != null ? info.customerPan() : req.customerNumber());
         t.setCustomerName(req.destinationAccountName());
         t.setScrapeDate(LocalDateTime.now());
-        t.setAdditionalInfo(toJson(req));
+        t.setInfo(toJson(req));
         transactionRepository.save(t);
-        log.info("[CALLBACK] Recorded transactionId={} username={} amount={} status={}",
-                transactionId, seedUser.getUsername(), t.getAmount(), status);
+        log.info("[CALLBACK] Recorded transactionId={} businessId={} amount={} status={}",
+                transactionId, businessId, t.getAmount(), status);
 
-        // Best-effort push to the seed user's devices — must never fail the callback
+        // Best-effort push to EVERY device of EVERY user in the business — must never fail the callback
         try {
-            pushNotificationService.sendToUser(seedUser.getUsername(), buildPushData(t, seedUser.getBusinessName()));
+            pushNotificationService.sendToBusiness(businessId, buildPushData(t, businessName));
         } catch (RuntimeException e) {
             log.error("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
                     transactionId, e.getMessage(), e);

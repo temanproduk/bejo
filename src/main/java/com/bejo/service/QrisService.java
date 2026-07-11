@@ -2,11 +2,11 @@ package com.bejo.service;
 
 import com.bejo.constant.QrisType;
 import com.bejo.dto.response.QrisResponseDto;
-import com.bejo.entity.User;
-import com.bejo.entity.UserQris;
+import com.bejo.entity.Business;
+import com.bejo.entity.BusinessQris;
 import com.bejo.exception.ResourceNotFoundException;
-import com.bejo.repository.UserQrisRepository;
-import com.bejo.repository.UserRepository;
+import com.bejo.repository.BusinessQrisRepository;
+import com.bejo.repository.BusinessRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -19,65 +19,72 @@ public class QrisService {
 
     private static final Logger log = LoggerFactory.getLogger(QrisService.class);
 
-    private final UserRepository userRepository;
-    private final UserQrisRepository userQrisRepository;
+    private final BusinessRepository businessRepository;
+    private final BusinessQrisRepository businessQrisRepository;
+    private final BusinessContext businessContext;
 
-    public QrisService(UserRepository userRepository, UserQrisRepository userQrisRepository) {
-        this.userRepository = userRepository;
-        this.userQrisRepository = userQrisRepository;
+    public QrisService(BusinessRepository businessRepository,
+                       BusinessQrisRepository businessQrisRepository,
+                       BusinessContext businessContext) {
+        this.businessRepository = businessRepository;
+        this.businessQrisRepository = businessQrisRepository;
+        this.businessContext = businessContext;
     }
 
     @Transactional
     public QrisResponseDto getQrisData(String username) {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        UserQris qris = userQrisRepository.findByUsername(username)
+        Long businessId = businessContext.requireBusinessId(username);
+        Business business = businessRepository.findById(businessId)
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+        BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
         if (qris.getQrisImage() != null) {
-            log.info("[QRIS] Serving UPLOADED image for username={}", username);
+            log.info("[QRIS] Serving UPLOADED image for businessId={}", businessId);
             return new QrisResponseDto(QrisType.UPLOADED, qris.getQrisImage(),
-                    user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
+                    business.getName(), business.getAddress(), business.getNmid());
         }
 
         // No uploaded image — serve the managed/initial image as-is. It may be null
-        // (e.g. a freshly registered account that hasn't uploaded a QRIS yet), in
+        // (e.g. a freshly registered business that hasn't uploaded a QRIS yet), in
         // which case the client renders an empty state instead of a placeholder.
         String initialImage = qris.getInitialQrisImage();
-        log.info("[QRIS] Serving MANAGED image (present={}) for username={}", initialImage != null, username);
+        log.info("[QRIS] Serving MANAGED image (present={}) for businessId={}", initialImage != null, businessId);
         return new QrisResponseDto(QrisType.MANAGED, initialImage,
-                user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
+                business.getName(), business.getAddress(), business.getNmid());
     }
 
     @Transactional
     public void uploadQris(String username, String base64Image) {
+        Long businessId = businessContext.requireSuperAdminBusinessId(username);  // super-admin only
         validateBase64Image(base64Image);
 
-        // QRIS is optional: SELF_SERVICE accounts have no user_qris row until they
-        // upload one, so create it on first upload (qris_code auto-generated).
-        UserQris qris = userQrisRepository.findByUsername(username)
+        // QRIS is optional: a business has no business_qris row until it uploads one,
+        // so create it on first upload (qris_code auto-generated).
+        BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseGet(() -> {
-                    UserQris created = new UserQris();
-                    created.setUsername(username);
-                    log.info("[QRIS] Creating QRIS row on first upload for username={}", username);
+                    BusinessQris created = new BusinessQris();
+                    created.setBusinessId(businessId);
+                    log.info("[QRIS] Creating QRIS row on first upload for businessId={}", businessId);
                     return created;
                 });
 
         qris.setQrisImage(base64Image);
-        userQrisRepository.save(qris);
-        log.info("[QRIS] Uploaded custom image ({} chars) for username={}", base64Image.length(), username);
+        businessQrisRepository.save(qris);
+        log.info("[QRIS] Uploaded custom image ({} chars) for businessId={}", base64Image.length(), businessId);
     }
 
     @Transactional
     public void resetQris(String username) {
-        UserQris qris = userQrisRepository.findByUsername(username)
+        Long businessId = businessContext.requireSuperAdminBusinessId(username);  // super-admin only
+        BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
         // Clear the uploaded image; fall back to whatever initial/managed image
         // exists (may be null → empty state). No placeholder is generated.
         qris.setQrisImage(null);
-        userQrisRepository.save(qris);
-        log.info("[QRIS] Reset to MANAGED image for username={}", username);
+        businessQrisRepository.save(qris);
+        log.info("[QRIS] Reset to MANAGED image for businessId={}", businessId);
     }
 
     private void validateBase64Image(String value) {

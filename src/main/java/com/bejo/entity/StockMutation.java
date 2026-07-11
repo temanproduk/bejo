@@ -17,8 +17,8 @@ public class StockMutation {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private String username;
+    @Column(name = "business_id", nullable = false)
+    private Long businessId;
 
     // PURCHASE | ADJUSTMENT | UPDATE — how this stock mutation was produced
     @Column(nullable = false)
@@ -38,8 +38,8 @@ public class StockMutation {
     }
 
     public Long getId() { return id; }
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
     public long getTotalAmount() { return totalAmount; }

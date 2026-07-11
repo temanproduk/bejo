@@ -75,7 +75,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HandlerMethodValidationException.class)
     public ResponseEntity<ApiResponseDto<Void>> handleMethodValidation(HandlerMethodValidationException ex, HttpServletRequest req) {
-        String message = ex.getAllValidationResults().stream()
+        String message = ex.getParameterValidationResults().stream()
                 .flatMap(r -> r.getResolvableErrors().stream())
                 .map(e -> e.getDefaultMessage())
                 .collect(Collectors.joining(", "));
@@ -97,7 +97,7 @@ public class GlobalExceptionHandler {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("transactionId sudah terdaftar"));
             }
-            if ("uq_username".equals(constraint)) {
+            if ("uq_users_username_active".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("Username sudah digunakan"));
             }
@@ -113,10 +113,24 @@ public class GlobalExceptionHandler {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("Kategori sudah ada"));
             }
+            if ("uq_business_nmid".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponseDto.error("NMID sudah digunakan oleh bisnis lain"));
+            }
+            if ("uq_qris_code".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponseDto.error("QRIS code sudah digunakan"));
+            }
         }
         log.error("Data integrity violation", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponseDto.error("Data tidak valid atau sudah terdaftar"));
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ApiResponseDto<Void>> handleForbidden(ForbiddenException ex, HttpServletRequest req) {
+        log.warn("[403] {} — {}", at(req), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponseDto.error(ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

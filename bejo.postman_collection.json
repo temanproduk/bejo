@@ -44,42 +44,176 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"nmid\": \"ID1026540778978\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/users/register",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "register"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "register"
+              ]
             },
-            "description": "Self-service registration. Creates a SELF_SERVICE user + bank profile. No JWT required — only X-API-TOKEN. No QRIS row is created (QRIS is optional; add one later via /api/qris/upload).\n\nMandatory: username, password, name, email, phone, businessName.\nOptional: businessAddress, nmid, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success."
+            "description": "Self-service registration. Creates a NEW BUSINESS and its first user as the SUPER_ADMIN (SELF_SERVICE) + bank profile. No JWT required — only X-API-TOKEN. No QRIS row is created (QRIS is optional; add one later via /api/qris/upload).\n\nMandatory: username, password, name, email, phone, businessName.\nOptional: businessAddress, nmid, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success."
           }
         },
         {
-          "name": "Register (internal — MANAGED)",
+          "name": "List Members",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "members"
+              ]
+            },
+            "description": "List the users of the caller's business (any member). The SUPER_ADMIN (creator) is first."
+          }
+        },
+        {
+          "name": "Add Member (super admin)",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"managed_user\",\n  \"password\": \"Secret1\",\n  \"name\": \"Managed User\",\n  \"email\": \"managed@example.com\",\n  \"phone\": \"+628100000001\",\n  \"businessName\": \"Managed Shop\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "raw": "{\n  \"username\": \"member1\",\n  \"password\": \"Secret1\",\n  \"name\": \"Member One\",\n  \"email\": \"member1@example.com\",\n  \"phone\": \"+628100000001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/users/internal/register",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "internal", "register"]
+              "raw": "{{baseUrl}}/api/users/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "members"
+              ]
             },
-            "description": "Internal/system registration. Same payload as public registration but creates a MANAGED account. Requires a valid JWT (Authorization: Bearer) in addition to X-API-TOKEN — it is not public.\n\nReturns HTTP 201 on success."
+            "description": "Add a user to the caller's business as a MEMBER. Only the SUPER_ADMIN may do this (else 403). Rejected (400) if the username is taken or the business is at its user cap (BUSINESS_MAX_USERS, default 5, incl. the super admin).\n\nReturns HTTP 201 on success."
+          }
+        },
+        {
+          "name": "Update Member (super admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Member One Updated\",\n  \"email\": \"member1.new@example.com\",\n  \"phone\": \"+628100000002\",\n  \"password\": \"NewSecret1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/members/2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "members",
+                "2"
+              ]
+            },
+            "description": "Partial update of a member (name/email/phone/password; all optional). Super admin only (403 otherwise). A super admin cannot be modified here (403)."
+          }
+        },
+        {
+          "name": "Delete Member (super admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/members/2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "members",
+                "2"
+              ]
+            },
+            "description": "Soft-delete a member (releases its username for reuse; removes its sessions). Super admin only (403). A super admin cannot be deleted (403)."
           }
         },
         {
@@ -102,20 +236,36 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"password\",\n  \"deviceId\": \"device-001\",\n  \"pushToken\": \"fcm-token-here\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/auth/login",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "login"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
             },
-            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse includes: username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessName, businessAddress, nmid, bankName, bankNumber, bankAccountName, token, tokenType."
+            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse `data` includes: id, username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessRole (SUPER_ADMIN|MEMBER), businessName, businessAddress, nmid, bankName, bankNumber, bankAccountName, profilePicture (business picture, null when unset), appSettings (bundled), token, tokenType, expiresIn.\n\nThe bundled profilePicture + appSettings save the client extra round trips on the home screen; GET /api/users/me returns the same bundle minus the token."
           }
         },
         {
@@ -137,19 +287,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"deviceId\": \"device-001\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/auth/logout",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "logout"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "logout"
+              ]
             },
             "description": "Invalidates the current JWT — it cannot be used again after logout. Optional body { deviceId } also clears that device's stored FCM token (the user's other devices are untouched); omit the body to just blacklist the token. The test script clears {{token}} from the collection variables."
           }
@@ -164,13 +333,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/transactions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "transactions"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ],
               "query": [
                 {
                   "key": "dateStart",
@@ -206,15 +386,32 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/transactions/summary",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "transactions", "summary"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "summary"
+              ],
               "query": [
-                { "key": "date", "value": "2026-07-15", "description": "The client's local today (yyyy-MM-dd). Optional; drives the today/yesterday/month buckets. Defaults to the server date.", "disabled": true }
+                {
+                  "key": "date",
+                  "value": "2026-07-15",
+                  "description": "The client's local today (yyyy-MM-dd). Optional; drives the today/yesterday/month buckets. Defaults to the server date.",
+                  "disabled": true
+                }
               ]
             },
             "description": "Dashboard totals: summed amount + count for today, yesterday, and the current calendar month. Use this instead of summing the (now paginated) history.\n\nResponse data: { date, today: {totalAmount, count}, yesterday: {...}, month: {...} }. Empty ranges return zeros. Pass ?date= to align the buckets with the merchant's timezone."
@@ -225,20 +422,42 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Idempotency-Key", "value": "{{$guid}}", "description": "UUID per request attempt. Sending the same key again returns the existing transactionId without inserting a duplicate." }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "UUID per request attempt. Sending the same key again returns the existing transactionId without inserting a duplicate."
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"MANUAL\",\n  \"transactionDate\": \"2026-06-29T10:00:00\",\n  \"amount\": 50000,\n  \"issuerName\": \"Cash\",\n  \"rrn\": \"000100000099\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/transactions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "transactions"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ]
             },
             "description": "Manually records a transaction. The server generates transactionId.\n\nIdempotency-Key header is required — use a UUID per request attempt. Resubmitting the same key returns the same transactionId without inserting a duplicate.\n\nFor MANUAL type, acquirer is automatically set to 'Cash'.\nMandatory: type, transactionDate, amount.\nOptional: issuerName, merchantPan, customerPan, rrn.\n\nReturns HTTP 201 with { transactionId }."
           }
@@ -248,20 +467,42 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Idempotency-Key", "value": "{{$guid}}", "description": "UUID per request attempt. Sending the same key again returns the existing transactionId without inserting a duplicate." }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "UUID per request attempt. Sending the same key again returns the existing transactionId without inserting a duplicate."
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"type\": \"PARSED\",\n  \"transactionDate\": \"2026-06-29T09:14:00\",\n  \"amount\": 75000,\n  \"issuerName\": \"GoPay\",\n  \"acquirer\": \"Midtrans\",\n  \"merchantPan\": \"936009XXXXXX0001\",\n  \"customerPan\": \"401177XXXXXX5678\",\n  \"rrn\": \"000100000001\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/transactions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "transactions"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions"
+              ]
             },
             "description": "Records a transaction from an external acquirer. The server generates transactionId.\n\nIdempotency-Key header is required. For PARSED type, acquirer is required.\n\nReturns HTTP 201 with { transactionId }."
           }
@@ -271,19 +512,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"transactions\": [\n    {\n      \"idempotencyKey\": \"off-1\",\n      \"transaction\": {\n        \"type\": \"MANUAL\",\n        \"transactionDate\": \"2026-06-28T09:14:00\",\n        \"amount\": 10000\n      }\n    },\n    {\n      \"idempotencyKey\": \"off-2\",\n      \"transaction\": {\n        \"type\": \"PARSED\",\n        \"transactionDate\": \"2026-06-28T10:00:00\",\n        \"amount\": 20000,\n        \"acquirer\": \"AstraPay\"\n      }\n    }\n  ]\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/transactions/bulk",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "transactions", "bulk"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                "bulk"
+              ]
             },
             "description": "Bulk-create manually-entered transactions synced after offline entry. Each item has its own idempotencyKey (client-generated) so re-sending the batch never duplicates. Partial success: one bad item does not block the rest.\n\nReturns HTTP 200 with a summary (total/created/duplicate/failed) and a per-item results list; match each result back by idempotencyKey. Item status is CREATED, DUPLICATE (already synced), or FAILED (with error). Batch limits: 1–500 items."
           }
@@ -293,21 +553,44 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"amount\": 60000,\n  \"issuerName\": \"OVO\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/transactions/:transactionId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "transactions", ":transactionId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                ":transactionId"
+              ],
               "variable": [
-                { "key": "transactionId", "value": "TXN-XXXXXXXXXXXX", "description": "transactionId returned by Add Transaction / history" }
+                {
+                  "key": "transactionId",
+                  "value": "TXN-XXXXXXXXXXXX",
+                  "description": "transactionId returned by Add Transaction / history"
+                }
               ]
             },
             "description": "Edits the authenticated user's transaction. Partial update — only fields present in the body are changed; type cannot be changed. Only MANUAL/PARSED transactions can be edited — MANAGED ones are immutable.\n\nOptional fields (send at least one): transactionDate, amount, acquirer, issuerName, merchantPan, customerPan, rrn.\n\nReturns HTTP 200 with the updated transaction.\nErrors: 400 (no fields / MANAGED type / invalid amount / blank acquirer), 404 Transaction not found (unknown, deleted, or another user's transaction)."
@@ -318,15 +601,31 @@
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/transactions/:transactionId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "transactions", ":transactionId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                ":transactionId"
+              ],
               "variable": [
-                { "key": "transactionId", "value": "TXN-XXXXXXXXXXXX", "description": "transactionId returned by Add Transaction / history" }
+                {
+                  "key": "transactionId",
+                  "value": "TXN-XXXXXXXXXXXX",
+                  "description": "transactionId returned by Add Transaction / history"
+                }
               ]
             },
             "description": "Soft-deletes the authenticated user's transaction: the row keeps a deleted_at timestamp and disappears from history. Cannot be undone via the API.\n\nReturns HTTP 200.\nErrors: 404 Transaction not found (unknown, already deleted, or another user's transaction)."
@@ -342,21 +641,81 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"deviceId\": \"da8221950b5d5c15\",\n  \"title\": \"Uang masuk Rp 50.000\",\n  \"body\": \"Ada transaksi masuk sejumlah Rp 50.000\",\n  \"data\": {\n    \"transactionId\": \"TXN-A1B2C3D4\",\n    \"transactionDate\": \"2026-06-29T09:14:00\",\n    \"amount\": 50000,\n    \"issuerName\": \"GoPay\",\n    \"merchantPan\": \"936009XXXXXX0001\",\n    \"customerPan\": \"401177XXXXXX5678\",\n    \"rrn\": \"000100000001\"\n  }\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/notifications/test",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "notifications", "test"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "test"
+              ]
             },
             "description": "TEST endpoint — sends an FCM push notification (built from this payload) to the specified device. Does NOT record any transaction.\n\ndata.transactionId, data.transactionDate, data.amount, and data.issuerName are required. merchantPan, customerPan, and rrn are optional.\n\nRequires Firebase to be configured (503 if not). Real payments are recorded and pushed by the QRIS Callback (QR MPM Notify)."
+          }
+        },
+        {
+          "name": "Broadcast to My Devices",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Uang masuk Rp 50.000\",\n  \"body\": \"Ada transaksi masuk sejumlah Rp 50.000\",\n  \"data\": {\n    \"transactionId\": \"TXN-A1B2C3D4\",\n    \"transactionDate\": \"2026-06-29T09:14:00\",\n    \"amount\": 50000,\n    \"issuerName\": \"GoPay\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications/user",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications",
+                "user"
+              ]
+            },
+            "description": "TEST/UTILITY — broadcasts an FCM push to ALL of the caller's devices at once (no deviceId). Best-effort: a dead token never fails the call (and is auto-cleaned); zero devices still returns 200. Does NOT record a transaction. Same body as Send Test Notification but without deviceId.\n\nRequires Firebase to be configured (503 if not)."
           }
         }
       ]
@@ -369,19 +728,39 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"pushToken\": \"new-fcm-token-here\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/devices/device-001/fcm-token",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "devices", "device-001", "fcm-token"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "devices",
+                "device-001",
+                "fcm-token"
+              ]
             },
             "description": "Updates the FCM push token for a device. Replace `device-001` in the path with the actual device ID."
           }
@@ -392,23 +771,70 @@
       "name": "Users",
       "item": [
         {
+          "name": "Get Me (account bundle)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me"
+              ]
+            },
+            "description": "Returns the caller's own account bundle: id, profile, businessRole, and the shared business/bank/profilePicture/appSettings — the same shape as the login data minus the token fields. Use it to refresh state without re-logging-in, and to get your own id for identifying yourself in the members list."
+          }
+        },
+        {
           "name": "Update Profile",
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Alice Wonderland\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/users/me",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me"
+              ]
             },
             "description": "Updates name, email, and phone. All three fields are required.\n\nPhone must be in international format, e.g. +628123456789."
           }
@@ -418,21 +844,41 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"businessName\": \"Alice Shop New\",\n  \"businessAddress\": \"Jl. Baru No. 2\",\n  \"nmid\": \"ID1026540778978\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/users/me/business",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "business"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                "business"
+              ]
             },
-            "description": "Updates the display business name, address, and NMID. businessName is required; businessAddress and nmid are optional.\n\nDoes NOT change the initial (regulatory) values. Use Reset Business Info to revert."
+            "description": "Updates the business name, address, and NMID (shared by all of the business's users). businessName is required; businessAddress and nmid are optional.\n\nDoes NOT change the initial (regulatory) values. Use Reset Business Info to revert."
           }
         },
         {
@@ -440,13 +886,27 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/users/me/business/reset",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "business", "reset"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                "business",
+                "reset"
+              ]
             },
             "description": "Reverts businessName, businessAddress, and nmid to the values recorded at registration.\n\nNo request body needed."
           }
@@ -456,21 +916,41 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/users/me/bank",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "bank"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                "bank"
+              ]
             },
-            "description": "Updates bank account information. All three fields are required.\n\nbankNumber must be digits only, 6–20 digits.\n\nDoes NOT change the initial (regulatory) values. Use Reset Bank Info to revert."
+            "description": "Updates bank account information (shared by all of the business's users). All three fields are required.\n\nbankNumber must be digits only, 6–20 digits.\n\nDoes NOT change the initial (regulatory) values. Use Reset Bank Info to revert."
           }
         },
         {
@@ -478,13 +958,27 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/users/me/bank/reset",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "bank", "reset"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                "bank",
+                "reset"
+              ]
             },
             "description": "Reverts bankName, bankNumber, and bankAccountName to the values recorded at registration (initialBankName / initialBankNumber / initialBankAccountName).\n\nNo request body needed."
           }
@@ -494,75 +988,138 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"oldPassword\": \"Secret1\",\n  \"newPassword\": \"NewSecret2\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/users/me/password",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "password"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                "password"
+              ]
             },
             "description": "Changes the authenticated user's password. Requires the current password for verification.\n\nnewPassword rules: minimum 8 characters, at least 1 letter and 1 number."
           }
         },
         {
-          "name": "Get Profile Picture",
+          "name": "Get Business Picture",
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/users/me/profile-picture",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "profile-picture"]
+              "raw": "{{baseUrl}}/api/business/picture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "picture"
+              ]
             },
-            "description": "Returns the user's profile picture as a base64 string. Optional — when unset, data.profilePicture is explicitly null (no placeholder)."
+            "description": "Returns the BUSINESS picture as a base64 string (shared by all of the business's users). Optional — when unset, data.profilePicture is explicitly null (no placeholder)."
           }
         },
         {
-          "name": "Set Profile Picture",
+          "name": "Set Business Picture",
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"profilePicture\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMFAgD5wKq2AAAAAElFTkSuQmCC\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/users/me/profile-picture",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "profile-picture"]
+              "raw": "{{baseUrl}}/api/business/picture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "picture"
+              ]
             },
-            "description": "Stores a base64-encoded image as the profile picture. Compress client-side; the decoded image must be <= 1 MB. Returns the saved picture."
+            "description": "Stores a base64-encoded image as the BUSINESS picture (shared by all members). Compress client-side; the decoded image must be <= 1 MB. Returns the saved picture. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
-          "name": "Delete Profile Picture",
+          "name": "Delete Business Picture",
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/users/me/profile-picture",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "users", "me", "profile-picture"]
+              "raw": "{{baseUrl}}/api/business/picture",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "business",
+                "picture"
+              ]
             },
-            "description": "Clears the user's profile picture (sets it back to null). Idempotent — succeeds whether or not a picture was set."
+            "description": "Clears the BUSINESS picture (sets it back to null). Idempotent — succeeds whether or not a picture was set. NOTE: super admin only — a plain member gets 403."
           }
         }
       ]
@@ -575,19 +1132,37 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Minuman\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/categories",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "categories"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
             },
             "description": "Creates a product category (unique name per merchant). Returns HTTP 201 with { id, name, createdAt }."
           }
@@ -597,13 +1172,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/categories",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "categories"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ]
             },
             "description": "Lists the merchant's product categories."
           }
@@ -613,13 +1199,25 @@
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/categories/1",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "categories", "1"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories",
+                "1"
+              ]
             },
             "description": "Deletes a category. Its products are un-categorized (categoryId -> null), not deleted. Replace 1 with the category id."
           }
@@ -629,19 +1227,37 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"sku\": \"KOPI-01\",\n  \"name\": \"Kopi Susu\",\n  \"shortDescription\": \"Kopi + susu segar\",\n  \"categoryId\": 1,\n  \"price\": 18000,\n  \"costPrice\": 10000,\n  \"stock\": 25,\n  \"photo\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMFAgD5wKq2AAAAAElFTkSuQmCC\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/products",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "products"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
             },
             "description": "Creates a product (SKU). sku + name required; sku unique per merchant. categoryId (optional) must be one of the merchant's own categories. photo (optional) is a base64 image, max 500 KB decoded. Returns HTTP 201 with the product incl. resolved categoryName."
           }
@@ -651,17 +1267,43 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/products?categoryId=1",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "products"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ],
               "query": [
-                { "key": "categoryId", "value": "1", "description": "Optional filter by category id", "disabled": true },
-                { "key": "page", "value": "1", "description": "Page number, 1-based. Optional (default 1).", "disabled": true },
-                { "key": "size", "value": "50", "description": "Page size. Optional (default 50, max 200).", "disabled": true }
+                {
+                  "key": "categoryId",
+                  "value": "1",
+                  "description": "Optional filter by category id",
+                  "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number, 1-based. Optional (default 1).",
+                  "disabled": true
+                },
+                {
+                  "key": "size",
+                  "value": "50",
+                  "description": "Page size. Optional (default 50, max 200).",
+                  "disabled": true
+                }
               ]
             },
             "description": "Lists the merchant's products. Optional ?categoryId= filter. The photo field is omitted from list items to keep the payload small — use Get Product for the image.\n\nPaginated: optional page (default 1) + size (default 50, max 200). The response adds page, totalPages, and total; count is the number of items in the current page."
@@ -672,13 +1314,25 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/products/1",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "products", "1"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "1"
+              ]
             },
             "description": "Returns one product including its photo. Replace 1 with the product id."
           }
@@ -688,19 +1342,38 @@
           "request": {
             "method": "PATCH",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"price\": 20000,\n  \"stock\": 40\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/products/1",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "products", "1"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "1"
+              ]
             },
             "description": "Partial update: send any subset of sku, name, categoryId, price, costPrice, stock, photo. Managing inventory = send { \"stock\": N }. Replace 1 with the product id."
           }
@@ -710,13 +1383,25 @@
           "request": {
             "method": "DELETE",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/products/1",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "products", "1"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "1"
+              ]
             },
             "description": "Hard-deletes a product. Replace 1 with the product id."
           }
@@ -726,19 +1411,38 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"note\": \"opname sore\",\n  \"items\": [\n    { \"productId\": 1, \"stock\": 8 },\n    { \"productId\": 2, \"stock\": 12 }\n  ]\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/products/stock-adjustments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "products", "stock-adjustments"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "stock-adjustments"
+              ]
             },
             "description": "Stock opname: sets several products' stock to their newly counted quantities at once. Each item's stock is the new absolute count. Optional note is stored on the resulting ADJUSTMENT stock mutation. Atomic — if any productId isn't the merchant's, the whole adjustment is rejected. Returns a variance report (previousStock/newStock/difference) per product."
           }
@@ -753,19 +1457,37 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"note\": \"restock pagi\",\n  \"items\": [\n    { \"productId\": 1, \"quantity\": 20 },\n    { \"productId\": 2, \"quantity\": 5, \"unitPrice\": 9000 }\n  ]\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/stock-mutations",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "stock-mutations"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "stock-mutations"
+              ]
             },
             "description": "Records a PURCHASE (restock) stock mutation: raises the stock of every listed product at once and saves line items with before/after stock. Atomic — if any productId isn't the merchant's, the whole thing is rejected. unitPrice defaults to the product's costPrice when omitted. Returns HTTP 201 with type=PURCHASE, totalAmount + item snapshots."
           }
@@ -775,16 +1497,37 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/stock-mutations",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "stock-mutations"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "stock-mutations"
+              ],
               "query": [
-                { "key": "page", "value": "1", "description": "Page number, 1-based. Optional (default 1).", "disabled": true },
-                { "key": "size", "value": "50", "description": "Page size. Optional (default 50, max 200).", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number, 1-based. Optional (default 1).",
+                  "disabled": true
+                },
+                {
+                  "key": "size",
+                  "value": "50",
+                  "description": "Page size. Optional (default 50, max 200).",
+                  "disabled": true
+                }
               ]
             },
             "description": "Stock-change history newest-first — mutations (PURCHASE from restock, ADJUSTMENT from stock opname, UPDATE from a product edit that changed stock), each with its line items.\n\nPaginated: optional page (default 1) + size (default 50, max 200). The response adds page, totalPages, and total; count is the number of items in the current page."
@@ -795,13 +1538,25 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/stock-mutations/1",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "stock-mutations", "1"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "stock-mutations",
+                "1"
+              ]
             },
             "description": "Returns one stock mutation including its line items (previousStock/newStock/quantityChange). Replace 1 with the mutation id."
           }
@@ -816,13 +1571,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/app-settings",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "app-settings"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "app-settings"
+              ]
             },
             "description": "Returns the user's app settings (monitored apps + notification keyword filters). When nothing has been synced yet, returns defaults: empty monitoredApps/keyword lists, blacklistEnabled=true, whitelistEnabled=false."
           }
@@ -832,21 +1598,40 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"apps\": {\n    \"id.dana\": \"dana\",\n    \"com.gojek.app\": \"gopay\"\n  }\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/app-settings/monitored-apps",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "app-settings", "monitored-apps"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "app-settings",
+                "monitored-apps"
+              ]
             },
-            "description": "Replaces the monitored-apps map (packageName -> issuer). Sending an empty object clears the list. Package names must match [A-Za-z0-9_.]+; issuers are trimmed and lowercased. Returns the full updated settings."
+            "description": "Replaces the monitored-apps map (packageName -> issuer). Sending an empty object clears the list. Package names must match [A-Za-z0-9_.]+; issuers are trimmed and lowercased. Returns the full updated settings. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
@@ -854,21 +1639,40 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"includeKeywords\": [\"uang masuk\", \"pembayaran diterima\"],\n  \"excludeKeywords\": [\"promo\", \"gagal\"],\n  \"blacklistEnabled\": true,\n  \"whitelistEnabled\": false\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/app-settings/keywords",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "app-settings", "keywords"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "app-settings",
+                "keywords"
+              ]
             },
-            "description": "Updates the notification keyword filters. Partial update: omit a field (null) to leave it unchanged; send an empty list to clear it. Keywords are trimmed, lowercased, and deduplicated. Returns the full updated settings."
+            "description": "Updates the notification keyword filters. Partial update: omit a field (null) to leave it unchanged; send an empty list to clear it. Keywords are trimmed, lowercased, and deduplicated. Returns the full updated settings. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
@@ -876,21 +1680,40 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"enabled\": true\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/app-settings/qris-with-profile-picture",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "app-settings", "qris-with-profile-picture"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "app-settings",
+                "qris-with-profile-picture"
+              ]
             },
-            "description": "Toggles whether the QRIS image is composed onto the profile picture (default false). Returns the full updated settings."
+            "description": "Toggles whether the QRIS image is composed onto the profile picture (default false). Returns the full updated settings. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
@@ -898,21 +1721,40 @@
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"enabled\": true\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/app-settings/inventory",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "app-settings", "inventory"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "app-settings",
+                "inventory"
+              ]
             },
-            "description": "Toggles whether inventory management is enabled (default false). Returns the full updated settings."
+            "description": "Toggles whether inventory management is enabled (default false). Returns the full updated settings. NOTE: super admin only — a plain member gets 403."
           }
         }
       ]
@@ -925,13 +1767,24 @@
           "request": {
             "method": "GET",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/qris",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "qris"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "qris"
+              ]
             },
             "description": "Returns the QRIS image as base64 and business info for the authenticated user.\n\nResponse includes: type (MANAGED or UPLOADED), image (base64-encoded PNG), businessName, businessAddress, nmid.\n\nIf no image has been generated yet, one is created and stored on the first call.\n\ntype=MANAGED means the Bejo-generated QRIS. type=UPLOADED means the user has uploaded their own QRIS image which takes precedence."
           }
@@ -941,21 +1794,40 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" },
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"qrisImage\": \"<base64-encoded image string>\"\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/api/qris/upload",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "qris", "upload"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "qris",
+                "upload"
+              ]
             },
-            "description": "Uploads a custom QRIS image. After uploading, GET /api/qris returns this image with type=UPLOADED.\n\nThe generated QRIS is preserved and can be restored with Reset QRIS.\n\nqrisImage must be a valid base64-encoded string."
+            "description": "Uploads a custom QRIS image. After uploading, GET /api/qris returns this image with type=UPLOADED.\n\nThe generated QRIS is preserved and can be restored with Reset QRIS.\n\nqrisImage must be a valid base64-encoded string. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
@@ -963,15 +1835,27 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "X-API-TOKEN", "value": "{{apiToken}}" },
-              { "key": "Authorization", "value": "Bearer {{token}}" }
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
             ],
             "url": {
               "raw": "{{baseUrl}}/api/qris/reset",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "qris", "reset"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "qris",
+                "reset"
+              ]
             },
-            "description": "Clears the uploaded QRIS image and reverts to the Bejo-generated one (type=MANAGED).\n\nNo request body needed."
+            "description": "Clears the uploaded QRIS image and reverts to the Bejo-generated one (type=MANAGED).\n\nNo request body needed. NOTE: super admin only — a plain member gets 403."
           }
         }
       ]
@@ -984,20 +1868,37 @@
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "X-TIMESTAMP", "value": "2020-12-23T08:46:11+07:00" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-TIMESTAMP",
+                "value": "2020-12-23T08:46:11+07:00"
+              }
             ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"originalReferenceNo\": \"XCBS6Z450S\",\n  \"originalPartnerReferenceNo\": \"DEV20250826422460\",\n  \"latestTransactionStatus\": \"00\",\n  \"transactionStatusDesc\": \"SUCCESS\",\n  \"customerNumber\": \"9360082230250015792\",\n  \"destinationNumber\": \"9360082232504524231\",\n  \"destinationAccountName\": \"Asep & Testing\",\n  \"externalStoreId\": null,\n  \"amount\": { \"value\": \"100.00\", \"currency\": \"IDR\" },\n  \"additionalInfo\": {\n    \"tip\": \"0.00\",\n    \"deviceId\": \"AstraPay\",\n    \"channel\": \"POS\",\n    \"terminalId\": \"5164\",\n    \"userName\": \"AstraPay User\",\n    \"merchantPan\": \"9360082232504524231\",\n    \"customerPan\": \"9360082230250015792\",\n    \"issuerName\": \"93600822\",\n    \"transactionId\": \"INV/QRM/4542BR/250826/2G4Y6CCZ\"\n  }\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
               "raw": "{{baseUrl}}/snap/v1.0/qr/qr-mpm-notify",
-              "host": ["{{baseUrl}}"],
-              "path": ["snap", "v1.0", "qr", "qr-mpm-notify"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "snap",
+                "v1.0",
+                "qr",
+                "qr-mpm-notify"
+              ]
             },
-            "description": "Inbound QRIS payment callback (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). Server-to-server — no X-API-TOKEN and no JWT.\n\nRecords the payment as a MANAGED transaction and stores the raw payload in the transaction's additional_info column. Routed to the Bejo user whose nmid == merchantPan (else app.callback.default-username). Idempotent on originalReferenceNo + originalPartnerReferenceNo.\n\nReturns HTTP 200 with the acknowledgment shape { id, billNumber, referenceNumber, amount, tip, status, createdAt } — NOT the standard envelope."
+            "description": "Inbound QRIS payment callback (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). Server-to-server — no X-API-TOKEN and no JWT.\n\nPoC mode (provider payload is buggy): every callback records a MANAGED transaction against the SEED USER'S BUSINESS (app.callback.default-username → its business_id) and pushes to EVERY device of EVERY user in that business. No NMID routing, no dedupe (each callback = a new transaction). X-TIMESTAMP is currently ignored (transaction date = now()). Raw payload stored in additional_info.\n\nReturns HTTP 200 with the acknowledgment shape { id, billNumber, referenceNumber, amount, tip, status, createdAt } — NOT the standard envelope."
           }
         }
       ]
@@ -1012,8 +1913,13 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/actuator/health",
-              "host": ["{{baseUrl}}"],
-              "path": ["actuator", "health"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
             },
             "description": "Health check — no X-API-TOKEN or JWT required."
           }

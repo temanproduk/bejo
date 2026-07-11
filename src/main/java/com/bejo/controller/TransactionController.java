@@ -52,6 +52,15 @@ public class TransactionController {
         return ResponseEntity.ok(ApiResponseDto.success("Sinkronisasi transaksi selesai", data));
     }
 
+    // Single transaction with its sold-product line items (the history list omits items).
+    @GetMapping("/{transactionId}")
+    public ResponseEntity<ApiResponseDto<TransactionResponseDto>> getTransaction(
+            @PathVariable String transactionId,
+            Authentication authentication) {
+        TransactionResponseDto data = transactionService.get(authentication.getName(), transactionId);
+        return ResponseEntity.ok(ApiResponseDto.success(data));
+    }
+
     @PatchMapping("/{transactionId}")
     public ResponseEntity<ApiResponseDto<TransactionResponseDto>> updateTransaction(
             @PathVariable String transactionId,

@@ -1,5 +1,6 @@
 package com.bejo.config;
 
+import com.bejo.repository.UserRepository;
 import com.bejo.service.JwtService;
 import com.bejo.service.TokenBlacklistService;
 import jakarta.servlet.FilterChain;
@@ -19,10 +20,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final TokenBlacklistService tokenBlacklistService;
+    private final UserRepository userRepository;
 
-    public JwtAuthFilter(JwtService jwtService, TokenBlacklistService tokenBlacklistService) {
+    public JwtAuthFilter(JwtService jwtService,
+                         TokenBlacklistService tokenBlacklistService,
+                         UserRepository userRepository) {
         this.jwtService = jwtService;
         this.tokenBlacklistService = tokenBlacklistService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -40,8 +45,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         if (jwtService.isValid(token)) {
             String jti = jwtService.extractJti(token);
-            if (!tokenBlacklistService.isBlacklisted(jti)) {
-                String username = jwtService.extractUsername(token);
+            String username = jwtService.extractUsername(token);
+            // Reject tokens whose user no longer exists / was soft-deleted (its username
+            // may since have been reused): the token stays signed+unexpired, but the
+            // account is gone, so it must not authenticate anything.
+            if (!tokenBlacklistService.isBlacklisted(jti)
+                    && userRepository.existsByUsernameAndDeletedAtIsNull(username)) {
                 UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                         username, null, Collections.emptyList()
                 );

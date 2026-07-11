@@ -3,8 +3,8 @@ package com.bejo.service;
 import com.bejo.dto.request.UpdateKeywordsRequestDto;
 import com.bejo.dto.request.UpdateMonitoredAppsRequestDto;
 import com.bejo.dto.response.AppSettingsResponseDto;
-import com.bejo.entity.UserAppSettings;
-import com.bejo.repository.UserAppSettingsRepository;
+import com.bejo.entity.BusinessAppSettings;
+import com.bejo.repository.BusinessAppSettingsRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -34,16 +34,19 @@ public class AppSettingsService {
     // Android package names: letters, digits, underscore, dot
     private static final String PACKAGE_PATTERN = "^[A-Za-z0-9_.]+$";
 
-    private final UserAppSettingsRepository repository;
+    private final BusinessAppSettingsRepository repository;
+    private final BusinessContext businessContext;
 
-    public AppSettingsService(UserAppSettingsRepository repository) {
+    public AppSettingsService(BusinessAppSettingsRepository repository, BusinessContext businessContext) {
         this.repository = repository;
+        this.businessContext = businessContext;
     }
 
     @Transactional(readOnly = true)
     public AppSettingsResponseDto getSettings(String username) {
-        log.info("[APP-SETTINGS] Get for username={}", username);
-        return repository.findByUsername(username)
+        Long businessId = businessContext.requireBusinessId(username);
+        log.info("[APP-SETTINGS] Get for businessId={}", businessId);
+        return repository.findByBusinessId(businessId)
                 .map(this::toResponse)
                 // No row yet — return defaults (blacklist ON, whitelist OFF, toggles OFF, empty lists)
                 .orElseGet(() -> new AppSettingsResponseDto(
@@ -54,10 +57,10 @@ public class AppSettingsService {
     public AppSettingsResponseDto updateMonitoredApps(String username, UpdateMonitoredAppsRequestDto request) {
         Map<String, String> sanitized = sanitizeApps(request.apps());
 
-        UserAppSettings settings = loadOrCreate(username);
+        BusinessAppSettings settings = loadOrCreate(username);
         settings.setMonitoredApps(sanitized);
         repository.save(settings);
-        log.info("[APP-SETTINGS] Updated monitored apps ({} entries) for username={}", sanitized.size(), username);
+        log.info("[APP-SETTINGS] Updated monitored apps ({} entries) for businessId={}", sanitized.size(), settings.getBusinessId());
         return toResponse(settings);
     }
 
@@ -67,7 +70,7 @@ public class AppSettingsService {
             throw new IllegalArgumentException("Tidak ada field yang diubah");
         }
 
-        UserAppSettings settings = loadOrCreate(username);
+        BusinessAppSettings settings = loadOrCreate(username);
         // Partial update — null leaves a field unchanged; an empty list clears it
         if (request.includeKeywords() != null) {
             settings.setIncludeKeywords(sanitizeKeywords(request.includeKeywords(), "includeKeywords"));
@@ -82,35 +85,38 @@ public class AppSettingsService {
             settings.setWhitelistEnabled(request.whitelistEnabled());
         }
         repository.save(settings);
-        log.info("[APP-SETTINGS] Updated keywords (include={}, exclude={}, blacklist={}, whitelist={}) for username={}",
+        log.info("[APP-SETTINGS] Updated keywords (include={}, exclude={}, blacklist={}, whitelist={}) for businessId={}",
                 settings.getIncludeKeywords().size(), settings.getExcludeKeywords().size(),
-                settings.isBlacklistEnabled(), settings.isWhitelistEnabled(), username);
+                settings.isBlacklistEnabled(), settings.isWhitelistEnabled(), settings.getBusinessId());
         return toResponse(settings);
     }
 
     @Transactional
     public AppSettingsResponseDto updateQrisWithProfilePicture(String username, boolean enabled) {
-        UserAppSettings settings = loadOrCreate(username);
+        BusinessAppSettings settings = loadOrCreate(username);
         settings.setQrisWithProfilePicture(enabled);
         repository.save(settings);
-        log.info("[APP-SETTINGS] qrisWithProfilePicture={} for username={}", enabled, username);
+        log.info("[APP-SETTINGS] qrisWithProfilePicture={} for businessId={}", enabled, settings.getBusinessId());
         return toResponse(settings);
     }
 
     @Transactional
     public AppSettingsResponseDto updateInventoryEnabled(String username, boolean enabled) {
-        UserAppSettings settings = loadOrCreate(username);
+        BusinessAppSettings settings = loadOrCreate(username);
         settings.setInventoryEnabled(enabled);
         repository.save(settings);
-        log.info("[APP-SETTINGS] inventoryEnabled={} for username={}", enabled, username);
+        log.info("[APP-SETTINGS] inventoryEnabled={} for businessId={}", enabled, settings.getBusinessId());
         return toResponse(settings);
     }
 
-    private UserAppSettings loadOrCreate(String username) {
-        return repository.findByUsername(username).orElseGet(() -> {
-            UserAppSettings created = new UserAppSettings();
-            created.setUsername(username);
-            log.info("[APP-SETTINGS] Creating settings row for username={}", username);
+    // Every mutation flows through here, so this is where super-admin is enforced:
+    // only the business's super admin may change app config; members can still GET it.
+    private BusinessAppSettings loadOrCreate(String username) {
+        Long businessId = businessContext.requireSuperAdminBusinessId(username);
+        return repository.findByBusinessId(businessId).orElseGet(() -> {
+            BusinessAppSettings created = new BusinessAppSettings();
+            created.setBusinessId(businessId);
+            log.info("[APP-SETTINGS] Creating settings row for businessId={}", businessId);
             return created;
         });
     }
@@ -158,7 +164,7 @@ public class AppSettingsService {
         return new ArrayList<>(seen);
     }
 
-    private AppSettingsResponseDto toResponse(UserAppSettings s) {
+    private AppSettingsResponseDto toResponse(BusinessAppSettings s) {
         return new AppSettingsResponseDto(
                 new LinkedHashMap<>(s.getMonitoredApps()),
                 new ArrayList<>(s.getIncludeKeywords()),

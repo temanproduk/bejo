@@ -3,6 +3,7 @@ package com.bejo.dto.response;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record TransactionResponseDto(
@@ -15,5 +16,8 @@ public record TransactionResponseDto(
         String merchantName,
         String merchantPan,
         String customerPan,
-        String rrn
+        String rrn,
+        // Products sold in this transaction. Only populated on the single-transaction
+        // detail (GET /api/transactions/{id}); omitted (null) from the history list.
+        List<TransactionItemResponseDto> items
 ) {}

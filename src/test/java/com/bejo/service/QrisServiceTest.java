@@ -1,11 +1,11 @@
 package com.bejo.service;
 
 import com.bejo.dto.response.QrisResponseDto;
-import com.bejo.entity.User;
-import com.bejo.entity.UserQris;
+import com.bejo.entity.Business;
+import com.bejo.entity.BusinessQris;
 import com.bejo.exception.ResourceNotFoundException;
-import com.bejo.repository.UserQrisRepository;
-import com.bejo.repository.UserRepository;
+import com.bejo.repository.BusinessQrisRepository;
+import com.bejo.repository.BusinessRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +17,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -24,28 +25,32 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class QrisServiceTest {
 
-    @Mock private UserRepository userRepository;
-    @Mock private UserQrisRepository userQrisRepository;
+    private static final Long BIZ = 1L;
+
+    @Mock private BusinessRepository businessRepository;
+    @Mock private BusinessQrisRepository businessQrisRepository;
+    @Mock private BusinessContext businessContext;
 
     private QrisService qrisService;
 
     @BeforeEach
     void setUp() {
-        qrisService = new QrisService(userRepository, userQrisRepository);
+        qrisService = new QrisService(businessRepository, businessQrisRepository, businessContext);
+        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads
+        lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // upload/reset (super admin)
     }
 
-    private User user() {
-        User u = new User();
-        u.setUsername("alice");
-        u.setBusinessName("Warung Alice");
-        u.setBusinessAddress("Jakarta");
-        u.setNmid("ID123");
-        return u;
+    private Business business() {
+        Business b = new Business();
+        b.setName("Warung Alice");
+        b.setAddress("Jakarta");
+        b.setNmid("ID123");
+        return b;
     }
 
-    private UserQris qris(String uploadedImage, String initialImage) {
-        UserQris q = new UserQris();
-        q.setUsername("alice");
+    private BusinessQris qris(String uploadedImage, String initialImage) {
+        BusinessQris q = new BusinessQris();
+        q.setBusinessId(BIZ);
         q.setQrisCode("11111111-2222-3333-4444-555555555555");
         q.setQrisImage(uploadedImage);
         q.setInitialQrisImage(initialImage);
@@ -54,8 +59,8 @@ class QrisServiceTest {
 
     @Test
     void uploadedImageYieldsUploadedType() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user()));
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(qris("dXBsb2FkZWQ=", null)));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris("dXBsb2FkZWQ=", null)));
 
         QrisResponseDto data = qrisService.getQrisData("alice");
 
@@ -66,33 +71,34 @@ class QrisServiceTest {
 
     @Test
     void managedTypeWithoutImageServesEmptyState() {
-        UserQris q = qris(null, null);
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user()));
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(q));
+        BusinessQris q = qris(null, null);
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
 
         QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("MANAGED");
         // No placeholder is generated — the initial image (null here) is served as-is
         assertThat(data.qrisImage()).isNull();
-        verify(userQrisRepository, never()).save(q);
+        verify(businessQrisRepository, never()).save(q);
     }
 
     @Test
     void managedTypeReusesExistingInitialImage() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user()));
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(qris(null, "aW5pdGlhbA==")));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris(null, "aW5pdGlhbA==")));
 
         QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("MANAGED");
         assertThat(data.qrisImage()).isEqualTo("aW5pdGlhbA==");
-        verify(userQrisRepository, never()).save(org.mockito.ArgumentMatchers.any());
+        verify(businessQrisRepository, never()).save(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
     void getQrisDataForUnknownUserThrows() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+        when(businessContext.requireBusinessId("ghost"))
+                .thenThrow(new ResourceNotFoundException("User not found"));
 
         assertThatThrownBy(() -> qrisService.getQrisData("ghost"))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -100,13 +106,13 @@ class QrisServiceTest {
 
     @Test
     void uploadStoresBase64Image() {
-        UserQris q = qris(null, "aW5pdGlhbA==");
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(q));
+        BusinessQris q = qris(null, "aW5pdGlhbA==");
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
 
         qrisService.uploadQris("alice", "bmV3LWltYWdl");
 
         assertThat(q.getQrisImage()).isEqualTo("bmV3LWltYWdl");
-        verify(userQrisRepository).save(q);
+        verify(businessQrisRepository).save(q);
     }
 
     @Test
@@ -119,39 +125,51 @@ class QrisServiceTest {
 
     @Test
     void uploadCreatesQrisRowWhenNoneExists() {
-        // Self-service accounts have no user_qris row until their first upload
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.empty());
+        // A business has no business_qris row until its first upload
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
 
         qrisService.uploadQris("alice", "bmV3LWltYWdl");
 
-        ArgumentCaptor<UserQris> captor = ArgumentCaptor.forClass(UserQris.class);
-        verify(userQrisRepository).save(captor.capture());
-        assertThat(captor.getValue().getUsername()).isEqualTo("alice");
+        ArgumentCaptor<BusinessQris> captor = ArgumentCaptor.forClass(BusinessQris.class);
+        verify(businessQrisRepository).save(captor.capture());
+        assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
         assertThat(captor.getValue().getQrisImage()).isEqualTo("bmV3LWltYWdl");
     }
 
     @Test
+    void nonSuperAdminCannotUploadOrReset() {
+        when(businessContext.requireSuperAdminBusinessId("bob"))
+                .thenThrow(new com.bejo.exception.ForbiddenException("Hanya super admin yang dapat mengubah pengaturan bisnis"));
+
+        assertThatThrownBy(() -> qrisService.uploadQris("bob", "bmV3LWltYWdl"))
+                .isInstanceOf(com.bejo.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> qrisService.resetQris("bob"))
+                .isInstanceOf(com.bejo.exception.ForbiddenException.class);
+        verify(businessQrisRepository, never()).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void resetClearsUploadedImage() {
-        UserQris q = qris("dXBsb2FkZWQ=", "aW5pdGlhbA==");
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(q));
+        BusinessQris q = qris("dXBsb2FkZWQ=", "aW5pdGlhbA==");
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
 
         qrisService.resetQris("alice");
 
         assertThat(q.getQrisImage()).isNull();
         assertThat(q.getInitialQrisImage()).isEqualTo("aW5pdGlhbA==");
-        verify(userQrisRepository).save(q);
+        verify(businessQrisRepository).save(q);
     }
 
     @Test
     void resetClearsUploadedImageWithoutGenerating() {
-        UserQris q = qris("dXBsb2FkZWQ=", null);
-        when(userQrisRepository.findByUsername("alice")).thenReturn(Optional.of(q));
+        BusinessQris q = qris("dXBsb2FkZWQ=", null);
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
 
         qrisService.resetQris("alice");
 
         assertThat(q.getQrisImage()).isNull();
         // No initial image is generated — stays null (empty state)
         assertThat(q.getInitialQrisImage()).isNull();
-        verify(userQrisRepository).save(q);
+        verify(businessQrisRepository).save(q);
     }
 }

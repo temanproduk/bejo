@@ -698,11 +698,12 @@ class ApiIntegrationTest {
 
         // MANAGED rows are created by the notification flow (needs Firebase),
         // so seed one directly
+        Long bizId = userRepository.findBusinessIdByUsername("txn_user13").orElseThrow();
         com.bejo.entity.Transaction t = new com.bejo.entity.Transaction();
         t.setTransactionId("TXN-MANAGED-1");
         t.setTransactionDate(java.time.LocalDateTime.of(2026, 7, 1, 10, 0));
         t.setAmount(15000L);
-        t.setUsername("txn_user13");
+        t.setBusinessId(bizId);
         t.setType("MANAGED");
         t.setAcquirer("AstraPay");
         t.setStatus("SUCCESS");
@@ -781,12 +782,13 @@ class ApiIntegrationTest {
     // cb_seed in test config). Register it idempotently; count its transactions by delta
     // so these tests are isolated from the shared H2 state.
     private void ensureCallbackSeedUser() throws Exception {
-        if (userRepository.findByUsername("cb_seed").isEmpty()) register("cb_seed");
+        if (userRepository.findByUsernameAndDeletedAtIsNull("cb_seed").isEmpty()) register("cb_seed");
     }
 
     private long seedTxnCount() {
-        return transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc(
-                "cb_seed", org.springframework.data.domain.PageRequest.of(0, 1)).getTotalElements();
+        Long bizId = userRepository.findBusinessIdByUsername("cb_seed").orElseThrow();
+        return transactionRepository.findByBusinessIdAndDeletedAtIsNullOrderByTransactionDateDesc(
+                bizId, org.springframework.data.domain.PageRequest.of(0, 1)).getTotalElements();
     }
 
     @Test
@@ -812,7 +814,9 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data[0].amount").value(100))
-                .andExpect(jsonPath("$.data[0].acquirer").value("AstraPay"));
+                .andExpect(jsonPath("$.data[0].acquirer").value("AstraPay"))
+                // Issuer is hard-coded to AstraPay regardless of the payload's issuerName
+                .andExpect(jsonPath("$.data[0].issuerName").value("AstraPay"));
     }
 
     @Test
@@ -929,45 +933,304 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.qrisImage").doesNotExist());
     }
 
+    // ---------- business members (multi-user per business) ----------
+
+    private Map<String, Object> memberBody(String username) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("username", username);
+        body.put("password", "password1");
+        body.put("name", "Member " + username);
+        body.put("email", username + "@example.com");
+        body.put("phone", "+628123456789");
+        return body;
+    }
+
     @Test
-    void internalRegistrationCreatesManagedUser() throws Exception {
-        // Internal registration requires a valid JWT (it is not public)
-        String adminToken = registerAndLogin("int_admin1");
+    void superAdminAddsMemberWhoSharesTheBusinessData() throws Exception {
+        String adminToken = registerAndLogin("biz_admin1");
 
-        Map<String, Object> body = registerBody("int_managed1");
-        mockMvc.perform(post("/api/users/internal/register")
-                        .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + adminToken)
-                        .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(body)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value(1));
-
-        // The created account is MANAGED...
-        String managedToken = login("int_managed1", "password1", "dev-managed1");
+        // The registering user is the SUPER_ADMIN
         mockMvc.perform(post("/api/auth/login")
                         .header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
-                                "username", "int_managed1",
-                                "password", "password1",
-                                "deviceId", "dev-managed1b"))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.accountType").value("MANAGED"));
+                                "username", "biz_admin1", "password", "password1", "deviceId", "d1"))))
+                .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"));
 
-        // ...and QRIS is optional — no row is created until the user uploads one
-        mockMvc.perform(get("/api/qris")
+        // Admin creates a product in the shared business
+        long productId = createProductPriced(adminToken, "SHARED-SKU", 5, 10000);
+
+        // Super admin adds a member
+        mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + managedToken))
-                .andExpect(status().isNotFound());
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("biz_member1"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.businessRole").value("MEMBER"));
+
+        // The member logs in and sees the SAME business's product + business name
+        String memberToken = login("biz_member1", "password1", "dm1");
+        mockMvc.perform(get("/api/products/" + productId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sku").value("SHARED-SKU"));
+
+        // Members list shows both users (super admin first)
+        mockMvc.perform(get("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2))
+                .andExpect(jsonPath("$.data[0].businessRole").value("SUPER_ADMIN"));
     }
 
     @Test
-    void internalRegistrationRequiresAuthentication() throws Exception {
-        mockMvc.perform(post("/api/users/internal/register")
+    void memberCannotManageUsers() throws Exception {
+        String adminToken = registerAndLogin("biz_admin2");
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("biz_member2"))))
+                .andExpect(status().isCreated());
+        String memberToken = login("biz_member2", "password1", "dm2");
+
+        // A plain member may not add another user (super-admin only)
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("biz_member2b"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Hanya super admin yang dapat mengelola pengguna"));
+    }
+
+    @Test
+    void deletingMemberReleasesUsernameAndSuperAdminCannotBeDeleted() throws Exception {
+        String adminToken = registerAndLogin("biz_admin3");
+
+        MvcResult added = mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("biz_member3"))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long memberId = objectMapper.readTree(added.getResponse().getContentAsString()).at("/data/id").asLong();
+        long adminId = userRepository.findByUsernameAndDeletedAtIsNull("biz_admin3").orElseThrow().getId();
+
+        // Super admin cannot be deleted
+        mockMvc.perform(delete("/api/users/members/" + adminId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Super admin tidak dapat dihapus"));
+
+        // Deleting the member soft-deletes it and releases the username
+        mockMvc.perform(delete("/api/users/members/" + memberId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        // The deleted user can no longer log in...
+        mockMvc.perform(post("/api/auth/login")
                         .header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(registerBody("int_noauth1"))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "biz_member3", "password", "password1", "deviceId", "dm3"))))
+                .andExpect(status().isBadRequest());
+
+        // ...and the released username can be registered fresh (as a new business)
+        mockMvc.perform(post("/api/users/register")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(registerBody("biz_member3"))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void memberEndpointsRequireAuthentication() throws Exception {
+        mockMvc.perform(get("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void onlySuperAdminCanChangeBusinessSettingsPictureAndQris() throws Exception {
+        String adminToken = registerAndLogin("biz_admin6");
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("biz_member6"))))
+                .andExpect(status().isCreated());
+        String memberToken = login("biz_member6", "password1", "dm6");
+
+        // A member may READ everything
+        mockMvc.perform(get("/api/app-settings")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/business/picture")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk());
+
+        // ...but every MUTATION to app config / picture / QRIS is 403 for a member
+        String forbidden = "Hanya super admin yang dapat mengubah pengaturan bisnis";
+
+        mockMvc.perform(put("/api/app-settings/inventory")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value(forbidden));
+
+        mockMvc.perform(put("/api/app-settings/qris-with-profile-picture")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/app-settings/keywords")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON).content("{\"excludeKeywords\":[\"promo\"]}"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/app-settings/monitored-apps")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON).content("{\"apps\":{\"id.dana\":\"dana\"}}"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/business/picture")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("profilePicture",
+                                java.util.Base64.getEncoder().encodeToString("x".getBytes())))))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(delete("/api/business/picture")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/api/qris/upload")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("qrisImage",
+                                java.util.Base64.getEncoder().encodeToString("qr".getBytes())))))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post("/api/qris/reset")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+
+        // The super admin can still do all of them
+        mockMvc.perform(put("/api/app-settings/inventory")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/api/business/picture")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("profilePicture",
+                                java.util.Base64.getEncoder().encodeToString("x".getBytes())))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void superAdminUpdatesMember() throws Exception {
+        String adminToken = registerAndLogin("biz_admin4");
+        MvcResult added = mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("biz_member4"))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long memberId = objectMapper.readTree(added.getResponse().getContentAsString()).at("/data/id").asLong();
+
+        mockMvc.perform(patch("/api/users/members/" + memberId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "name", "Member Four Updated", "email", "member4.new@example.com"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.name").value("Member Four Updated"))
+                .andExpect(jsonPath("$.data.email").value("member4.new@example.com"))
+                .andExpect(jsonPath("$.data.businessRole").value("MEMBER"));
+
+        // The updated member can log in with the new password
+        mockMvc.perform(patch("/api/users/members/" + memberId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("password", "NewSecret1"))))
+                .andExpect(status().isOk());
+        login("biz_member4", "NewSecret1", "dm4");
+    }
+
+    @Test
+    void getMeReturnsOwnAccountBundle() throws Exception {
+        String token = registerAndLogin("me_user1");
+
+        mockMvc.perform(get("/api/users/me")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").isNumber())
+                .andExpect(jsonPath("$.data.username").value("me_user1"))
+                .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"))
+                .andExpect(jsonPath("$.data.businessName").value("Warung me_user1"))
+                // app settings are bundled (defaults when never synced)
+                .andExpect(jsonPath("$.data.appSettings.blacklistEnabled").value(true));
+    }
+
+    @Test
+    void loginBundlesAppSettingsAndIdAndPicture() throws Exception {
+        register("me_user2");
+        MvcResult res = mockMvc.perform(post("/api/auth/login")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "me_user2", "password", "password1", "deviceId", "d-me2"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").isNumber())
+                .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"))
+                .andExpect(jsonPath("$.data.appSettings.inventoryEnabled").value(false))
+                // no business picture set yet → omitted (null, NON_NULL)
+                .andExpect(jsonPath("$.data.profilePicture").doesNotExist())
+                .andReturn();
+        assertThat(res.getResponse().getContentAsString()).contains("appSettings");
+    }
+
+    @Test
+    void deletedMemberExistingTokenIsRejected() throws Exception {
+        String adminToken = registerAndLogin("biz_admin5");
+        MvcResult added = mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("biz_member5"))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long memberId = objectMapper.readTree(added.getResponse().getContentAsString()).at("/data/id").asLong();
+
+        // Member logs in and holds a valid token
+        String memberToken = login("biz_member5", "password1", "dm5");
+        mockMvc.perform(get("/api/users/me")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk());
+
+        // Super admin deletes the member
+        mockMvc.perform(delete("/api/users/members/" + memberId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        // The member's still-signed, still-unexpired token is now rejected
+        mockMvc.perform(get("/api/users/me")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -1082,7 +1345,7 @@ class ApiIntegrationTest {
         String token = registerAndLogin("pic_user1");
 
         // No picture yet — the field is present and explicitly null (no placeholder)
-        mockMvc.perform(get("/api/users/me/profile-picture")
+        mockMvc.perform(get("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -1090,7 +1353,7 @@ class ApiIntegrationTest {
 
         // Set a picture (valid base64)
         String base64 = java.util.Base64.getEncoder().encodeToString("fake-image-bytes".getBytes());
-        mockMvc.perform(put("/api/users/me/profile-picture")
+        mockMvc.perform(put("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1099,20 +1362,20 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.profilePicture").value(base64));
 
         // GET returns it
-        mockMvc.perform(get("/api/users/me/profile-picture")
+        mockMvc.perform(get("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data.profilePicture").value(base64));
 
         // DELETE clears it
-        mockMvc.perform(delete("/api/users/me/profile-picture")
+        mockMvc.perform(delete("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value(1));
 
         // GET is null again
-        mockMvc.perform(get("/api/users/me/profile-picture")
+        mockMvc.perform(get("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data.profilePicture").value(org.hamcrest.Matchers.nullValue()));
@@ -1122,7 +1385,7 @@ class ApiIntegrationTest {
     void profilePictureRejectsInvalidBase64() throws Exception {
         String token = registerAndLogin("pic_user2");
 
-        mockMvc.perform(put("/api/users/me/profile-picture")
+        mockMvc.perform(put("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1133,7 +1396,7 @@ class ApiIntegrationTest {
 
     @Test
     void profilePictureRequiresJwt() throws Exception {
-        mockMvc.perform(get("/api/users/me/profile-picture")
+        mockMvc.perform(get("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN))
                 .andExpect(status().isUnauthorized());
     }
@@ -1154,6 +1417,26 @@ class ApiIntegrationTest {
                                 "body", "Rp 10.000",
                                 "data", Map.of(
                                         "transactionId", "TXN-NOTIF-1",
+                                        "transactionDate", "2026-07-01T10:00:00",
+                                        "amount", 10000,
+                                        "issuerName", "GoPay")))))
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
+    void broadcastToUserWithoutFirebaseConfiguredReturns503() throws Exception {
+        // POST /api/notifications/user broadcasts to all the caller's devices (no deviceId)
+        String token = registerAndLogin("notif_user2");
+
+        mockMvc.perform(post("/api/notifications/user")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "title", "Pembayaran diterima",
+                                "body", "Rp 10.000",
+                                "data", Map.of(
+                                        "transactionId", "TXN-NOTIF-2",
                                         "transactionDate", "2026-07-01T10:00:00",
                                         "amount", 10000,
                                         "issuerName", "GoPay")))))
@@ -1609,6 +1892,100 @@ class ApiIntegrationTest {
         mockMvc.perform(get("/api/app-settings")
                         .header("X-API-TOKEN", API_TOKEN))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // ---------- transactions with product line items ----------
+
+    private long createProductPriced(String token, String sku, int stock, long price) throws Exception {
+        MvcResult r = mockMvc.perform(post("/api/products")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "sku", sku, "name", "Product " + sku, "stock", stock, "price", price))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(r.getResponse().getContentAsString()).at("/data/id").asLong();
+    }
+
+    @Test
+    void manualTransactionWithItemsReducesStockAndExposesLineItems() throws Exception {
+        String token = registerAndLogin("txn_items1");
+        long coffee = createProductPriced(token, "COF", 10, 15000);
+        long tea = createProductPriced(token, "TEA", 5, 8000);
+
+        String body = objectMapper.writeValueAsString(Map.of(
+                "type", "MANUAL",
+                "transactionDate", "2026-07-01T10:30:00",
+                "amount", 61000,
+                "items", List.of(
+                        Map.of("productId", coffee, "quantity", 3),
+                        Map.of("productId", tea, "quantity", 2))));
+        MvcResult created = mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "items-key-1")
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String txnId = objectMapper.readTree(created.getResponse().getContentAsString())
+                .at("/data/transactionId").asText();
+
+        // Stock reduced by the sold quantities
+        assertThat(stockOf(token, coffee)).isEqualTo(7);
+        assertThat(stockOf(token, tea)).isEqualTo(3);
+
+        // The single-transaction detail exposes the sold line items with snapshot prices
+        mockMvc.perform(get("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[0].name").value("Product COF"))
+                .andExpect(jsonPath("$.data.items[0].quantity").value(3))
+                .andExpect(jsonPath("$.data.items[0].unitPrice").value(15000))
+                .andExpect(jsonPath("$.data.items[0].subtotal").value(45000));
+
+        // The history list omits the line items (keeps the payload small)
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data[0].items").doesNotExist());
+
+        // A SALE stock mutation is recorded so the stock ledger stays complete
+        mockMvc.perform(get("/api/stock-mutations")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data[0].type").value("SALE"))
+                .andExpect(jsonPath("$.data[0].items.length()").value(2));
+    }
+
+    @Test
+    void manualTransactionWithInsufficientStockIsRejectedAndStockUnchanged() throws Exception {
+        String token = registerAndLogin("txn_items2");
+        long coffee = createProductPriced(token, "COF", 2, 15000);
+
+        String body = objectMapper.writeValueAsString(Map.of(
+                "type", "MANUAL",
+                "transactionDate", "2026-07-01T10:30:00",
+                "amount", 75000,
+                "items", List.of(Map.of("productId", coffee, "quantity", 5))));
+        mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "items-key-2")
+                        .contentType(APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // Nothing changed — no stock deducted, no transaction recorded
+        assertThat(stockOf(token, coffee)).isEqualTo(2);
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(0));
     }
 
     // ---------- error handling ----------

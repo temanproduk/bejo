@@ -10,6 +10,6 @@ import java.util.Optional;
 
 @Repository
 public interface StockMutationRepository extends JpaRepository<StockMutation, Long> {
-    Page<StockMutation> findByUsernameOrderByCreatedAtDesc(String username, Pageable pageable);
-    Optional<StockMutation> findByIdAndUsername(Long id, String username);
+    Page<StockMutation> findByBusinessIdOrderByCreatedAtDesc(Long businessId, Pageable pageable);
+    Optional<StockMutation> findByIdAndBusinessId(Long id, Long businessId);
 }

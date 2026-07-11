@@ -2,6 +2,7 @@ package com.bejo.service;
 
 import com.bejo.entity.Session;
 import com.bejo.repository.SessionRepository;
+import com.bejo.repository.UserRepository;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
@@ -26,11 +27,15 @@ public class PushNotificationService {
     private static final Logger log = LoggerFactory.getLogger(PushNotificationService.class);
 
     private final SessionRepository sessionRepository;
+    private final UserRepository userRepository;
     private final Counter successCounter;
     private final Counter failureCounter;
 
-    public PushNotificationService(SessionRepository sessionRepository, MeterRegistry meterRegistry) {
+    public PushNotificationService(SessionRepository sessionRepository,
+                                   UserRepository userRepository,
+                                   MeterRegistry meterRegistry) {
         this.sessionRepository = sessionRepository;
+        this.userRepository = userRepository;
         this.successCounter = Counter.builder("notifications.sent").tag("result", "success").register(meterRegistry);
         this.failureCounter = Counter.builder("notifications.sent").tag("result", "failure").register(meterRegistry);
     }
@@ -71,7 +76,29 @@ public class PushNotificationService {
             log.warn("[PUSH] Firebase not configured — skipping push for username={}", username);
             return 0;
         }
-        List<Session> sessions = sessionRepository.findByUsername(username);
+        return sendToSessions(sessionRepository.findByUsername(username), data, "username=" + username);
+    }
+
+    /**
+     * Best-effort broadcast to every device of every (active) user in a business — a QRIS
+     * callback payment rings all of the business's users' phones. Never throws.
+     * Returns the number of messages successfully sent.
+     */
+    public int sendToBusiness(Long businessId, Map<String, String> data) {
+        if (!isConfigured()) {
+            log.warn("[PUSH] Firebase not configured — skipping push for businessId={}", businessId);
+            return 0;
+        }
+        List<String> usernames = userRepository.findUsernamesByBusinessId(businessId);
+        if (usernames.isEmpty()) {
+            log.warn("[PUSH] No active users for businessId={} — nothing sent", businessId);
+            return 0;
+        }
+        return sendToSessions(sessionRepository.findByUsernameIn(usernames), data, "businessId=" + businessId);
+    }
+
+    // Shared fan-out: send to each session's token, auto-clearing dead ones. Never throws.
+    private int sendToSessions(List<Session> sessions, Map<String, String> data, String scope) {
         int withToken = 0;
         int sent = 0;
         for (Session s : sessions) {
@@ -89,16 +116,16 @@ public class PushNotificationService {
                 if (isTokenUnregistered(e.getMessagingErrorCode())) {
                     s.setPushToken(null);
                     sessionRepository.save(s);
-                    log.info("[PUSH] Cleared stale FCM token for deviceId={} username={}", s.getDeviceId(), username);
+                    log.info("[PUSH] Cleared stale FCM token for deviceId={} ({})", s.getDeviceId(), scope);
                 }
             } catch (RuntimeException e) {
                 log.error("[PUSH] Unexpected error sending to deviceId={}: {}", s.getDeviceId(), e.getMessage(), e);
             }
         }
         if (withToken == 0) {
-            log.warn("[PUSH] No device with an FCM token for username={} — nothing sent", username);
+            log.warn("[PUSH] No device with an FCM token for {} — nothing sent", scope);
         } else {
-            log.info("[PUSH] Delivered {} of {} push(es) for username={}", sent, withToken, username);
+            log.info("[PUSH] Delivered {} of {} push(es) for {}", sent, withToken, scope);
         }
         return sent;
     }

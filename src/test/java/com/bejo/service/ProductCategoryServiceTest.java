@@ -17,6 +17,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -24,32 +25,36 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ProductCategoryServiceTest {
 
+    private static final Long BIZ = 1L;
+
     @Mock private ProductCategoryRepository categoryRepository;
     @Mock private ProductRepository productRepository;
+    @Mock private BusinessContext businessContext;
 
     private ProductCategoryService service;
 
     @BeforeEach
     void setUp() {
-        service = new ProductCategoryService(categoryRepository, productRepository);
+        service = new ProductCategoryService(categoryRepository, productRepository, businessContext);
+        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);
     }
 
     @Test
     void createTrimsAndSaves() {
-        when(categoryRepository.existsByUsernameAndName("alice", "Minuman")).thenReturn(false);
+        when(categoryRepository.existsByBusinessIdAndName(BIZ, "Minuman")).thenReturn(false);
 
         CategoryResponseDto data = service.create("alice", new CreateCategoryRequestDto("  Minuman  "));
 
         ArgumentCaptor<ProductCategory> captor = ArgumentCaptor.forClass(ProductCategory.class);
         verify(categoryRepository).save(captor.capture());
         assertThat(captor.getValue().getName()).isEqualTo("Minuman");
-        assertThat(captor.getValue().getUsername()).isEqualTo("alice");
+        assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
         assertThat(data.name()).isEqualTo("Minuman");
     }
 
     @Test
     void createRejectsDuplicateName() {
-        when(categoryRepository.existsByUsernameAndName("alice", "Minuman")).thenReturn(true);
+        when(categoryRepository.existsByBusinessIdAndName(BIZ, "Minuman")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create("alice", new CreateCategoryRequestDto("Minuman")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -60,19 +65,19 @@ class ProductCategoryServiceTest {
     @Test
     void deleteUncategorizesProductsThenRemovesCategory() {
         ProductCategory category = new ProductCategory();
-        category.setUsername("alice");
+        category.setBusinessId(BIZ);
         category.setName("Minuman");
-        when(categoryRepository.findByIdAndUsername(5L, "alice")).thenReturn(Optional.of(category));
+        when(categoryRepository.findByIdAndBusinessId(5L, BIZ)).thenReturn(Optional.of(category));
 
         service.delete("alice", 5L);
 
-        verify(productRepository).clearCategory("alice", 5L);
+        verify(productRepository).clearCategory(BIZ, 5L);
         verify(categoryRepository).delete(category);
     }
 
     @Test
     void deleteUnknownCategoryIs404() {
-        when(categoryRepository.findByIdAndUsername(9L, "alice")).thenReturn(Optional.empty());
+        when(categoryRepository.findByIdAndBusinessId(9L, BIZ)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.delete("alice", 9L))
                 .isInstanceOf(ResourceNotFoundException.class);

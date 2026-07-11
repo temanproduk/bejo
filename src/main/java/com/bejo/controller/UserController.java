@@ -4,12 +4,11 @@ import com.bejo.dto.request.ChangePasswordRequestDto;
 import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.request.UpdateBankRequestDto;
 import com.bejo.dto.request.UpdateBusinessRequestDto;
-import com.bejo.dto.request.UpdateProfilePictureRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
 import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.dto.response.BankResponseDto;
 import com.bejo.dto.response.BusinessResponseDto;
-import com.bejo.dto.response.ProfilePictureResponseDto;
+import com.bejo.dto.response.MeResponseDto;
 import com.bejo.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -27,6 +26,8 @@ public class UserController {
         this.userService = userService;
     }
 
+    // Public self-service registration — creates a new business and its first user
+    // (the SUPER_ADMIN). Additional users are added by a super admin via /api/users/members.
     @PostMapping("/register")
     public ResponseEntity<ApiResponseDto<Void>> register(@Valid @RequestBody RegisterRequestDto request) {
         userService.register(request);
@@ -34,13 +35,12 @@ public class UserController {
                 .body(ApiResponseDto.success("Registrasi berhasil", null));
     }
 
-    // Internal/system registration — creates a MANAGED account. Not public:
-    // requires a valid JWT (in addition to the X-API-TOKEN every request needs).
-    @PostMapping("/internal/register")
-    public ResponseEntity<ApiResponseDto<Void>> registerInternal(@Valid @RequestBody RegisterRequestDto request) {
-        userService.registerInternal(request);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponseDto.success("Registrasi internal berhasil", null));
+    // The caller's own account bundle (profile + role + shared business/bank/picture/app
+    // settings) — same shape as the login response, for refreshing state without re-login.
+    @GetMapping("/me")
+    public ResponseEntity<ApiResponseDto<MeResponseDto>> getMe(Authentication authentication) {
+        MeResponseDto data = userService.getMe(authentication.getName());
+        return ResponseEntity.ok(ApiResponseDto.success(data));
     }
 
     @PatchMapping("/me")
@@ -85,25 +85,5 @@ public class UserController {
             Authentication authentication) {
         userService.changePassword(authentication.getName(), request);
         return ResponseEntity.ok(ApiResponseDto.success("Password changed successfully", null));
-    }
-
-    @GetMapping("/me/profile-picture")
-    public ResponseEntity<ApiResponseDto<ProfilePictureResponseDto>> getProfilePicture(Authentication authentication) {
-        ProfilePictureResponseDto data = userService.getProfilePicture(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success(data));
-    }
-
-    @PutMapping("/me/profile-picture")
-    public ResponseEntity<ApiResponseDto<ProfilePictureResponseDto>> updateProfilePicture(
-            @Valid @RequestBody UpdateProfilePictureRequestDto request,
-            Authentication authentication) {
-        ProfilePictureResponseDto data = userService.updateProfilePicture(authentication.getName(), request.profilePicture());
-        return ResponseEntity.ok(ApiResponseDto.success("Foto profil berhasil disimpan", data));
-    }
-
-    @DeleteMapping("/me/profile-picture")
-    public ResponseEntity<ApiResponseDto<Void>> deleteProfilePicture(Authentication authentication) {
-        userService.deleteProfilePicture(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("Foto profil berhasil dihapus", null));
     }
 }

@@ -13,13 +13,13 @@ import java.util.Optional;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
-    Page<Product> findByUsernameOrderByNameAsc(String username, Pageable pageable);
-    Page<Product> findByUsernameAndCategoryIdOrderByNameAsc(String username, Long categoryId, Pageable pageable);
-    Optional<Product> findByIdAndUsername(Long id, String username);
-    boolean existsByUsernameAndSku(String username, String sku);
+    Page<Product> findByBusinessIdOrderByNameAsc(Long businessId, Pageable pageable);
+    Page<Product> findByBusinessIdAndCategoryIdOrderByNameAsc(Long businessId, Long categoryId, Pageable pageable);
+    Optional<Product> findByIdAndBusinessId(Long id, Long businessId);
+    boolean existsByBusinessIdAndSku(Long businessId, String sku);
 
-    // Un-categorize a merchant's products when their category is deleted
+    // Un-categorize a business's products when their category is deleted
     @Modifying
-    @Query("update Product p set p.categoryId = null where p.username = :username and p.categoryId = :categoryId")
-    int clearCategory(@Param("username") String username, @Param("categoryId") Long categoryId);
+    @Query("update Product p set p.categoryId = null where p.businessId = :businessId and p.categoryId = :categoryId")
+    int clearCategory(@Param("businessId") Long businessId, @Param("categoryId") Long categoryId);
 }

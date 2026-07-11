@@ -1,13 +1,18 @@
 package com.bejo.service;
 
 import com.bejo.dto.request.AddTransactionRequestDto;
+import com.bejo.dto.request.TransactionItemRequestDto;
 import com.bejo.dto.request.UpdateTransactionRequestDto;
 import com.bejo.dto.response.TransactionCreatedResponseDto;
 import com.bejo.dto.response.TransactionResponseDto;
+import com.bejo.entity.Business;
+import com.bejo.entity.Product;
 import com.bejo.entity.Transaction;
-import com.bejo.entity.User;
+import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.repository.BusinessRepository;
+import com.bejo.repository.ProductRepository;
+import com.bejo.repository.TransactionItemRepository;
 import com.bejo.repository.TransactionRepository;
-import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -37,8 +43,14 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class TransactionServiceTest {
 
+    private static final Long BIZ = 1L;
+
     @Mock private TransactionRepository transactionRepository;
-    @Mock private UserRepository userRepository;
+    @Mock private TransactionItemRepository transactionItemRepository;
+    @Mock private ProductRepository productRepository;
+    @Mock private StockMutationService stockMutationService;
+    @Mock private BusinessRepository businessRepository;
+    @Mock private BusinessContext businessContext;
 
     private TransactionService transactionService;
     private static final jakarta.validation.Validator VALIDATOR =
@@ -46,12 +58,30 @@ class TransactionServiceTest {
 
     @BeforeEach
     void setUp() {
-        transactionService = new TransactionService(transactionRepository, userRepository, VALIDATOR, new SimpleMeterRegistry());
+        transactionService = new TransactionService(transactionRepository, transactionItemRepository,
+                productRepository, stockMutationService, businessRepository, businessContext,
+                VALIDATOR, new SimpleMeterRegistry());
+        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);
     }
 
     private AddTransactionRequestDto request(String type, String acquirer) {
         return new AddTransactionRequestDto(type, LocalDateTime.now(), 50_000L,
-                "GoPay", null, null, null, acquirer);
+                "GoPay", null, null, null, acquirer, null);
+    }
+
+    private AddTransactionRequestDto requestWithItems(List<TransactionItemRequestDto> items) {
+        return new AddTransactionRequestDto("MANUAL", LocalDateTime.now(), 50_000L,
+                "GoPay", null, null, null, null, items);
+    }
+
+    private Product product(long id, String name, int stock, long price) {
+        Product p = new Product();
+        p.setBusinessId(BIZ);
+        p.setSku("SKU-" + id);
+        p.setName(name);
+        p.setStock(stock);
+        p.setPrice(price);
+        return p;
     }
 
     @Test
@@ -68,7 +98,7 @@ class TransactionServiceTest {
     void idempotentReplayReturnsExistingTransaction() {
         Transaction existing = new Transaction();
         existing.setTransactionId("TXN-EXISTING");
-        when(transactionRepository.findByIdempotencyKeyAndUsername("key-1", "alice"))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.of(existing));
 
         TransactionCreatedResponseDto data = transactionService.create("alice", "key-1", request("MANUAL", null));
@@ -79,9 +109,8 @@ class TransactionServiceTest {
 
     @Test
     void parsedTypeRequiresAcquirer() {
-        when(transactionRepository.findByIdempotencyKeyAndUsername("key-1", "alice"))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
 
         assertThatThrownBy(() -> transactionService.create("alice", "key-1", request("PARSED", null)))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -90,9 +119,8 @@ class TransactionServiceTest {
 
     @Test
     void manualTypeDefaultsAcquirerToCash() {
-        when(transactionRepository.findByIdempotencyKeyAndUsername("key-1", "alice"))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
 
         transactionService.create("alice", "key-1", request("MANUAL", null));
 
@@ -104,13 +132,13 @@ class TransactionServiceTest {
         assertThat(saved.getStatus()).isEqualTo("SUCCESS");
         assertThat(saved.getIdempotencyKey()).isEqualTo("key-1");
         assertThat(saved.getTransactionId()).startsWith("TXN-");
+        assertThat(saved.getBusinessId()).isEqualTo(BIZ);
     }
 
     @Test
     void parsedTypeUsesProvidedAcquirer() {
-        when(transactionRepository.findByIdempotencyKeyAndUsername("key-1", "alice"))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
 
         transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));
 
@@ -119,31 +147,116 @@ class TransactionServiceTest {
         assertThat(captor.getValue().getAcquirer()).isEqualTo("AstraPay");
     }
 
+    @Test
+    void createWithItemsReducesStockAndRecordsLineItemsAndSaleMutation() {
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
+                .thenReturn(Optional.empty());
+        Product coffee = product(1, "Coffee", 10, 15_000L);
+        Product tea = product(2, "Tea", 5, 8_000L);
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
+        when(productRepository.findByIdAndBusinessId(2L, BIZ)).thenReturn(Optional.of(tea));
+
+        transactionService.create("alice", "key-1", requestWithItems(List.of(
+                new TransactionItemRequestDto(1L, 3),
+                new TransactionItemRequestDto(2L, 2))));
+
+        // Stock reduced by the sold quantities
+        assertThat(coffee.getStock()).isEqualTo(7);
+        assertThat(tea.getStock()).isEqualTo(3);
+        verify(productRepository).save(coffee);
+        verify(productRepository).save(tea);
+
+        // One line item saved per product, priced from the product's selling price
+        ArgumentCaptor<com.bejo.entity.TransactionItem> itemCaptor =
+                ArgumentCaptor.forClass(com.bejo.entity.TransactionItem.class);
+        verify(transactionItemRepository, times(2)).save(itemCaptor.capture());
+        assertThat(itemCaptor.getAllValues())
+                .anySatisfy(i -> {
+                    assertThat(i.getName()).isEqualTo("Coffee");
+                    assertThat(i.getQuantity()).isEqualTo(3);
+                    assertThat(i.getUnitPrice()).isEqualTo(15_000L);
+                    assertThat(i.getSubtotal()).isEqualTo(45_000L);
+                });
+
+        // A SALE stock mutation is recorded so the stock ledger stays complete
+        verify(stockMutationService).recordStockChange(eq(BIZ), eq("SALE"), any(), any());
+
+        // The amount is DERIVED from the line items (3*15000 + 2*8000 = 61000), overriding
+        // the client-sent 50000
+        ArgumentCaptor<Transaction> txnCaptor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository, org.mockito.Mockito.atLeastOnce()).save(txnCaptor.capture());
+        assertThat(txnCaptor.getValue().getAmount()).isEqualTo(61_000L);
+    }
+
+    @Test
+    void createWithInsufficientStockIsRejectedAndNothingChanges() {
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
+                .thenReturn(Optional.empty());
+        Product coffee = product(1, "Coffee", 2, 15_000L);
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
+
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1",
+                requestWithItems(List.of(new TransactionItemRequestDto(1L, 5)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Stok tidak cukup");
+
+        // Validation happens before any stock change / line-item write
+        assertThat(coffee.getStock()).isEqualTo(2);
+        verify(productRepository, never()).save(any());
+        verify(transactionItemRepository, never()).save(any());
+        verify(stockMutationService, never()).recordStockChange(any(), any(), any(), any());
+    }
+
+    @Test
+    void createWithUnknownProductIsRejected() {
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
+                .thenReturn(Optional.empty());
+        when(productRepository.findByIdAndBusinessId(99L, BIZ)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1",
+                requestWithItems(List.of(new TransactionItemRequestDto(99L, 1)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tidak ditemukan");
+    }
+
+    @Test
+    void createRejectsDuplicateProductLines() {
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
+                .thenReturn(Optional.empty());
+        when(productRepository.findByIdAndBusinessId(1L, BIZ))
+                .thenReturn(Optional.of(product(1, "Coffee", 10, 15_000L)));
+
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1",
+                requestWithItems(List.of(
+                        new TransactionItemRequestDto(1L, 1),
+                        new TransactionItemRequestDto(1L, 2)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("duplikat");
+    }
+
     private static final Pageable PAGE = PageRequest.of(0, 50);
 
     @Test
     void historyWithoutDatesFetchesEverything() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice", PAGE))
+        when(transactionRepository.findByBusinessIdAndDeletedAtIsNullOrderByTransactionDateDesc(BIZ, PAGE))
                 .thenReturn(Page.empty());
 
         Page<TransactionResponseDto> result = transactionService.getHistory("alice", null, null, PAGE);
 
         assertThat(result).isEmpty();
-        verify(transactionRepository).findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice", PAGE);
+        verify(transactionRepository).findByBusinessIdAndDeletedAtIsNullOrderByTransactionDateDesc(BIZ, PAGE);
     }
 
     @Test
     void historyWithBothDatesUsesInclusiveEndOfDay() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
-                eq("alice"), any(), any(), eq(PAGE))).thenReturn(Page.empty());
+        when(transactionRepository.findByBusinessIdAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
+                eq(BIZ), any(), any(), eq(PAGE))).thenReturn(Page.empty());
 
         transactionService.getHistory("alice", LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 1), PAGE);
 
         ArgumentCaptor<LocalDateTime> endCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(transactionRepository).findByUsernameAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
-                eq("alice"), eq(LocalDate.of(2026, 7, 1).atStartOfDay()), endCaptor.capture(), eq(PAGE));
+        verify(transactionRepository).findByBusinessIdAndDeletedAtIsNullAndTransactionDateBetweenOrderByTransactionDateDesc(
+                eq(BIZ), eq(LocalDate.of(2026, 7, 1).atStartOfDay()), endCaptor.capture(), eq(PAGE));
         // End bound must cover the entire final day
         assertThat(endCaptor.getValue()).isAfter(LocalDateTime.of(2026, 7, 1, 23, 59, 59));
         assertThat(endCaptor.getValue()).isBefore(LocalDateTime.of(2026, 7, 2, 0, 0));
@@ -151,8 +264,8 @@ class TransactionServiceTest {
 
     @Test
     void historyMapsEntityToDtoWithMerchantName() {
-        User u = new User();
-        u.setBusinessName("Warung Alice");
+        Business business = new Business();
+        business.setName("Warung Alice");
         Transaction t = new Transaction();
         t.setTransactionId("TXN-1");
         t.setTransactionDate(LocalDateTime.now());
@@ -161,8 +274,8 @@ class TransactionServiceTest {
         t.setAcquirer("Cash");
         t.setSource("GoPay");
 
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(u));
-        when(transactionRepository.findByUsernameAndDeletedAtIsNullOrderByTransactionDateDesc("alice", PAGE))
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
+        when(transactionRepository.findByBusinessIdAndDeletedAtIsNullOrderByTransactionDateDesc(BIZ, PAGE))
                 .thenReturn(new PageImpl<>(List.of(t)));
 
         Page<TransactionResponseDto> result = transactionService.getHistory("alice", null, null, PAGE);
@@ -180,14 +293,14 @@ class TransactionServiceTest {
         t.setType("MANUAL");
         t.setAcquirer("Cash");
         t.setSource("GoPay");
-        t.setUsername("alice");
+        t.setBusinessId(BIZ);
         return t;
     }
 
     @Test
     void deleteSetsDeletedAtInsteadOfRemovingRow() {
         Transaction t = activeTransaction();
-        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
                 .thenReturn(Optional.of(t));
 
         transactionService.delete("alice", "TXN-1");
@@ -200,19 +313,18 @@ class TransactionServiceTest {
 
     @Test
     void deleteUnknownOrForeignTransactionIs404() {
-        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-X", "alice"))
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-X", BIZ))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> transactionService.delete("alice", "TXN-X"))
-                .isInstanceOf(com.bejo.exception.ResourceNotFoundException.class);
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void updateAppliesOnlyProvidedFields() {
         Transaction t = activeTransaction();
-        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
                 .thenReturn(Optional.of(t));
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
                 null, 99_000L, null, null, null, null, null);
@@ -242,7 +354,7 @@ class TransactionServiceTest {
         Transaction t = activeTransaction();
         t.setType("MANAGED");
         t.setAcquirer("AstraPay");
-        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
                 .thenReturn(Optional.of(t));
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
@@ -258,7 +370,7 @@ class TransactionServiceTest {
     @Test
     void updateWithBlankAcquirerIsRejected() {
         Transaction t = activeTransaction();
-        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-1", "alice"))
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
                 .thenReturn(Optional.of(t));
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
@@ -272,14 +384,14 @@ class TransactionServiceTest {
 
     @Test
     void updateUnknownOrDeletedTransactionIs404() {
-        when(transactionRepository.findByTransactionIdAndUsernameAndDeletedAtIsNull("TXN-X", "alice"))
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-X", BIZ))
                 .thenReturn(Optional.empty());
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
                 null, 10_000L, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-X", req))
-                .isInstanceOf(com.bejo.exception.ResourceNotFoundException.class);
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     // ---------- bulk create ----------
@@ -290,8 +402,7 @@ class TransactionServiceTest {
 
     @Test
     void bulkCreateSavesAllValidItems() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByIdempotencyKeyAndUsername(any(), eq("alice")))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId(any(), eq(BIZ)))
                 .thenReturn(Optional.empty());
 
         var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
@@ -310,12 +421,11 @@ class TransactionServiceTest {
 
     @Test
     void bulkCreateMarksExistingKeyAsDuplicate() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
         Transaction existing = new Transaction();
         existing.setTransactionId("TXN-EXISTING");
-        when(transactionRepository.findByIdempotencyKeyAndUsername("k1", "alice"))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("k1", BIZ))
                 .thenReturn(Optional.of(existing));
-        when(transactionRepository.findByIdempotencyKeyAndUsername("k2", "alice"))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("k2", BIZ))
                 .thenReturn(Optional.empty());
 
         var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
@@ -334,13 +444,12 @@ class TransactionServiceTest {
 
     @Test
     void bulkCreateFailsInvalidItemButKeepsGoodOnes() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByIdempotencyKeyAndUsername(any(), eq("alice")))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId(any(), eq(BIZ)))
                 .thenReturn(Optional.empty());
 
         // Second item is invalid: amount must be positive
         AddTransactionRequestDto bad = new AddTransactionRequestDto("MANUAL", LocalDateTime.now(), -5L,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
 
         var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
                 bulkItem("k1", request("MANUAL", null)),
@@ -359,8 +468,7 @@ class TransactionServiceTest {
 
     @Test
     void bulkCreateFailsParsedWithoutAcquirer() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-        when(transactionRepository.findByIdempotencyKeyAndUsername(any(), eq("alice")))
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId(any(), eq(BIZ)))
                 .thenReturn(Optional.empty());
 
         var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
@@ -375,8 +483,6 @@ class TransactionServiceTest {
 
     @Test
     void bulkCreateBlankIdempotencyKeyFailsThatItem() {
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(new User()));
-
         var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
                 bulkItem("  ", request("MANUAL", null))));
 
@@ -389,12 +495,13 @@ class TransactionServiceTest {
 
     @Test
     void bulkCreateUnknownUserIs404() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+        when(businessContext.requireBusinessId("ghost"))
+                .thenThrow(new ResourceNotFoundException("User not found"));
 
         var request = new com.bejo.dto.request.BulkAddTransactionRequestDto(List.of(
                 bulkItem("k1", request("MANUAL", null))));
 
         assertThatThrownBy(() -> transactionService.bulkCreate("ghost", request))
-                .isInstanceOf(com.bejo.exception.ResourceNotFoundException.class);
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 }

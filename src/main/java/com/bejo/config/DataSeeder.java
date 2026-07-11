@@ -2,15 +2,18 @@ package com.bejo.config;
 
 import com.bejo.constant.AccountType;
 import com.bejo.constant.Acquirer;
+import com.bejo.constant.BusinessRole;
 import com.bejo.constant.TransactionStatus;
 import com.bejo.constant.TransactionType;
+import com.bejo.entity.Business;
+import com.bejo.entity.BusinessBank;
+import com.bejo.entity.BusinessQris;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
-import com.bejo.entity.UserBank;
-import com.bejo.entity.UserQris;
+import com.bejo.repository.BusinessBankRepository;
+import com.bejo.repository.BusinessQrisRepository;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.TransactionRepository;
-import com.bejo.repository.UserBankRepository;
-import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,19 +53,22 @@ public class DataSeeder implements ApplicationRunner {
     private String seedNmid;
 
     private final UserRepository userRepository;
-    private final UserBankRepository userBankRepository;
-    private final UserQrisRepository userQrisRepository;
+    private final BusinessRepository businessRepository;
+    private final BusinessBankRepository businessBankRepository;
+    private final BusinessQrisRepository businessQrisRepository;
     private final TransactionRepository transactionRepository;
     private final PasswordEncoder passwordEncoder;
 
     public DataSeeder(UserRepository userRepository,
-                      UserBankRepository userBankRepository,
-                      UserQrisRepository userQrisRepository,
+                      BusinessRepository businessRepository,
+                      BusinessBankRepository businessBankRepository,
+                      BusinessQrisRepository businessQrisRepository,
                       TransactionRepository transactionRepository,
                       PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
-        this.userBankRepository = userBankRepository;
-        this.userQrisRepository = userQrisRepository;
+        this.businessRepository = businessRepository;
+        this.businessBankRepository = businessBankRepository;
+        this.businessQrisRepository = businessQrisRepository;
         this.transactionRepository = transactionRepository;
         this.passwordEncoder = passwordEncoder;
     }
@@ -74,47 +80,54 @@ public class DataSeeder implements ApplicationRunner {
             return;
         }
 
-        if (userRepository.existsByUsername(seedUsername)) {
+        Long businessId = userRepository.findBusinessIdByUsername(seedUsername).orElse(null);
+        if (businessId != null) {
             log.info("[SEED] User '{}' already exists — skipping user creation", seedUsername);
         } else {
+            Business business = new Business();
+            business.setName(seedBusinessName);
+            business.setInitialName(seedBusinessName);
+            String addr = seedBusinessAddress.isBlank() ? null : seedBusinessAddress;
+            business.setAddress(addr);
+            business.setInitialAddress(addr);
+            String nmid = seedNmid.isBlank() ? null : seedNmid;
+            business.setNmid(nmid);
+            business.setInitialNmid(nmid);
+            businessRepository.save(business);
+            businessId = business.getId();
+
             User user = new User();
             user.setUsername(seedUsername);
             user.setPasswordHash(passwordEncoder.encode(seedPassword));
             user.setName(seedName);
-            user.setBusinessName(seedBusinessName);
-            user.setInitialBusinessName(seedBusinessName);
-            String addr = seedBusinessAddress.isBlank() ? null : seedBusinessAddress;
-            user.setBusinessAddress(addr);
-            user.setInitialBusinessAddress(addr);
-            String nmid = seedNmid.isBlank() ? null : seedNmid;
-            user.setNmid(nmid);
-            user.setInitialNmid(nmid);
             user.setEmail("admin@bejo.id");
             user.setPhone("+6281234567890");
+            user.setBusinessId(businessId);
+            user.setBusinessRole(BusinessRole.SUPER_ADMIN);
             user.setAccountType(AccountType.MANAGED);
             userRepository.save(user);
 
-            UserBank bank = new UserBank();
-            bank.setUsername(seedUsername);
+            BusinessBank bank = new BusinessBank();
+            bank.setBusinessId(businessId);
             bank.setBankName("Bank Central Asia");
             bank.setBankNumber("1234567890");
             bank.setBankAccountName("Admin Bejo");
             bank.setInitialBankName("Bank Central Asia");
             bank.setInitialBankNumber("1234567890");
             bank.setInitialBankAccountName("Admin Bejo");
-            userBankRepository.save(bank);
+            businessBankRepository.save(bank);
 
             String seedQrisImage = loadSeedQrisImage();
-            UserQris qris = new UserQris();
-            qris.setUsername(seedUsername);
+            BusinessQris qris = new BusinessQris();
+            qris.setBusinessId(businessId);
             qris.setInitialQrisImage(seedQrisImage);
             qris.setQrisImage(seedQrisImage);
-            userQrisRepository.save(qris);
+            businessQrisRepository.save(qris);
 
-            log.info("[SEED] Created default user '{}' ({})", seedUsername, seedBusinessName);
+            log.info("[SEED] Created default business '{}' + super admin '{}'", seedBusinessName, seedUsername);
         }
 
-        seedTransactions(seedUsername);
+        seedTransactions(businessId);
     }
 
     private String loadSeedQrisImage() {
@@ -130,8 +143,8 @@ public class DataSeeder implements ApplicationRunner {
         }
     }
 
-    private void seedTransactions(String username) {
-        if (transactionRepository.existsByUsername(username)) return;
+    private void seedTransactions(Long businessId) {
+        if (transactionRepository.existsByBusinessId(businessId)) return;
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -196,7 +209,7 @@ public class DataSeeder implements ApplicationRunner {
             t.setTransactionDate(now.minusDays(daysAgo).withHour(hour).withMinute(minute).withSecond(0).withNano(0));
             t.setAmount((long) amount);
             t.setSource(issuer);
-            t.setUsername(username);
+            t.setBusinessId(businessId);
             t.setRrn(String.format("%012d", (long) (Math.random() * 1_000_000_000_000L)));
             t.setMerchantPan(merchantPan);
             t.setCustomerPan(customerPan);
@@ -208,6 +221,6 @@ public class DataSeeder implements ApplicationRunner {
         }
 
         transactionRepository.saveAll(txns);
-        log.info("[SEED] Created {} dummy transactions for user '{}'", txns.size(), username);
+        log.info("[SEED] Created {} dummy transactions for businessId={}", txns.size(), businessId);
     }
 }

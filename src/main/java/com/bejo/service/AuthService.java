@@ -2,11 +2,14 @@ package com.bejo.service;
 
 import com.bejo.dto.request.LoginRequestDto;
 import com.bejo.dto.response.LoginResponseDto;
+import com.bejo.entity.Business;
+import com.bejo.entity.BusinessBank;
 import com.bejo.entity.Session;
-import com.bejo.entity.UserBank;
+import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.repository.BusinessBankRepository;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.SessionRepository;
-import com.bejo.repository.UserBankRepository;
 import com.bejo.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -24,8 +27,10 @@ public class AuthService {
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository userRepository;
-    private final UserBankRepository userBankRepository;
+    private final BusinessRepository businessRepository;
+    private final BusinessBankRepository businessBankRepository;
     private final SessionRepository sessionRepository;
+    private final AppSettingsService appSettingsService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final TokenBlacklistService tokenBlacklistService;
@@ -33,15 +38,19 @@ public class AuthService {
     private final Counter loginFailureCounter;
 
     public AuthService(UserRepository userRepository,
-                       UserBankRepository userBankRepository,
+                       BusinessRepository businessRepository,
+                       BusinessBankRepository businessBankRepository,
                        SessionRepository sessionRepository,
+                       AppSettingsService appSettingsService,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
                        TokenBlacklistService tokenBlacklistService,
                        MeterRegistry meterRegistry) {
         this.userRepository = userRepository;
-        this.userBankRepository = userBankRepository;
+        this.businessRepository = businessRepository;
+        this.businessBankRepository = businessBankRepository;
         this.sessionRepository = sessionRepository;
+        this.appSettingsService = appSettingsService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.tokenBlacklistService = tokenBlacklistService;
@@ -53,7 +62,7 @@ public class AuthService {
     public LoginResponseDto login(LoginRequestDto request) {
         log.info("[LOGIN] username={} deviceId={}", request.username(), request.deviceId());
 
-        var user = userRepository.findByUsername(request.username())
+        User user = userRepository.findByUsernameAndDeletedAtIsNull(request.username())
                 .orElseThrow(() -> {
                     loginFailureCounter.increment();
                     return new IllegalArgumentException("Invalid credentials");
@@ -65,16 +74,20 @@ public class AuthService {
             throw new IllegalArgumentException("Invalid credentials");
         }
 
-        UserBank bank = userBankRepository.findByUsername(request.username())
+        Business business = businessRepository.findById(user.getBusinessId())
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+        BusinessBank bank = businessBankRepository.findByBusinessId(user.getBusinessId())
                 .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
 
         upsertSession(request);
 
         String token = jwtService.generateToken(request.username());
+        var appSettings = appSettingsService.getSettings(request.username());
 
         loginSuccessCounter.increment();
         log.info("[LOGIN] Success for username={}", request.username());
         return new LoginResponseDto(
+                user.getId(),
                 request.username(),
                 user.getAccountType(),
                 user.getName(),
@@ -82,12 +95,15 @@ public class AuthService {
                 user.isEmailVerified(),
                 user.getPhone(),
                 user.isPhoneVerified(),
-                user.getBusinessName(),
-                user.getBusinessAddress(),
-                user.getNmid(),
+                user.getBusinessRole(),
+                business.getName(),
+                business.getAddress(),
+                business.getNmid(),
                 bank.getBankName(),
                 bank.getBankNumber(),
                 bank.getBankAccountName(),
+                business.getPicture(),
+                appSettings,
                 token, "Bearer",
                 jwtService.getExpiresInSeconds());
     }

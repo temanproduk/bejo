@@ -1,12 +1,13 @@
 package com.bejo.service;
 
+import com.bejo.dto.request.BroadcastNotificationRequestDto;
 import com.bejo.dto.request.NotificationTransactionRequestDto;
 import com.bejo.dto.request.SendNotificationRequestDto;
+import com.bejo.entity.Business;
 import com.bejo.entity.Session;
-import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.SessionRepository;
-import com.bejo.repository.UserRepository;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,14 +27,17 @@ public class NotificationService {
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
     private final SessionRepository sessionRepository;
-    private final UserRepository userRepository;
+    private final BusinessRepository businessRepository;
+    private final BusinessContext businessContext;
     private final PushNotificationService pushNotificationService;
 
     public NotificationService(SessionRepository sessionRepository,
-                               UserRepository userRepository,
+                               BusinessRepository businessRepository,
+                               BusinessContext businessContext,
                                PushNotificationService pushNotificationService) {
         this.sessionRepository = sessionRepository;
-        this.userRepository = userRepository;
+        this.businessRepository = businessRepository;
+        this.businessContext = businessContext;
         this.pushNotificationService = pushNotificationService;
     }
 
@@ -50,11 +54,7 @@ public class NotificationService {
             throw new ResourceNotFoundException("No FCM token registered for device: " + request.deviceId());
         }
 
-        String merchantName = userRepository.findByUsername(username)
-                .map(User::getBusinessName)
-                .orElse(null);
-
-        Map<String, String> data = buildData(request, request.data(), merchantName);
+        Map<String, String> data = buildData(request.title(), request.body(), request.data(), merchantName(username));
 
         log.info("[NOTIFY-TEST] Sending push to deviceId={} for username={}", request.deviceId(), username);
         try {
@@ -75,10 +75,29 @@ public class NotificationService {
         }
     }
 
-    private Map<String, String> buildData(SendNotificationRequestDto request, NotificationTransactionRequestDto txData, String merchantName) {
+    /**
+     * Test/utility: broadcast an FCM push to <b>all</b> of the caller's devices (best-effort
+     * via {@link PushNotificationService#sendToUser}, with stale-token auto-cleanup).
+     * Returns the number of devices the push was delivered to. Does not record a transaction.
+     */
+    public int broadcastToUser(String username, BroadcastNotificationRequestDto request) {
+        if (!pushNotificationService.isConfigured()) {
+            throw new IllegalStateException("Firebase is not configured — set FIREBASE_CREDENTIALS_BASE64 or FIREBASE_CREDENTIALS_PATH");
+        }
+        Map<String, String> data = buildData(request.title(), request.body(), request.data(), merchantName(username));
+        log.info("[NOTIFY-USER] Broadcasting push to all devices of username={}", username);
+        return pushNotificationService.sendToUser(username, data);
+    }
+
+    private String merchantName(String username) {
+        Long businessId = businessContext.requireBusinessId(username);
+        return businessRepository.findById(businessId).map(Business::getName).orElse(null);
+    }
+
+    private Map<String, String> buildData(String title, String body, NotificationTransactionRequestDto txData, String merchantName) {
         Map<String, String> data = new HashMap<>();
-        data.put("title", request.title());
-        data.put("body", request.body());
+        data.put("title", title);
+        data.put("body", body);
         data.put("transactionId", txData.transactionId());
         data.put("transactionDate", txData.transactionDate().toString());
         data.put("amount", String.valueOf(txData.amount()));

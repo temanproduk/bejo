@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Inbound QRIS payment callback (SNAP-like QR MPM notify) from the QRIS merchant
  * service. Server-to-server, so no X-API-TOKEN or JWT — exempted in
  * ApiTokenFilter and SecurityConfig. Records the payment as a transaction and
- * stores the raw payload in the transaction's additional_info column.
+ * stores the raw payload in the transaction's info column.
  */
 @RestController
 public class QrisCallbackController {

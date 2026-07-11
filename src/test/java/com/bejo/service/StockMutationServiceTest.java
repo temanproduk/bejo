@@ -31,15 +31,20 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class StockMutationServiceTest {
 
+    private static final Long BIZ = 1L;
+
     @Mock private StockMutationRepository stockMutationRepository;
     @Mock private StockMutationItemRepository stockMutationItemRepository;
     @Mock private ProductRepository productRepository;
+    @Mock private BusinessContext businessContext;
 
     private StockMutationService service;
 
     @BeforeEach
     void setUp() {
-        service = new StockMutationService(stockMutationRepository, stockMutationItemRepository, productRepository);
+        service = new StockMutationService(stockMutationRepository, stockMutationItemRepository,
+                productRepository, businessContext);
+        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);
         // StockMutation gets an id on save (needed for line items). Lenient: the reject
         // test never reaches the persist step.
         lenient().when(stockMutationRepository.save(any(StockMutation.class))).thenAnswer(inv -> {
@@ -58,7 +63,7 @@ class StockMutationServiceTest {
 
     private Product product(long id, String sku, Long costPrice, int stock) {
         Product p = new Product();
-        p.setUsername("alice");
+        p.setBusinessId(BIZ);
         p.setSku(sku);
         p.setName("Product " + sku);
         p.setCostPrice(costPrice);
@@ -75,8 +80,8 @@ class StockMutationServiceTest {
     void createRaisesStockAndComputesTotal() {
         Product a = product(1L, "A", 5_000L, 10);
         Product b = product(2L, "B", 8_000L, 3);
-        when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
-        when(productRepository.findByIdAndUsername(2L, "alice")).thenReturn(Optional.of(b));
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(a));
+        when(productRepository.findByIdAndBusinessId(2L, BIZ)).thenReturn(Optional.of(b));
 
         var request = new CreatePurchaseRequestDto("restock", List.of(
                 new PurchaseItemRequestDto(1L, 20, null),      // 20 * 5000 (cost) = 100000
@@ -105,7 +110,7 @@ class StockMutationServiceTest {
     void recordStockChangePersistsAdjustmentMutationWithoutPrices() {
         Product a = product(1L, "A", null, 8);
 
-        service.recordStockChange("alice", "ADJUSTMENT", "Stock opname",
+        service.recordStockChange(BIZ, "ADJUSTMENT", "Stock opname",
                 List.of(new StockMutationService.StockChangeLine(a, 5, 8)));
 
         ArgumentCaptor<StockMutation> mc = ArgumentCaptor.forClass(StockMutation.class);
@@ -123,7 +128,7 @@ class StockMutationServiceTest {
     @Test
     void unitPriceDefaultsToZeroWhenNoCostPrice() {
         Product a = product(1L, "A", null, 0);
-        when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(a));
 
         var request = new CreatePurchaseRequestDto(null, List.of(new PurchaseItemRequestDto(1L, 4, null)));
         StockMutationResponseDto data = service.create("alice", request);
@@ -136,8 +141,8 @@ class StockMutationServiceTest {
     @Test
     void unknownProductRejectsWholePurchaseBeforeAnyStockChange() {
         Product a = product(1L, "A", 5_000L, 10);
-        when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
-        when(productRepository.findByIdAndUsername(99L, "alice")).thenReturn(Optional.empty());
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(a));
+        when(productRepository.findByIdAndBusinessId(99L, BIZ)).thenReturn(Optional.empty());
 
         var request = new CreatePurchaseRequestDto(null, List.of(
                 new PurchaseItemRequestDto(1L, 5, null),

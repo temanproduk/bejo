@@ -3,16 +3,17 @@ package com.bejo.entity;
 import jakarta.persistence.*;
 import java.util.UUID;
 
+/** A business's QRIS image + code (one row per business, created on first upload). */
 @Entity
-@Table(name = "user_qris")
-public class UserQris {
+@Table(name = "business_qris")
+public class BusinessQris {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
-    private String username;
+    @Column(name = "business_id", nullable = false, unique = true)
+    private Long businessId;
 
     @Column(name = "qris_code", nullable = false, unique = true)
     private String qrisCode;
@@ -29,8 +30,8 @@ public class UserQris {
     }
 
     public Long getId() { return id; }
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
     public String getQrisCode() { return qrisCode; }
     public void setQrisCode(String qrisCode) { this.qrisCode = qrisCode; }
     public String getQrisImage() { return qrisImage; }

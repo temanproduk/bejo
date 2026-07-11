@@ -10,6 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Java 25 / Spring Boot REST API for QRIS merchants: registration and JWT login (against its own database), transaction history and manual entry, QRIS image management, bank/business profile management, FCM token management, and push notification delivery. Originally inspired by the Node.js project at `/Users/anton/Documents/Projects/cuan` but uses local DB authentication instead of scraping an external gateway.
 
+**User ↔ Business:** a `business` (merchant) is first-class and owns all merchant data (bank, QRIS, products, categories, transactions, stock mutations, app settings, the shared business picture). **Many users may belong to one business** (flat model), each with a `business_role`: `SUPER_ADMIN` (the creator — immutable, undeletable, the only one who can add/update/delete users) or `MEMBER`. All business-owned data is scoped by `business_id`; services resolve it from the authenticated username via `BusinessContext`. Only per-user things (credentials, name/email/phone, sessions/FCM) stay keyed on `username`.
+
 The container runtime on this machine is **podman** (`podman compose ...`), not docker.
 
 ## Commands
@@ -42,6 +44,7 @@ podman compose restart app
 | `API_TOKEN` | Shared secret required in `X-API-TOKEN` on every request |
 | `JWT_SECRET` | Base64-encoded secret, min 256 bits. Generate: `openssl rand -base64 32` |
 | `JWT_EXPIRATION_MS` | Token TTL in milliseconds (default `604800000` = 7 days; `0` disables expiry) |
+| `BUSINESS_MAX_USERS` | Max users per business, incl. the super admin (`app.business.max-users`, default `5`) |
 | `DB_URL` | JDBC URL, e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` / `DB_PASSWORD` | PostgreSQL credentials |
 | `FIREBASE_CREDENTIALS_BASE64` | Base64-encoded Firebase service account JSON |
@@ -67,7 +70,7 @@ Protected endpoints additionally require:
 Authorization: Bearer <JWT>
 ```
 
-The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` validates signature + expiry and rejects blacklisted (logged-out) tokens; controllers resolve the username via Spring's `Authentication` principal.
+The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` validates signature + expiry, rejects blacklisted (logged-out) tokens, **and rejects tokens whose user was soft-deleted** (`existsByUsernameAndDeletedAtIsNull` — a deleted member's still-signed token stops authenticating immediately, and its released username can't be impersonated); controllers resolve the username via Spring's `Authentication` principal.
 
 `/actuator/health` (Cloud Run probes) and `/snap/**` (inbound QRIS payment callbacks) are exempt from both checks. Other `/actuator/*` endpoints (metrics, prometheus, info) require `X-API-TOKEN` but not a JWT — so `/actuator/prometheus` is **not** publicly reachable on Cloud Run. The local Prometheus scraper sends the token via `http_headers` (see `docker/prometheus.yml` + the `prometheus_api_token` compose config). Responses include HSTS + hardening headers (`SecurityConfig.headers`); `server.forward-headers-strategy: framework` lets Spring see the Cloud Run proxy's HTTPS scheme so HSTS is emitted.
 
@@ -75,27 +78,31 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/snap/v1.0/qr/qr-mpm-notify` | None | Inbound QRIS payment callback (SNAP QR MPM notify); records a MANAGED transaction, stores raw payload in `additional_info` |
-| `POST` | `/api/users/register` | Public | Self-service registration; creates a `SELF_SERVICE` user + bank (no QRIS row — QRIS is optional) |
-| `POST` | `/api/users/internal/register` | JWT | Internal/system registration; same payload but creates a `MANAGED` user |
+| `POST` | `/snap/v1.0/qr/qr-mpm-notify` | None | Inbound QRIS payment callback (SNAP QR MPM notify); records a MANAGED transaction, stores raw payload in `info` |
+| `POST` | `/api/users/register` | Public | Self-service registration; creates a **new business** + its first user (the `SUPER_ADMIN`) + bank (no QRIS row — QRIS is optional) |
+| `GET` | `/api/users/me` | JWT | The caller's own account bundle (`MeResponseDto`: id + profile + role + shared business/bank/picture/app-settings) — same shape as login minus the token, for refreshing state |
+| `GET` | `/api/users/members` | JWT | List the users of the caller's business (any member) |
+| `POST` | `/api/users/members` | JWT (super admin) | Add a user to the caller's business as a `MEMBER` |
+| `PATCH` | `/api/users/members/{id}` | JWT (super admin) | Update a member (name/email/phone/password; a super admin can't be modified here) |
+| `DELETE` | `/api/users/members/{id}` | JWT (super admin) | Soft-delete a member (releases its username); a super admin can't be deleted |
 | `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti); optional body `{deviceId}` clears that device's FCM token |
 | `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive); paginated (`page`/`size`) |
 | `GET` | `/api/transactions/summary` | JWT | Dashboard totals (summed amount + count) for today / yesterday / this month; optional `date` = client's local "today" (defaults to server date) |
-| `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header |
+| `GET` | `/api/transactions/{transactionId}` | JWT | One transaction **with its sold-product line items** (the history list omits items) |
+| `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header. Optional `items` (product line items) — validates + reduces stock, records a SALE stock mutation |
 | `POST` | `/api/transactions/bulk` | JWT | Bulk-sync MANUAL/PARSED transactions (offline entry); per-item `idempotencyKey`, partial-success result |
 | `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable) |
 | `DELETE` | `/api/transactions/{transactionId}` | JWT | Soft-delete a transaction (sets `deleted_at`) |
 | `PUT` | `/api/devices/{deviceId}/fcm-token` | JWT | Update FCM push token (scoped to the authenticated user's session) |
 | `POST` | `/api/notifications/test` | JWT | **Test:** send an FCM push from the request payload to one device (no DB write) |
+| `POST` | `/api/notifications/user` | JWT | **Test/utility:** broadcast an FCM push to **all** the caller's devices (no `deviceId`; via `sendToUser`; no DB write) |
 | `GET` | `/api/qris` | JWT | QRIS image; `type` = `UPLOADED` (custom) or `MANAGED` (generated) |
-| `POST` | `/api/qris/upload` | JWT | Upload base64 QRIS image (max ±5 MB) |
-| `POST` | `/api/qris/reset` | JWT | Revert to the managed/generated image |
+| `POST` | `/api/qris/upload` | JWT (super admin) | Upload base64 QRIS image (max ±5 MB) |
+| `POST` | `/api/qris/reset` | JWT (super admin) | Revert to the managed/generated image |
 | `PATCH` | `/api/users/me` | JWT | Update name, email, phone |
 | `PATCH` | `/api/users/me/password` | JWT | Change password (requires `oldPassword`) |
-| `GET` | `/api/users/me/profile-picture` | JWT | Get profile picture (base64), or `null` when unset |
-| `PUT` | `/api/users/me/profile-picture` | JWT | Set profile picture from base64 (compressed, max 1 MB decoded) |
-| `DELETE` | `/api/users/me/profile-picture` | JWT | Remove profile picture (sets it back to `null`) |
+| `GET`/`PUT`/`DELETE` | `/api/business/picture` | JWT (GET: any member · PUT/DELETE: super admin) | Get/set/remove the **business** picture (base64, ≤1 MB, shared by all members). Response field is `profilePicture` |
 | `PATCH` | `/api/users/me/bank` | JWT | Update bank info |
 | `POST` | `/api/users/me/bank/reset` | JWT | Reset bank info to initial values |
 | `PATCH` | `/api/users/me/business` | JWT | Update business name/address/NMID |
@@ -113,14 +120,14 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `GET` | `/api/stock-mutations` | JWT | Stock-change history — mutations (PURCHASE/ADJUSTMENT/UPDATE) with their line items; paginated (`page`/`size`) |
 | `GET` | `/api/stock-mutations/{id}` | JWT | Get one stock mutation with its line items |
 | `GET` | `/api/app-settings` | JWT | Get the user's app settings (monitored apps + notification keywords); returns defaults if never synced |
-| `PUT` | `/api/app-settings/monitored-apps` | JWT | Replace the monitored-apps map (`packageName`→`issuer`) |
-| `PUT` | `/api/app-settings/keywords` | JWT | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
-| `PUT` | `/api/app-settings/qris-with-profile-picture` | JWT | Toggle composing the QRIS image onto the profile picture (`{enabled}`; default false) |
-| `PUT` | `/api/app-settings/inventory` | JWT | Toggle inventory management (`{enabled}`; default false) |
+| `PUT` | `/api/app-settings/monitored-apps` | JWT (super admin) | Replace the monitored-apps map (`packageName`→`issuer`) |
+| `PUT` | `/api/app-settings/keywords` | JWT (super admin) | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
+| `PUT` | `/api/app-settings/qris-with-profile-picture` | JWT (super admin) | Toggle composing the QRIS image onto the profile picture (`{enabled}`; default false) |
+| `PUT` | `/api/app-settings/inventory` | JWT (super admin) | Toggle inventory management (`{enabled}`; default false) |
 
 All responses follow `{ "status": 1\|0, "message": "...", "data": {...}, "count": N }` — null fields are omitted. Paginated list endpoints (`GET /api/transactions`, `/api/products`, `/api/stock-mutations`) additionally return `page` (1-based), `totalPages`, and `total`; `count` is the size of the current page. Pagination is optional — omit `page`/`size` for page 1 of 50 (`size` cap 200). Built via `util/Pagination.of(page,size)` → `ApiResponseDto.page(Page<T>)`.
 
-Login success response `data` includes profile + bank fields plus `token`, `tokenType: "Bearer"`, `expiresIn` (seconds).
+Login success response `data` includes profile + `businessRole` + business + bank fields plus `token`, `tokenType: "Bearer"`, `expiresIn` (seconds).
 
 A Postman collection is at `bejo.postman_collection.json`. The Login request has a test script that auto-saves the token to the `{{token}}` collection variable used by all other requests.
 
@@ -130,7 +137,8 @@ A Postman collection is at `bejo.postman_collection.json`. The Login request has
 controller/   → thin HTTP layer; validation via @Valid
 service/      → business logic, metrics via Micrometer Counter
 repository/   → Spring Data JPA interfaces
-entity/       → JPA entities (User, UserBank, UserQris, Session, Transaction, TokenBlacklist)
+entity/       → JPA entities (Business, User, BusinessBank, BusinessQris,
+                BusinessAppSettings, Session, Transaction, TransactionItem, TokenBlacklist)
 dto/          → request records (@NotBlank validated) + response records.
                 Every DTO class name ends with `Dto` (e.g. LoginRequestDto,
                 TransactionDto); requests and responses are separate types.
@@ -143,26 +151,26 @@ converter/    → JPA AttributeConverters storing JSON in TEXT columns
 exception/    → GlobalExceptionHandler + ResourceNotFoundException
 ```
 
-Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults), `StockMutationType` (`PURCHASE`, `ADJUSTMENT`, `UPDATE`).
+Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `BusinessRole` (`SUPER_ADMIN`, `MEMBER`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults), `StockMutationType` (`PURCHASE`, `ADJUSTMENT`, `UPDATE`, `SALE`).
 
 Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by consulting `RequestMappingHandlerMapping`. It must be injected with `@Qualifier("requestMappingHandlerMapping")` (actuator registers a second bean of that type) and the request path must be parsed via `ServletRequestPathUtils.parseAndCache` because the entry point runs before `DispatcherServlet`.
 
 ### Login flow
 
 `AuthService.login()` authenticates against the local `users` table:
-1. Look up `users` row by `username` — `Invalid credentials` (400) if not found or BCrypt mismatch.
-2. Load the `user_banks` row for bank fields in the response.
+1. Look up the **active** `users` row by `username` (`findByUsernameAndDeletedAtIsNull`) — `Invalid credentials` (400) if not found or BCrypt mismatch (a soft-deleted user can't log in).
+2. Load the `businesses` + `business_banks` rows (by the user's `business_id`) for business + bank fields in the response.
 3. Upsert a row in `bejo_sessions` keyed on `(username, device_id)`; an existing FCM token is preserved when the login request has no `pushToken`.
-4. Return profile + bank data + JWT (`expiresIn` seconds).
+4. Return `id` + profile + `businessRole` + business + bank + **`profilePicture` (business picture) + `appSettings`** + JWT (`expiresIn` seconds). The bundled picture/app-settings save the client round trips on the home screen; the individual endpoints (`/api/app-settings`, `/api/business/picture`, `GET /api/users/me`) still exist. `GET /api/users/me` returns the same bundle minus the token.
 
-### Registration & account types
+### Registration, businesses & members
 
-Registration lives in `UserService` (not `AuthService` — auth is only login/logout/session). Two entry points, both create `users` + `user_banks` rows (bank fields optional, default to empty strings) and **no** `user_qris` row (QRIS is optional — added later via upload):
+Registration/user-management live in `UserService` + `MemberService` (not `AuthService` — auth is only login/logout/session). Scoping is resolved by `BusinessContext.requireBusinessId(username)` (a `@Component` mapping the authenticated username → `business_id`; throws 404 if the user is gone/soft-deleted).
 
-- `POST /api/users/register` (public) → `AccountType.SELF_SERVICE`. For self-registered merchants.
-- `POST /api/users/internal/register` (JWT-protected) → `AccountType.MANAGED`. Same payload; for internal/system provisioning.
+- `POST /api/users/register` (public) → creates a **new `businesses` row + its first `users` row** (`SUPER_ADMIN`, `AccountType.SELF_SERVICE`) + `business_banks` row (bank fields optional, empty by default). **No** `business_qris` row (QRIS optional — added later via upload).
+- `MemberService` (super-admin-gated): `POST /api/users/members` adds a `MEMBER` to the caller's business (rejected once the business hits `app.business.max-users` active users, default 5, super admin included); `PATCH`/`DELETE .../members/{id}` update/soft-delete a member; `GET .../members` lists them (any member). A `SUPER_ADMIN` can never be modified or deleted here. **Delete is a soft delete** (`users.deleted_at` set) that **releases the username**: uniqueness is enforced only among active users (app check + a Postgres partial unique index `WHERE deleted_at IS NULL`), and the member's `bejo_sessions` are removed so a reused username starts clean.
 
-`DataSeeder` also creates a `MANAGED` seed user at startup when `SEED_PASSWORD` is set — but seed data (including `seed-qris.b64`) is for the seed/test user only and must never back any other feature.
+`DataSeeder` also creates a seed `businesses` + `SUPER_ADMIN`/`MANAGED` seed user at startup when `SEED_PASSWORD` is set — but seed data (including `seed-qris.b64`) is for the seed/test user only and must never back any other feature.
 
 ### Bulk transaction sync (offline)
 
@@ -170,6 +178,14 @@ Registration lives in `UserService` (not `AuthService` — auth is only login/lo
 - **Per-item idempotency** — each item carries its own client-generated `idempotencyKey` (not the request-level `Idempotency-Key` header), so re-sending the whole batch (or a partial batch after a dropped connection) never duplicates.
 - **Partial success** — the method is deliberately **not** `@Transactional`; each item is validated individually (via an injected `jakarta.validation.Validator`, since the request DTO does not cascade-validate its list elements) and saved in its own transaction. One malformed/duplicate row can't roll back or block the rest.
 - **Per-item result** — returns `BulkTransactionResultResponseDto` with counts + a `results` list of `{idempotencyKey, status (CREATED|DUPLICATE|FAILED), transactionId, error}`. The client matches by `idempotencyKey` to mark local rows synced (CREATED/DUPLICATE) or retry/fix (FAILED). A concurrent unique-constraint hit is caught and reported as DUPLICATE.
+
+### Transaction line items (products sold)
+
+A MANUAL/PARSED transaction may optionally carry `items` — a list of `(productId, quantity)` tuples for the products sold. `TransactionService.create` handles them atomically (the method is `@Transactional`, so any failure rolls back the whole transaction):
+- **Two-pass, validate-then-apply** — pass 1 resolves every line to one of the merchant's own products and checks `stock >= quantity`; an unknown product, a duplicate product line, or **insufficient stock** throws `IllegalArgumentException` (400) and nothing changes. Pass 2 reduces each product's `stock`, saves a `transaction_items` row (snapshotting `sku`/`name`/`unitPrice` = the product's current selling price, plus `subtotal`), and records a **SALE** `StockMutation` (via `StockMutationService.recordStockChange`) so the stock ledger stays complete.
+- `transaction_items.history_id` → `bejo_history.id`; `product_id` is a plain reference (no FK) so history survives a later product edit/delete. When items are present the transaction **`amount` is derived** from the sum of line subtotals (the client-sent amount is overridden), so the total can never disagree with its items.
+- **Reading them back:** the history list (`GET /api/transactions`) omits items to keep the payload small; `GET /api/transactions/{transactionId}` returns the transaction **with** its `items`. `TransactionResponseDto.items` is `@JsonInclude(NON_NULL)`, so it's absent on the list and present on the detail.
+- Bulk sync (`POST /api/transactions/bulk`) does **not** process items (offline stock validation is out of scope) — items on a bulk item are ignored.
 
 ### Transaction soft delete
 
@@ -179,19 +195,19 @@ Registration lives in `UserService` (not `AuthService` — auth is only login/lo
 
 `POST /snap/v1.0/qr/qr-mpm-notify` (`QrisCallbackController` → `QrisCallbackService`) receives SNAP-like QR MPM notifications from the QRIS merchant service (AstraPay), unauthenticated (server-to-server).
 
-**PoC mode (temporary):** the provider's callback is currently buggy — it only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So the DTO validation is lenient (all fields optional), `X-TIMESTAMP` is optional, and the service can't route by NMID or dedupe by reference. Instead, **every callback records a `MANAGED`/`AstraPay` transaction against the seed user** (`app.callback.default-username`, default `admin`) with a generated `transactionId`, null `idempotencyKey` (no dedupe — each callback creates a new row), amount/status from the payload, time from `X-TIMESTAMP` (else now()); saves the raw payload JSON to `bejo_history.additional_info`; and sends a best-effort FCM push to the seed user's devices. Returns the callback's own ack shape (`QrMpmNotifyResponse`). **Restore NMID routing + reference-based idempotency once the provider fixes the payload.**
+**PoC mode (temporary):** the provider's callback is currently buggy — it only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So the DTO validation is lenient (all fields optional), `X-TIMESTAMP` is optional, and the service can't route by NMID or dedupe by reference. Instead, **every callback records a `MANAGED`/`AstraPay` transaction against the seed user's business** (`app.callback.default-username`, default `admin` → its `business_id`) with a generated `transactionId`, null `idempotencyKey` (no dedupe — each callback creates a new row), amount/status from the payload; saves the raw payload JSON to `bejo_history.info`; and sends a best-effort FCM push to **every device of every user in that business** (`PushNotificationService.sendToBusiness`). Returns the callback's own ack shape (`QrMpmNotifyResponse`). **Note:** `parseTimestamp` is currently commented out, so `transaction_date` is `now()` (the `X-TIMESTAMP` is ignored). **Restore NMID routing (`BusinessRepository.findFirstByNmid`) + reference-based idempotency + X-TIMESTAMP parsing once the provider fixes the payload.**
 
-FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one device, propagates errors — used by the test-notification API) and `sendToUser` (all a user's device sessions, best-effort, never throws — used by the callback). `NotificationService` (the `/api/notifications/test` endpoint) only sends a push; it does not persist a transaction.
+FCM sending lives in `PushNotificationService` (shared): `sendToToken` (one device, propagates errors — used by `POST /api/notifications/test`), `sendToUser` (all one user's device sessions — used by `POST /api/notifications/user`), and `sendToBusiness` (every device of every active user in a business — used by the callback so a payment rings the whole team); the two fan-out methods are best-effort and never throw. `NotificationService` (the `/api/notifications/*` endpoints) only sends a push; it does not persist a transaction.
 
 **Stale-token auto-cleanup:** when FCM returns `UNREGISTERED` ("Requested entity was not found" — app uninstalled / token rotated) or `SENDER_ID_MISMATCH`, the dead token is cleared from its `bejo_sessions` row so it isn't retried. The classifier is `PushNotificationService.isTokenUnregistered(MessagingErrorCode)`; both `sendToUser` (per failing session) and `NotificationService` (the test endpoint, then rethrows) apply it. Transient/payload errors (`UNAVAILABLE`, `INVALID_ARGUMENT`, …) never delete the token.
 
 ### QRIS model
 
-QRIS is optional: registration creates no `user_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
+QRIS is optional: registration creates no `business_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
 
 ### Products & inventory
 
-Basic per-merchant SKU catalog with simple inventory, scoped by `username`:
+Basic per-business SKU catalog with simple inventory, scoped by `business_id` (resolved from the authenticated username via `BusinessContext`):
 - `ProductCategoryController` → `ProductCategoryService` — categories (`product_categories`); names unique per merchant. Deleting a category first **un-categorizes** its products (`ProductRepository.clearCategory` sets their `category_id` to null in the service, so behavior matches under both Flyway/Postgres and the H2 test schema) then removes the row — products are never deleted with it.
 - `ProductController` → `ProductService` — products (`products`); `sku` unique per merchant. Editable fields include an optional `shortDescription`. `stock` is a plain column (inventory management = `PATCH` the value; no ledger). A product's `categoryId` must belong to the same merchant (else 400). `photo` is an optional base64 image validated ≤500 KB decoded; **list responses omit the photo** to keep payloads small, the single-product detail includes it. Prices are `BIGINT` IDR; `costPrice` is optional.
 - **Stock opname** — `POST /api/products/stock-adjustments` (`ProductService.adjustStock`) bulk-sets several products' stock to their newly counted quantities. Atomic and two-pass (unknown product → 400, nothing changes); returns a per-product variance report (`previousStock`/`newStock`/`difference`). No ledger is persisted.
@@ -206,11 +222,13 @@ Basic per-merchant SKU catalog with simple inventory, scoped by `username`:
 
 ### App settings
 
-`AppSettingsController` → `AppSettingsService` manage a per-user `user_app_settings` row (one per username, created lazily on first update) holding the settings synced from the mobile client:
+`AppSettingsController` → `AppSettingsService` manage a per-**business** `business_app_settings` row (one per `business_id`, created lazily on first update, shared by all the business's users) holding the settings synced from the mobile client:
 - **Monitored apps** — a `packageName → issuer` map (mirrors the Android `notifAppList` pref), stored as JSON via `StringMapJsonConverter`.
 - **Notification keywords** — `includeKeywords` (whitelist) + `excludeKeywords` (blacklist) string lists (JSON via `StringListJsonConverter`) plus `blacklistEnabled` (default true) / `whitelistEnabled` (default false) toggles.
 
 - **App config toggles** — `qrisWithProfilePicture` (compose the QRIS image onto the profile picture) and `inventoryEnabled` (enable inventory management), both boolean columns defaulting false, each set via its own `PUT` (`{enabled}`).
+
+**Authorization:** reading (`GET /api/app-settings`) is open to any member, but **all mutations are super-admin-only** — the four `PUT`s go through `AppSettingsService.loadOrCreate`, which calls `BusinessContext.requireSuperAdminBusinessId` (403 `ForbiddenException` for a plain member). The same gate protects the QRIS image (`POST /api/qris/upload` + `/reset`) and the business picture (`PUT`/`DELETE /api/business/picture`). Business info + bank edits are **not** gated (any member).
 
 `GET /api/app-settings` returns defaults (empty lists/map, blacklist on, whitelist off, both toggles off) when no row exists yet — it never 404s. `PUT /api/app-settings/monitored-apps` replaces the whole map; `PUT /api/app-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
 
@@ -230,18 +248,19 @@ The whole app is pinned to **WIB (`Asia/Jakarta`, UTC+7)**: `BejoApplication.mai
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup; `ddl-auto: none`. It is currently a **single `V1__init_schema.sql` baseline** holding the full schema — the production DB was rebuilt from scratch and reseeded, so the earlier V1–V6 were consolidated into one. Going forward, add new versioned migrations (`V2+`) for schema changes and never edit an applied migration in place (Flyway validates checksums against the live DB).
+Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup; `ddl-auto: none`. `V1__init_schema.sql` is the single consolidated baseline — it was **rewritten** for the user↔business decoupling (there were no production users to preserve), so the DB must be **dropped & recreated** rather than migrated (`podman compose down -v` to drop the volume). Going forward, add new versioned migrations (`V2+`) for schema changes and never edit an applied migration in place (Flyway validates checksums against the live DB).
 
 Key tables:
-- `users` — credentials + profile + business info (with `initial_*` columns for reset); `account_type` is `MANAGED` (internal/seed) or `SELF_SERVICE` (self-registered); optional `profile_picture` (base64 TEXT, ≤1 MB decoded)
-- `user_banks` / `user_qris` — one row per username (unique FK)
-- `bejo_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window
-- `bejo_history` — transactions; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `additional_info` (TEXT, e.g. raw callback JSON)
+- `businesses` — the merchant; business name/address/nmid (+ `initial_*` for reset) + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `nmid WHERE nmid IS NOT NULL` (callback routing)
+- `users` — credentials + profile (name/email/phone); `business_id` FK; `business_role` (`SUPER_ADMIN`/`MEMBER`); `account_type` (`MANAGED`/`SELF_SERVICE`); soft delete via `deleted_at` (username unique only among active users — partial index `uq_users_username_active`)
+- `business_banks` / `business_qris` / `business_app_settings` — one row per `business_id` (unique FK); app settings = monitored-apps map + keyword filters (JSON) + blacklist/whitelist + toggles (`qris_with_profile_picture`, `inventory_enabled`)
+- `bejo_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window (no FK — username uniqueness is partial)
+- `bejo_history` — transactions, scoped by `business_id`; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `info` (TEXT, e.g. raw callback JSON — the provider's `additionalInfo` payload is stored here under the shorter name)
+- `transaction_items` — optional line items of a sale; `history_id` FK → `bejo_history(id)`; snapshots `sku`/`name`/`quantity`/`unit_price`/`subtotal`; `product_id` is a plain reference (no FK)
 - `token_blacklist` — logged-out JWT jtis, purged hourly after expiry
-- `user_app_settings` — one row per username; monitored-apps map + notification keyword filters (JSON in TEXT columns) + blacklist/whitelist toggles + app config toggles (`qris_with_profile_picture`, `inventory_enabled`)
-- `product_categories` — per-merchant product categories; name unique per username
-- `products` — per-merchant SKUs; `sku` unique per username; optional `short_description`; nullable `category_id` FK; `stock` (INTEGER), `price`/`cost_price` (BIGINT IDR), optional base64 `photo` (TEXT, ≤500 KB decoded)
-- `stock_mutations` / `stock_mutation_items` — per-merchant stock-change history (type `PURCHASE`/`ADJUSTMENT`/`UPDATE`); each line snapshots the product + `previous_stock`/`new_stock`/`quantity_change`, with `unit_price`/`subtotal` for purchases; `total_amount` is the purchase sum
+- `product_categories` — per-business categories; name unique per `business_id`
+- `products` — per-business SKUs; `sku` unique per `business_id`; optional `short_description`; nullable `category_id` FK; `stock` (INTEGER), `price`/`cost_price` (BIGINT IDR), optional base64 `photo` (TEXT, ≤500 KB decoded)
+- `stock_mutations` / `stock_mutation_items` — per-business stock-change history (type `PURCHASE`/`ADJUSTMENT`/`UPDATE`/`SALE`); each line snapshots the product + `previous_stock`/`new_stock`/`quantity_change`, with `unit_price`/`subtotal` for purchases; `total_amount` is the purchase sum
 
 ## Tests
 

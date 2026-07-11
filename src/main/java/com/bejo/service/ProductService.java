@@ -42,26 +42,30 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final ProductCategoryRepository categoryRepository;
     private final StockMutationService stockMutationService;
+    private final BusinessContext businessContext;
 
     public ProductService(ProductRepository productRepository,
                           ProductCategoryRepository categoryRepository,
-                          StockMutationService stockMutationService) {
+                          StockMutationService stockMutationService,
+                          BusinessContext businessContext) {
         this.productRepository = productRepository;
         this.categoryRepository = categoryRepository;
         this.stockMutationService = stockMutationService;
+        this.businessContext = businessContext;
     }
 
     @Transactional
     public ProductResponseDto create(String username, CreateProductRequestDto request) {
+        Long businessId = businessContext.requireBusinessId(username);
         String sku = request.sku().trim();
-        if (productRepository.existsByUsernameAndSku(username, sku)) {
+        if (productRepository.existsByBusinessIdAndSku(businessId, sku)) {
             throw new IllegalArgumentException("SKU sudah digunakan: " + sku);
         }
-        String categoryName = resolveCategoryName(username, request.categoryId());
+        String categoryName = resolveCategoryName(businessId, request.categoryId());
         if (request.photo() != null) validatePhoto(request.photo());
 
         Product p = new Product();
-        p.setUsername(username);
+        p.setBusinessId(businessId);
         p.setSku(sku);
         p.setName(request.name().trim());
         p.setShortDescription(request.shortDescription());
@@ -71,29 +75,31 @@ public class ProductService {
         p.setStock(request.stock() != null ? request.stock() : 0);
         p.setPhoto(request.photo());
         productRepository.save(p);
-        log.info("[PRODUCT] Created id={} sku={} for username={}", p.getId(), sku, username);
+        log.info("[PRODUCT] Created id={} sku={} for businessId={}", p.getId(), sku, businessId);
         return toDto(p, categoryName, true);
     }
 
     @Transactional(readOnly = true)
     public Page<ProductResponseDto> list(String username, Long categoryId, Pageable pageable) {
-        log.info("[PRODUCT] List for username={} categoryId={} page={} size={}",
-                username, categoryId, pageable.getPageNumber(), pageable.getPageSize());
+        Long businessId = businessContext.requireBusinessId(username);
+        log.info("[PRODUCT] List for businessId={} categoryId={} page={} size={}",
+                businessId, categoryId, pageable.getPageNumber(), pageable.getPageSize());
         Page<Product> products = categoryId != null
-                ? productRepository.findByUsernameAndCategoryIdOrderByNameAsc(username, categoryId, pageable)
-                : productRepository.findByUsernameOrderByNameAsc(username, pageable);
+                ? productRepository.findByBusinessIdAndCategoryIdOrderByNameAsc(businessId, categoryId, pageable)
+                : productRepository.findByBusinessIdOrderByNameAsc(businessId, pageable);
 
         // Resolve category names in one shot; omit photos to keep the list small
-        Map<Long, String> names = categoryNames(username);
+        Map<Long, String> names = categoryNames(businessId);
         return products.map(p -> toDto(p, names.get(p.getCategoryId()), false));
     }
 
     @Transactional(readOnly = true)
     public ProductResponseDto get(String username, Long id) {
-        log.info("[PRODUCT] Get id={} for username={}", id, username);
-        Product p = productRepository.findByIdAndUsername(id, username)
+        Long businessId = businessContext.requireBusinessId(username);
+        log.info("[PRODUCT] Get id={} for businessId={}", id, businessId);
+        Product p = productRepository.findByIdAndBusinessId(id, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
-        return toDto(p, categoryName(username, p.getCategoryId()), true);
+        return toDto(p, categoryName(businessId, p.getCategoryId()), true);
     }
 
     @Transactional
@@ -101,13 +107,14 @@ public class ProductService {
         if (request.isEmpty()) {
             throw new IllegalArgumentException("Tidak ada field yang diubah");
         }
-        Product p = productRepository.findByIdAndUsername(id, username)
+        Long businessId = businessContext.requireBusinessId(username);
+        Product p = productRepository.findByIdAndBusinessId(id, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
 
         if (request.sku() != null) {
             String sku = request.sku().trim();
             if (sku.isBlank()) throw new IllegalArgumentException("sku tidak boleh kosong");
-            if (!sku.equals(p.getSku()) && productRepository.existsByUsernameAndSku(username, sku)) {
+            if (!sku.equals(p.getSku()) && productRepository.existsByBusinessIdAndSku(businessId, sku)) {
                 throw new IllegalArgumentException("SKU sudah digunakan: " + sku);
             }
             p.setSku(sku);
@@ -118,7 +125,7 @@ public class ProductService {
         }
         if (request.shortDescription() != null) p.setShortDescription(request.shortDescription());
         if (request.categoryId() != null) {
-            resolveCategoryName(username, request.categoryId()); // validates ownership
+            resolveCategoryName(businessId, request.categoryId()); // validates ownership
             p.setCategoryId(request.categoryId());
         }
         if (request.price() != null) p.setPrice(request.price());
@@ -133,11 +140,11 @@ public class ProductService {
         productRepository.save(p);
         // Record a stock mutation only when the edit actually changed the stock
         if (stockChanged) {
-            stockMutationService.recordStockChange(username, StockMutationType.UPDATE, "Product update",
+            stockMutationService.recordStockChange(businessId, StockMutationType.UPDATE, "Product update",
                     List.of(new StockMutationService.StockChangeLine(p, previousStock, p.getStock())));
         }
-        log.info("[PRODUCT] Updated id={} for username={}", id, username);
-        return toDto(p, categoryName(username, p.getCategoryId()), true);
+        log.info("[PRODUCT] Updated id={} for businessId={}", id, businessId);
+        return toDto(p, categoryName(businessId, p.getCategoryId()), true);
     }
 
     /**
@@ -148,13 +155,14 @@ public class ProductService {
      */
     @Transactional
     public StockAdjustmentResultResponseDto adjustStock(String username, StockAdjustmentRequestDto request) {
+        Long businessId = businessContext.requireBusinessId(username);
         List<StockAdjustmentItemDto> items = request.items();
-        log.info("[PRODUCT] Stock adjustment for username={} lines={}", username, items.size());
+        log.info("[PRODUCT] Stock adjustment for businessId={} lines={}", businessId, items.size());
 
         // Pass 1 — resolve every line to an owned product before changing anything
         List<Product> products = new ArrayList<>();
         for (StockAdjustmentItemDto item : items) {
-            products.add(productRepository.findByIdAndUsername(item.productId(), username)
+            products.add(productRepository.findByIdAndBusinessId(item.productId(), businessId)
                     .orElseThrow(() -> new IllegalArgumentException("Produk tidak ditemukan: " + item.productId())));
         }
 
@@ -173,37 +181,38 @@ public class ProductService {
                     previous, counted, counted - previous));
         }
         String note = request.note() != null && !request.note().isBlank() ? request.note().trim() : "Stock opname";
-        stockMutationService.recordStockChange(username, StockMutationType.ADJUSTMENT, note, changes);
+        stockMutationService.recordStockChange(businessId, StockMutationType.ADJUSTMENT, note, changes);
 
-        log.info("[PRODUCT] Stock adjustment done for username={} products={}", username, results.size());
+        log.info("[PRODUCT] Stock adjustment done for businessId={} products={}", businessId, results.size());
         return new StockAdjustmentResultResponseDto(results.size(), results);
     }
 
     @Transactional
     public void delete(String username, Long id) {
-        Product p = productRepository.findByIdAndUsername(id, username)
+        Long businessId = businessContext.requireBusinessId(username);
+        Product p = productRepository.findByIdAndBusinessId(id, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
         productRepository.delete(p);
-        log.info("[PRODUCT] Deleted id={} for username={}", id, username);
+        log.info("[PRODUCT] Deleted id={} for businessId={}", id, businessId);
     }
 
-    // Validates that the category exists and belongs to this merchant; returns its name.
-    private String resolveCategoryName(String username, Long categoryId) {
+    // Validates that the category exists and belongs to this business; returns its name.
+    private String resolveCategoryName(Long businessId, Long categoryId) {
         if (categoryId == null) return null;
-        ProductCategory category = categoryRepository.findByIdAndUsername(categoryId, username)
+        ProductCategory category = categoryRepository.findByIdAndBusinessId(categoryId, businessId)
                 .orElseThrow(() -> new IllegalArgumentException("Kategori tidak ditemukan: " + categoryId));
         return category.getName();
     }
 
-    private String categoryName(String username, Long categoryId) {
+    private String categoryName(Long businessId, Long categoryId) {
         if (categoryId == null) return null;
-        return categoryRepository.findByIdAndUsername(categoryId, username)
+        return categoryRepository.findByIdAndBusinessId(categoryId, businessId)
                 .map(ProductCategory::getName)
                 .orElse(null);
     }
 
-    private Map<Long, String> categoryNames(String username) {
-        return categoryRepository.findByUsernameOrderByNameAsc(username).stream()
+    private Map<Long, String> categoryNames(Long businessId) {
+        return categoryRepository.findByBusinessIdOrderByNameAsc(businessId).stream()
                 .collect(Collectors.toMap(ProductCategory::getId, ProductCategory::getName));
     }
 

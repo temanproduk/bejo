@@ -1,5 +1,6 @@
 package com.bejo.config;
 
+import com.bejo.repository.UserRepository;
 import com.bejo.service.JwtService;
 import com.bejo.service.TokenBlacklistService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -27,16 +28,19 @@ public class SecurityConfig {
 
     private final JwtService jwtService;
     private final TokenBlacklistService tokenBlacklistService;
+    private final UserRepository userRepository;
     private final ObjectProvider<RequestMappingHandlerMapping> handlerMappingProvider;
 
     public SecurityConfig(JwtService jwtService,
                           TokenBlacklistService tokenBlacklistService,
+                          UserRepository userRepository,
                           // Qualifier needed: actuator registers a second RequestMappingHandlerMapping
                           // subclass, and an ambiguous provider silently resolves to null
                           @Qualifier("requestMappingHandlerMapping")
                           ObjectProvider<RequestMappingHandlerMapping> handlerMappingProvider) {
         this.jwtService = jwtService;
         this.tokenBlacklistService = tokenBlacklistService;
+        this.userRepository = userRepository;
         this.handlerMappingProvider = handlerMappingProvider;
     }
 
@@ -47,7 +51,7 @@ public class SecurityConfig {
 
     @Bean
     public JwtAuthFilter jwtAuthFilter() {
-        return new JwtAuthFilter(jwtService, tokenBlacklistService);
+        return new JwtAuthFilter(jwtService, tokenBlacklistService, userRepository);
     }
 
     @Bean

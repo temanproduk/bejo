@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -31,15 +32,19 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ProductServiceTest {
 
+    private static final Long BIZ = 1L;
+
     @Mock private ProductRepository productRepository;
     @Mock private ProductCategoryRepository categoryRepository;
     @Mock private StockMutationService stockMutationService;
+    @Mock private BusinessContext businessContext;
 
     private ProductService service;
 
     @BeforeEach
     void setUp() {
-        service = new ProductService(productRepository, categoryRepository, stockMutationService);
+        service = new ProductService(productRepository, categoryRepository, stockMutationService, businessContext);
+        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);
     }
 
     private CreateProductRequestDto createReq(String sku, Long categoryId) {
@@ -48,15 +53,15 @@ class ProductServiceTest {
 
     private ProductCategory category(Long id, String name) {
         ProductCategory c = new ProductCategory();
-        c.setUsername("alice");
+        c.setBusinessId(BIZ);
         c.setName(name);
         return c;
     }
 
     @Test
     void createSavesWithDefaultsAndCategory() {
-        when(productRepository.existsByUsernameAndSku("alice", "SKU1")).thenReturn(false);
-        when(categoryRepository.findByIdAndUsername(3L, "alice")).thenReturn(Optional.of(category(3L, "Minuman")));
+        when(productRepository.existsByBusinessIdAndSku(BIZ, "SKU1")).thenReturn(false);
+        when(categoryRepository.findByIdAndBusinessId(3L, BIZ)).thenReturn(Optional.of(category(3L, "Minuman")));
 
         ProductResponseDto data = service.create("alice", createReq("SKU1", 3L));
 
@@ -74,7 +79,7 @@ class ProductServiceTest {
 
     @Test
     void createRejectsDuplicateSku() {
-        when(productRepository.existsByUsernameAndSku("alice", "SKU1")).thenReturn(true);
+        when(productRepository.existsByBusinessIdAndSku(BIZ, "SKU1")).thenReturn(true);
 
         assertThatThrownBy(() -> service.create("alice", createReq("SKU1", null)))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -83,9 +88,9 @@ class ProductServiceTest {
     }
 
     @Test
-    void createRejectsCategoryFromAnotherMerchant() {
-        when(productRepository.existsByUsernameAndSku("alice", "SKU1")).thenReturn(false);
-        when(categoryRepository.findByIdAndUsername(99L, "alice")).thenReturn(Optional.empty());
+    void createRejectsCategoryFromAnotherBusiness() {
+        when(productRepository.existsByBusinessIdAndSku(BIZ, "SKU1")).thenReturn(false);
+        when(categoryRepository.findByIdAndBusinessId(99L, BIZ)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create("alice", createReq("SKU1", 99L)))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -95,7 +100,7 @@ class ProductServiceTest {
 
     @Test
     void createRejectsOversizedPhoto() {
-        when(productRepository.existsByUsernameAndSku("alice", "SKU1")).thenReturn(false);
+        when(productRepository.existsByBusinessIdAndSku(BIZ, "SKU1")).thenReturn(false);
         String bigPhoto = Base64.getEncoder().encodeToString(new byte[512_001]);
         var req = new CreateProductRequestDto("SKU1", "Kopi", null, null, 1000L, null, 0, bigPhoto);
 
@@ -107,7 +112,7 @@ class ProductServiceTest {
 
     @Test
     void createRejectsInvalidBase64Photo() {
-        when(productRepository.existsByUsernameAndSku("alice", "SKU1")).thenReturn(false);
+        when(productRepository.existsByBusinessIdAndSku(BIZ, "SKU1")).thenReturn(false);
         var req = new CreateProductRequestDto("SKU1", "Kopi", null, null, 1000L, null, 0, "@@ not base64 @@");
 
         assertThatThrownBy(() -> service.create("alice", req))
@@ -118,7 +123,7 @@ class ProductServiceTest {
 
     @Test
     void getUnknownProductIs404() {
-        when(productRepository.findByIdAndUsername(7L, "alice")).thenReturn(Optional.empty());
+        when(productRepository.findByIdAndBusinessId(7L, BIZ)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.get("alice", 7L))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -127,12 +132,12 @@ class ProductServiceTest {
     @Test
     void updateAppliesOnlyProvidedFields() {
         Product p = new Product();
-        p.setUsername("alice");
+        p.setBusinessId(BIZ);
         p.setSku("SKU1");
         p.setName("Kopi");
         p.setPrice(10_000L);
         p.setStock(5);
-        when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(p));
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(p));
 
         // Only stock + price changed (inventory update)
         var req = new UpdateProductRequestDto(null, null, "Diskon hari ini", null, 12_000L, null, 8, null);
@@ -143,6 +148,8 @@ class ProductServiceTest {
         assertThat(data.shortDescription()).isEqualTo("Diskon hari ini"); // editable
         assertThat(data.name()).isEqualTo("Kopi"); // unchanged
         verify(productRepository).save(p);
+        // Stock changed 5 -> 8, so an UPDATE mutation is recorded
+        verify(stockMutationService).recordStockChange(eq(BIZ), eq("UPDATE"), any(), any());
     }
 
     @Test
@@ -158,10 +165,10 @@ class ProductServiceTest {
     @Test
     void updateRejectsSkuCollisionWithAnotherProduct() {
         Product p = new Product();
-        p.setUsername("alice");
+        p.setBusinessId(BIZ);
         p.setSku("SKU1");
-        when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(p));
-        when(productRepository.existsByUsernameAndSku("alice", "SKU2")).thenReturn(true);
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(p));
+        when(productRepository.existsByBusinessIdAndSku(BIZ, "SKU2")).thenReturn(true);
 
         var req = new UpdateProductRequestDto("SKU2", null, null, null, null, null, null, null);
 
@@ -173,7 +180,7 @@ class ProductServiceTest {
 
     @Test
     void deleteUnknownProductIs404() {
-        when(productRepository.findByIdAndUsername(7L, "alice")).thenReturn(Optional.empty());
+        when(productRepository.findByIdAndBusinessId(7L, BIZ)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.delete("alice", 7L))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -182,7 +189,7 @@ class ProductServiceTest {
 
     private Product stocked(long id, String sku, int stock) {
         Product p = new Product();
-        p.setUsername("alice");
+        p.setBusinessId(BIZ);
         p.setSku(sku);
         p.setName("Product " + sku);
         p.setStock(stock);
@@ -198,8 +205,8 @@ class ProductServiceTest {
     void adjustStockSetsCountsAndReportsVariance() {
         Product a = stocked(1L, "A", 10);
         Product b = stocked(2L, "B", 5);
-        when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
-        when(productRepository.findByIdAndUsername(2L, "alice")).thenReturn(Optional.of(b));
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(a));
+        when(productRepository.findByIdAndBusinessId(2L, BIZ)).thenReturn(Optional.of(b));
 
         var request = new com.bejo.dto.request.StockAdjustmentRequestDto("opname sore", List.of(
                 new com.bejo.dto.request.StockAdjustmentItemDto(1L, 8),    // counted 8 (−2)
@@ -211,7 +218,7 @@ class ProductServiceTest {
         assertThat(b.getStock()).isEqualTo(12);
         verify(productRepository, times(2)).save(any(Product.class));
         // The note flows onto the recorded ADJUSTMENT mutation
-        verify(stockMutationService).recordStockChange(eq("alice"), eq("ADJUSTMENT"), eq("opname sore"), any());
+        verify(stockMutationService).recordStockChange(eq(BIZ), eq("ADJUSTMENT"), eq("opname sore"), any());
 
         assertThat(result.total()).isEqualTo(2);
         assertThat(result.items().get(0).previousStock()).isEqualTo(10);
@@ -223,8 +230,8 @@ class ProductServiceTest {
     @Test
     void adjustStockUnknownProductRejectsWholeBatch() {
         Product a = stocked(1L, "A", 10);
-        when(productRepository.findByIdAndUsername(1L, "alice")).thenReturn(Optional.of(a));
-        when(productRepository.findByIdAndUsername(99L, "alice")).thenReturn(Optional.empty());
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(a));
+        when(productRepository.findByIdAndBusinessId(99L, BIZ)).thenReturn(Optional.empty());
 
         var request = new com.bejo.dto.request.StockAdjustmentRequestDto(null, List.of(
                 new com.bejo.dto.request.StockAdjustmentItemDto(1L, 8),

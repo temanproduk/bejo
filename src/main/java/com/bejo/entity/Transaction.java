@@ -41,11 +41,13 @@ public class Transaction {
     @Column(name = "customer_pan")
     private String customerPan;
 
+    // General-purpose extra context (e.g. the raw QRIS callback payload JSON). The QRIS
+    // provider calls this "additionalInfo" on the wire; we store it under the shorter "info".
     @Column(columnDefinition = "TEXT")
     private String info;
 
-    @Column(nullable = false)
-    private String username;
+    @Column(name = "business_id", nullable = false)
+    private Long businessId;
 
     @Column(name = "scrape_date")
     private LocalDateTime scrapeDate;
@@ -62,10 +64,6 @@ public class Transaction {
     // Soft delete: NULL = active, non-NULL = when the user deleted it
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
-
-    // General-purpose extra context (e.g. raw callback payload JSON)
-    @Column(name = "additional_info", columnDefinition = "TEXT")
-    private String additionalInfo;
 
     public Long getId() { return id; }
     public String getTransactionId() { return transactionId; }
@@ -92,8 +90,8 @@ public class Transaction {
     public void setCustomerPan(String customerPan) { this.customerPan = customerPan; }
     public String getInfo() { return info; }
     public void setInfo(String info) { this.info = info; }
-    public String getUsername() { return username; }
-    public void setUsername(String username) { this.username = username; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
     public LocalDateTime getScrapeDate() { return scrapeDate; }
     public void setScrapeDate(LocalDateTime scrapeDate) { this.scrapeDate = scrapeDate; }
     public String getType() { return type; }
@@ -104,6 +102,4 @@ public class Transaction {
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public LocalDateTime getDeletedAt() { return deletedAt; }
     public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
-    public String getAdditionalInfo() { return additionalInfo; }
-    public void setAdditionalInfo(String additionalInfo) { this.additionalInfo = additionalInfo; }
 }

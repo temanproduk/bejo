@@ -1,14 +1,17 @@
 package com.bejo.service;
 
+import com.bejo.constant.BusinessRole;
 import com.bejo.dto.request.ChangePasswordRequestDto;
 import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.request.UpdateBankRequestDto;
 import com.bejo.dto.request.UpdateBusinessRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
+import com.bejo.entity.Business;
+import com.bejo.entity.BusinessBank;
 import com.bejo.entity.User;
-import com.bejo.entity.UserBank;
 import com.bejo.exception.ResourceNotFoundException;
-import com.bejo.repository.UserBankRepository;
+import com.bejo.repository.BusinessBankRepository;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +26,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,15 +34,23 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
+    private static final Long BIZ = 1L;
+
     @Mock private UserRepository userRepository;
-    @Mock private UserBankRepository userBankRepository;
+    @Mock private BusinessRepository businessRepository;
+    @Mock private BusinessBankRepository businessBankRepository;
+    @Mock private BusinessContext businessContext;
+    @Mock private AppSettingsService appSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
 
     private UserService userService;
 
     @BeforeEach
     void setUp() {
-        userService = new UserService(userRepository, userBankRepository, passwordEncoder);
+        userService = new UserService(userRepository, businessRepository, businessBankRepository,
+                businessContext, appSettingsService, passwordEncoder);
+        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads / business+bank edits
+        lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // picture mutations (super admin)
     }
 
     private RegisterRequestDto registerRequest() {
@@ -48,61 +60,74 @@ class UserServiceTest {
 
     @Test
     void registerRejectsDuplicateUsername() {
-        when(userRepository.existsByUsername("alice")).thenReturn(true);
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(true);
 
         assertThatThrownBy(() -> userService.register(registerRequest()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Username sudah digunakan");
 
         verify(userRepository, never()).save(any());
+        verify(businessRepository, never()).save(any());
     }
 
     @Test
-    void registerCreatesSelfServiceUserAndBank() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
+    void registerCreatesBusinessSuperAdminAndBank() {
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
         when(passwordEncoder.encode("password1")).thenReturn("$encoded");
 
         userService.register(registerRequest());
+
+        ArgumentCaptor<Business> businessCaptor = ArgumentCaptor.forClass(Business.class);
+        verify(businessRepository).save(businessCaptor.capture());
+        assertThat(businessCaptor.getValue().getName()).isEqualTo("Warung Alice");
 
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(userCaptor.capture());
         assertThat(userCaptor.getValue().getPasswordHash()).isEqualTo("$encoded");
         assertThat(userCaptor.getValue().getAccountType()).isEqualTo("SELF_SERVICE");
+        assertThat(userCaptor.getValue().getBusinessRole()).isEqualTo(BusinessRole.SUPER_ADMIN);
 
-        ArgumentCaptor<UserBank> bankCaptor = ArgumentCaptor.forClass(UserBank.class);
-        verify(userBankRepository).save(bankCaptor.capture());
+        ArgumentCaptor<BusinessBank> bankCaptor = ArgumentCaptor.forClass(BusinessBank.class);
+        verify(businessBankRepository).save(bankCaptor.capture());
         // Bank fields not supplied at registration default to empty strings
         assertThat(bankCaptor.getValue().getBankName()).isEmpty();
     }
 
     @Test
-    void registerInternalCreatesManagedUser() {
-        when(userRepository.existsByUsername("alice")).thenReturn(false);
-        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
+    void getMeReturnsProfileBusinessBankPictureAndSettings() {
+        User user = new User();
+        user.setUsername("alice");
+        user.setName("Alice");
+        user.setEmail("alice@example.com");
+        user.setPhone("+628111111111");
+        user.setBusinessId(BIZ);
+        user.setBusinessRole(com.bejo.constant.BusinessRole.SUPER_ADMIN);
+        Business business = new Business();
+        business.setName("Warung Alice");
+        business.setPicture("aW1n");
+        BusinessBank bank = new BusinessBank();
+        bank.setBankName("BCA");
+        when(businessContext.requireUser("alice")).thenReturn(user);
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
+        when(appSettingsService.getSettings("alice")).thenReturn(
+                new com.bejo.dto.response.AppSettingsResponseDto(
+                        java.util.Map.of(), java.util.List.of(), java.util.List.of(), true, false, false, false));
 
-        userService.registerInternal(registerRequest());
+        var me = userService.getMe("alice");
 
-        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(userCaptor.capture());
-        assertThat(userCaptor.getValue().getAccountType()).isEqualTo("MANAGED");
-        verify(userBankRepository).save(any());
-    }
-
-    @Test
-    void registerInternalRejectsDuplicateUsername() {
-        when(userRepository.existsByUsername("alice")).thenReturn(true);
-
-        assertThatThrownBy(() -> userService.registerInternal(registerRequest()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Username sudah digunakan");
-
-        verify(userRepository, never()).save(any());
+        assertThat(me.username()).isEqualTo("alice");
+        assertThat(me.businessRole()).isEqualTo("SUPER_ADMIN");
+        assertThat(me.businessName()).isEqualTo("Warung Alice");
+        assertThat(me.bankName()).isEqualTo("BCA");
+        assertThat(me.profilePicture()).isEqualTo("aW1n");
+        assertThat(me.appSettings()).isNotNull();
     }
 
     @Test
     void updateProfileOverwritesFields() {
         User user = new User();
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(businessContext.requireUser("alice")).thenReturn(user);
 
         userService.updateProfile("alice", new UpdateProfileRequestDto("New Name", "new@example.com", "+628999999999"));
 
@@ -113,7 +138,7 @@ class UserServiceTest {
 
     @Test
     void updateProfileForUnknownUserThrows() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+        when(businessContext.requireUser("ghost")).thenThrow(new ResourceNotFoundException("User not found"));
 
         assertThatThrownBy(() -> userService.updateProfile("ghost",
                 new UpdateProfileRequestDto("Name", "a@b.com", "+628111111111")))
@@ -124,7 +149,7 @@ class UserServiceTest {
     void changePasswordRejectsWrongOldPassword() {
         User user = new User();
         user.setPasswordHash("$old");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(businessContext.requireUser("alice")).thenReturn(user);
         when(passwordEncoder.matches("wrong", "$old")).thenReturn(false);
 
         assertThatThrownBy(() -> userService.changePassword("alice",
@@ -138,7 +163,7 @@ class UserServiceTest {
     void changePasswordEncodesNewPassword() {
         User user = new User();
         user.setPasswordHash("$old");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(businessContext.requireUser("alice")).thenReturn(user);
         when(passwordEncoder.matches("oldpass1", "$old")).thenReturn(true);
         when(passwordEncoder.encode("newpass123")).thenReturn("$new");
 
@@ -149,8 +174,8 @@ class UserServiceTest {
 
     @Test
     void updateBankOverwritesFields() {
-        UserBank bank = new UserBank();
-        when(userBankRepository.findByUsername("alice")).thenReturn(Optional.of(bank));
+        BusinessBank bank = new BusinessBank();
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
 
         userService.updateBank("alice", new UpdateBankRequestDto("Mandiri", "9876543210", "Alice B"));
 
@@ -161,12 +186,12 @@ class UserServiceTest {
 
     @Test
     void resetBankRestoresInitialValues() {
-        UserBank bank = new UserBank();
+        BusinessBank bank = new BusinessBank();
         bank.setBankName("Mandiri");
         bank.setInitialBankName("BCA");
         bank.setInitialBankNumber("1234567890");
         bank.setInitialBankAccountName("Alice");
-        when(userBankRepository.findByUsername("alice")).thenReturn(Optional.of(bank));
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
 
         userService.resetBank("alice");
 
@@ -177,8 +202,8 @@ class UserServiceTest {
 
     @Test
     void resetBankWithoutInitialDataThrows() {
-        UserBank bank = new UserBank();
-        when(userBankRepository.findByUsername("alice")).thenReturn(Optional.of(bank));
+        BusinessBank bank = new BusinessBank();
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
 
         assertThatThrownBy(() -> userService.resetBank("alice"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -186,36 +211,36 @@ class UserServiceTest {
 
     @Test
     void updateBusinessOverwritesFields() {
-        User user = new User();
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        Business business = new Business();
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         userService.updateBusiness("alice", new UpdateBusinessRequestDto("Toko Baru", "Bandung", "ID999"));
 
-        assertThat(user.getBusinessName()).isEqualTo("Toko Baru");
-        assertThat(user.getBusinessAddress()).isEqualTo("Bandung");
-        assertThat(user.getNmid()).isEqualTo("ID999");
+        assertThat(business.getName()).isEqualTo("Toko Baru");
+        assertThat(business.getAddress()).isEqualTo("Bandung");
+        assertThat(business.getNmid()).isEqualTo("ID999");
     }
 
     @Test
     void resetBusinessRestoresInitialValues() {
-        User user = new User();
-        user.setBusinessName("Toko Baru");
-        user.setInitialBusinessName("Warung Alice");
-        user.setInitialBusinessAddress("Jakarta");
-        user.setInitialNmid("ID123");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        Business business = new Business();
+        business.setName("Toko Baru");
+        business.setInitialName("Warung Alice");
+        business.setInitialAddress("Jakarta");
+        business.setInitialNmid("ID123");
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         userService.resetBusiness("alice");
 
-        assertThat(user.getBusinessName()).isEqualTo("Warung Alice");
-        assertThat(user.getBusinessAddress()).isEqualTo("Jakarta");
-        assertThat(user.getNmid()).isEqualTo("ID123");
+        assertThat(business.getName()).isEqualTo("Warung Alice");
+        assertThat(business.getAddress()).isEqualTo("Jakarta");
+        assertThat(business.getNmid()).isEqualTo("ID123");
     }
 
     @Test
     void resetBusinessWithoutInitialDataThrows() {
-        User user = new User();
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        Business business = new Business();
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         assertThatThrownBy(() -> userService.resetBusiness("alice"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -223,48 +248,45 @@ class UserServiceTest {
 
     @Test
     void getProfilePictureReturnsNullWhenUnset() {
-        User user = new User();
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(new Business()));
 
         assertThat(userService.getProfilePicture("alice").profilePicture()).isNull();
     }
 
     @Test
     void getProfilePictureReturnsStoredValue() {
-        User user = new User();
-        user.setProfilePicture("aW1hZ2U=");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        Business business = new Business();
+        business.setPicture("aW1hZ2U=");
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         assertThat(userService.getProfilePicture("alice").profilePicture()).isEqualTo("aW1hZ2U=");
     }
 
     @Test
     void updateProfilePictureStoresValidBase64() {
-        User user = new User();
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        Business business = new Business();
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         var data = userService.updateProfilePicture("alice", "aW1hZ2UtZGF0YQ==");
 
-        assertThat(user.getProfilePicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
+        assertThat(business.getPicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
         assertThat(data.profilePicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
-        verify(userRepository).save(user);
+        verify(businessRepository).save(business);
     }
 
     @Test
     void updateProfilePictureRejectsInvalidBase64() {
-        User user = new User();
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(new Business()));
 
         assertThatThrownBy(() -> userService.updateProfilePicture("alice", "@@ not base64 @@"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("base64");
-        verify(userRepository, never()).save(any());
+        verify(businessRepository, never()).save(any());
     }
 
     @Test
     void updateProfilePictureRejectsOver1Mb() {
-        User user = new User();
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(new Business()));
 
         // 1 MB + 1 byte of image data, base64-encoded
         byte[] tooBig = new byte[1_048_577];
@@ -273,34 +295,30 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.updateProfilePicture("alice", base64))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("1MB");
-        verify(userRepository, never()).save(any());
+        verify(businessRepository, never()).save(any());
     }
 
     @Test
-    void updateProfilePictureForUnknownUserThrows() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
+    void nonSuperAdminCannotChangePicture() {
+        when(businessContext.requireSuperAdminBusinessId("bob"))
+                .thenThrow(new com.bejo.exception.ForbiddenException("Hanya super admin yang dapat mengubah pengaturan bisnis"));
 
-        assertThatThrownBy(() -> userService.updateProfilePicture("ghost", "aW1hZ2U="))
-                .isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> userService.updateProfilePicture("bob", "aW1n"))
+                .isInstanceOf(com.bejo.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> userService.deleteProfilePicture("bob"))
+                .isInstanceOf(com.bejo.exception.ForbiddenException.class);
+        verify(businessRepository, never()).save(any());
     }
 
     @Test
     void deleteProfilePictureClearsValue() {
-        User user = new User();
-        user.setProfilePicture("aW1hZ2U=");
-        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
+        Business business = new Business();
+        business.setPicture("aW1hZ2U=");
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         userService.deleteProfilePicture("alice");
 
-        assertThat(user.getProfilePicture()).isNull();
-        verify(userRepository).save(user);
-    }
-
-    @Test
-    void deleteProfilePictureForUnknownUserThrows() {
-        when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> userService.deleteProfilePicture("ghost"))
-                .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(business.getPicture()).isNull();
+        verify(businessRepository).save(business);
     }
 }

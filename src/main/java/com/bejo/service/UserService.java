@@ -1,6 +1,7 @@
 package com.bejo.service;
 
 import com.bejo.constant.AccountType;
+import com.bejo.constant.BusinessRole;
 import com.bejo.dto.request.ChangePasswordRequestDto;
 import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.request.UpdateBankRequestDto;
@@ -8,11 +9,14 @@ import com.bejo.dto.request.UpdateBusinessRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
 import com.bejo.dto.response.BankResponseDto;
 import com.bejo.dto.response.BusinessResponseDto;
+import com.bejo.dto.response.MeResponseDto;
 import com.bejo.dto.response.ProfilePictureResponseDto;
+import com.bejo.entity.Business;
+import com.bejo.entity.BusinessBank;
 import com.bejo.entity.User;
-import com.bejo.entity.UserBank;
 import com.bejo.exception.ResourceNotFoundException;
-import com.bejo.repository.UserBankRepository;
+import com.bejo.repository.BusinessBankRepository;
+import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,54 +26,83 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
 
+/**
+ * User + business account management. Public registration creates a new {@link Business}
+ * and its first user (the {@link BusinessRole#SUPER_ADMIN} creator). Per-user operations
+ * (profile, password) are keyed on the username; business-level operations (business info,
+ * bank, the shared business picture) resolve the caller's {@code business_id} and are
+ * shared by every member. Authentication (login/logout/session) lives in {@link AuthService};
+ * member management in {@link MemberService}.
+ */
 @Service
 public class UserService {
 
     private static final Logger log = LoggerFactory.getLogger(UserService.class);
 
+    // 1 MB — the maximum size of the decoded business picture
+    private static final int MAX_PICTURE_BYTES = 1_048_576;
+
     private final UserRepository userRepository;
-    private final UserBankRepository userBankRepository;
+    private final BusinessRepository businessRepository;
+    private final BusinessBankRepository businessBankRepository;
+    private final BusinessContext businessContext;
+    private final AppSettingsService appSettingsService;
     private final PasswordEncoder passwordEncoder;
 
     public UserService(UserRepository userRepository,
-                       UserBankRepository userBankRepository,
+                       BusinessRepository businessRepository,
+                       BusinessBankRepository businessBankRepository,
+                       BusinessContext businessContext,
+                       AppSettingsService appSettingsService,
                        PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
-        this.userBankRepository = userBankRepository;
+        this.businessRepository = businessRepository;
+        this.businessBankRepository = businessBankRepository;
+        this.businessContext = businessContext;
+        this.appSettingsService = appSettingsService;
         this.passwordEncoder = passwordEncoder;
     }
 
     /**
-     * Self-service registration through the public API: creates a
-     * {@link AccountType#SELF_SERVICE} account with its {@code users} and
-     * {@code user_banks} rows. QRIS is optional — no {@code user_qris} row (and no
-     * default image) is created; the user may upload one later via the QRIS API.
-     * This is account creation, not authentication — login, logout, and session
-     * management live in {@link AuthService}.
+     * The authenticated user's own account bundle (profile + role + shared business/bank/
+     * picture/app settings) — the same shape as the login response, so the client can
+     * refresh its state without re-authenticating.
+     */
+    @Transactional(readOnly = true)
+    public MeResponseDto getMe(String username) {
+        User user = businessContext.requireUser(username);
+        Business business = businessRepository.findById(user.getBusinessId())
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+        BusinessBank bank = businessBankRepository.findByBusinessId(user.getBusinessId())
+                .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
+        return new MeResponseDto(
+                user.getId(), user.getUsername(), user.getAccountType(), user.getName(),
+                user.getEmail(), user.isEmailVerified(), user.getPhone(), user.isPhoneVerified(),
+                user.getBusinessRole(), business.getName(), business.getAddress(), business.getNmid(),
+                bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName(),
+                business.getPicture(), appSettingsService.getSettings(username));
+    }
+
+    /**
+     * Self-service registration: creates a new business and its first user as the
+     * {@link BusinessRole#SUPER_ADMIN}. QRIS is optional (no {@code business_qris} row is
+     * created — the user may upload one later).
      */
     @Transactional
     public void register(RegisterRequestDto request) {
         log.info("[REGISTER] username={}", request.username());
-        createUserAndBank(request, AccountType.SELF_SERVICE);
-        log.info("[REGISTER] Created SELF_SERVICE user username={}", request.username());
-    }
-
-    /**
-     * Internal/system registration: identical to self-service registration but marks
-     * the account {@link AccountType#MANAGED}. Bank info is still optional and QRIS is
-     * still optional (no {@code user_qris} row is created — add one later via upload).
-     */
-    @Transactional
-    public void registerInternal(RegisterRequestDto request) {
-        log.info("[REGISTER-INTERNAL] username={}", request.username());
-        createUserAndBank(request, AccountType.MANAGED);
-        log.info("[REGISTER-INTERNAL] Created MANAGED user username={}", request.username());
-    }
-
-    private void createUserAndBank(RegisterRequestDto request, String accountType) {
-        if (userRepository.existsByUsername(request.username())) {
+        if (userRepository.existsByUsernameAndDeletedAtIsNull(request.username())) {
             throw new IllegalArgumentException("Username sudah digunakan");
         }
+
+        Business business = new Business();
+        business.setName(request.businessName());
+        business.setAddress(request.businessAddress());
+        business.setNmid(request.nmid());
+        business.setInitialName(request.businessName());
+        business.setInitialAddress(request.businessAddress());
+        business.setInitialNmid(request.nmid());
+        businessRepository.save(business);
 
         User user = new User();
         user.setUsername(request.username());
@@ -77,13 +110,9 @@ public class UserService {
         user.setName(request.name());
         user.setEmail(request.email());
         user.setPhone(request.phone());
-        user.setBusinessName(request.businessName());
-        user.setBusinessAddress(request.businessAddress());
-        user.setNmid(request.nmid());
-        user.setInitialBusinessName(request.businessName());
-        user.setInitialBusinessAddress(request.businessAddress());
-        user.setInitialNmid(request.nmid());
-        user.setAccountType(accountType);
+        user.setBusinessId(business.getId());
+        user.setBusinessRole(BusinessRole.SUPER_ADMIN);
+        user.setAccountType(AccountType.SELF_SERVICE);
         user.setEmailVerified(false);
         user.setPhoneVerified(false);
         userRepository.save(user);
@@ -91,22 +120,23 @@ public class UserService {
         String bankName        = request.bankName()        != null ? request.bankName()        : "";
         String bankNumber      = request.bankNumber()      != null ? request.bankNumber()      : "";
         String bankAccountName = request.bankAccountName() != null ? request.bankAccountName() : "";
-        UserBank bank = new UserBank();
-        bank.setUsername(request.username());
+        BusinessBank bank = new BusinessBank();
+        bank.setBusinessId(business.getId());
         bank.setBankName(bankName);
         bank.setBankNumber(bankNumber);
         bank.setBankAccountName(bankAccountName);
         bank.setInitialBankName(bankName);
         bank.setInitialBankNumber(bankNumber);
         bank.setInitialBankAccountName(bankAccountName);
-        userBankRepository.save(bank);
+        businessBankRepository.save(bank);
+
+        log.info("[REGISTER] Created business id={} + super admin username={}", business.getId(), request.username());
     }
 
     @Transactional
     public void updateProfile(String username, UpdateProfileRequestDto request) {
         log.info("[PROFILE] username={}", username);
-        var user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        User user = businessContext.requireUser(username);
         user.setName(request.name());
         user.setEmail(request.email());
         user.setPhone(request.phone());
@@ -116,65 +146,56 @@ public class UserService {
 
     @Transactional
     public void updateBusiness(String username, UpdateBusinessRequestDto request) {
-        log.info("[BUSINESS] username={}", username);
-        var user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        user.setBusinessName(request.businessName());
-        user.setBusinessAddress(request.businessAddress());
-        user.setNmid(request.nmid());
-        userRepository.save(user);
-        log.info("[BUSINESS] Updated for username={}", username);
+        Business business = requireBusiness(username);
+        business.setName(request.businessName());
+        business.setAddress(request.businessAddress());
+        business.setNmid(request.nmid());
+        businessRepository.save(business);
+        log.info("[BUSINESS] Updated businessId={} by username={}", business.getId(), username);
     }
 
     @Transactional
     public BusinessResponseDto resetBusiness(String username) {
-        log.info("[BUSINESS RESET] username={}", username);
-        var user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        if (user.getInitialBusinessName() == null) {
+        Business business = requireBusiness(username);
+        if (business.getInitialName() == null) {
             throw new IllegalArgumentException("Data bisnis awal tidak tersedia untuk direset");
         }
-        user.setBusinessName(user.getInitialBusinessName());
-        user.setBusinessAddress(user.getInitialBusinessAddress());
-        user.setNmid(user.getInitialNmid());
-        userRepository.save(user);
-        log.info("[BUSINESS RESET] Reverted for username={}", username);
-        return new BusinessResponseDto(user.getBusinessName(), user.getBusinessAddress(), user.getNmid());
+        business.setName(business.getInitialName());
+        business.setAddress(business.getInitialAddress());
+        business.setNmid(business.getInitialNmid());
+        businessRepository.save(business);
+        log.info("[BUSINESS RESET] Reverted businessId={} by username={}", business.getId(), username);
+        return new BusinessResponseDto(business.getName(), business.getAddress(), business.getNmid());
     }
 
     @Transactional
     public void updateBank(String username, UpdateBankRequestDto request) {
-        log.info("[BANK] username={}", username);
-        UserBank bank = userBankRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
+        BusinessBank bank = requireBank(username);
         bank.setBankName(request.bankName());
         bank.setBankNumber(request.bankNumber());
         bank.setBankAccountName(request.bankAccountName());
-        userBankRepository.save(bank);
-        log.info("[BANK] Updated for username={}", username);
+        businessBankRepository.save(bank);
+        log.info("[BANK] Updated businessId={} by username={}", bank.getBusinessId(), username);
     }
 
     @Transactional
     public BankResponseDto resetBank(String username) {
-        log.info("[BANK RESET] username={}", username);
-        UserBank bank = userBankRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
+        BusinessBank bank = requireBank(username);
         if (bank.getInitialBankName() == null) {
             throw new IllegalArgumentException("Data rekening awal tidak tersedia untuk direset");
         }
         bank.setBankName(bank.getInitialBankName());
         bank.setBankNumber(bank.getInitialBankNumber());
         bank.setBankAccountName(bank.getInitialBankAccountName());
-        userBankRepository.save(bank);
-        log.info("[BANK RESET] Reverted for username={}", username);
+        businessBankRepository.save(bank);
+        log.info("[BANK RESET] Reverted businessId={} by username={}", bank.getBusinessId(), username);
         return new BankResponseDto(bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName());
     }
 
     @Transactional
     public void changePassword(String username, ChangePasswordRequestDto request) {
         log.info("[PASSWORD] username={}", username);
-        var user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        User user = businessContext.requireUser(username);
         if (!passwordEncoder.matches(request.oldPassword(), user.getPasswordHash())) {
             throw new IllegalArgumentException("Password saat ini tidak sesuai");
         }
@@ -183,50 +204,59 @@ public class UserService {
         log.info("[PASSWORD] Changed for username={}", username);
     }
 
-    // 1 MB — the maximum size of the decoded profile picture
-    private static final int MAX_PROFILE_PICTURE_BYTES = 1_048_576;
+    // ── Business picture (shared by all members; endpoints kept under /me for the client) ──
 
     @Transactional(readOnly = true)
     public ProfilePictureResponseDto getProfilePicture(String username) {
-        log.info("[PROFILE-PIC] Get for username={}", username);
-        var user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        // May be null — the client renders an empty state, no placeholder
-        return new ProfilePictureResponseDto(user.getProfilePicture());
+        Business business = requireBusiness(username);
+        return new ProfilePictureResponseDto(business.getPicture());
     }
 
     @Transactional
     public ProfilePictureResponseDto updateProfilePicture(String username, String base64Image) {
-        log.info("[PROFILE-PIC] Update for username={}", username);
-        var user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        validateProfilePicture(base64Image);
-
-        user.setProfilePicture(base64Image);
-        userRepository.save(user);
-        log.info("[PROFILE-PIC] Updated ({} base64 chars) for username={}", base64Image.length(), username);
-        return new ProfilePictureResponseDto(user.getProfilePicture());
+        Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
+        validatePicture(base64Image);
+        business.setPicture(base64Image);
+        businessRepository.save(business);
+        log.info("[PICTURE] Updated ({} base64 chars) for businessId={}", base64Image.length(), business.getId());
+        return new ProfilePictureResponseDto(business.getPicture());
     }
 
     @Transactional
     public void deleteProfilePicture(String username) {
-        log.info("[PROFILE-PIC] Delete for username={}", username);
-        var user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        user.setProfilePicture(null);
-        userRepository.save(user);
-        log.info("[PROFILE-PIC] Deleted for username={}", username);
+        Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
+        business.setPicture(null);
+        businessRepository.save(business);
+        log.info("[PICTURE] Deleted for businessId={}", business.getId());
     }
 
-    private void validateProfilePicture(String base64Image) {
+    private Business requireBusiness(String username) {
+        Long businessId = businessContext.requireBusinessId(username);
+        return businessRepository.findById(businessId)
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+    }
+
+    // Like requireBusiness, but only the business's super admin may proceed (403 otherwise)
+    private Business requireBusinessAsSuperAdmin(String username) {
+        Long businessId = businessContext.requireSuperAdminBusinessId(username);
+        return businessRepository.findById(businessId)
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+    }
+
+    private BusinessBank requireBank(String username) {
+        Long businessId = businessContext.requireBusinessId(username);
+        return businessBankRepository.findByBusinessId(businessId)
+                .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
+    }
+
+    private void validatePicture(String base64Image) {
         byte[] decoded;
         try {
             decoded = Base64.getDecoder().decode(base64Image);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("profilePicture bukan format base64 yang valid");
         }
-        if (decoded.length > MAX_PROFILE_PICTURE_BYTES) {
+        if (decoded.length > MAX_PICTURE_BYTES) {
             throw new IllegalArgumentException("profilePicture terlalu besar (maksimal 1MB)");
         }
     }
