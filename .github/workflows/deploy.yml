@@ -68,6 +68,20 @@ jobs:
           [ -n "${{ vars.SEED_BUSINESS_ADDRESS }}" ] && ENV_VARS="$ENV_VARS@SEED_BUSINESS_ADDRESS=${{ vars.SEED_BUSINESS_ADDRESS }}"
           [ -n "${{ vars.SEED_NMID }}" ]             && ENV_VARS="$ENV_VARS@SEED_NMID=${{ vars.SEED_NMID }}"
 
+          # Optional overrides — all have built-in defaults (application.yml), so only add
+          # them when the corresponding GitHub Actions variable is set. --set-env-vars
+          # replaces the whole set, so these must be listed here (not just in init-gcp.sh)
+          # for their overrides to survive a CI deploy.
+          [ -n "${{ vars.BUSINESS_MAX_USERS }}" ]         && ENV_VARS="$ENV_VARS@BUSINESS_MAX_USERS=${{ vars.BUSINESS_MAX_USERS }}"
+          [ -n "${{ vars.BUSINESS_SIZES }}" ]             && ENV_VARS="$ENV_VARS@BUSINESS_SIZES=${{ vars.BUSINESS_SIZES }}"
+          [ -n "${{ vars.BUSINESS_DEFAULT_SIZE }}" ]      && ENV_VARS="$ENV_VARS@BUSINESS_DEFAULT_SIZE=${{ vars.BUSINESS_DEFAULT_SIZE }}"
+          [ -n "${{ vars.BUSINESS_INDUSTRIES }}" ]        && ENV_VARS="$ENV_VARS@BUSINESS_INDUSTRIES=${{ vars.BUSINESS_INDUSTRIES }}"
+          [ -n "${{ vars.BUSINESS_DEFAULT_INDUSTRY }}" ]  && ENV_VARS="$ENV_VARS@BUSINESS_DEFAULT_INDUSTRY=${{ vars.BUSINESS_DEFAULT_INDUSTRY }}"
+          [ -n "${{ vars.CALLBACK_DEFAULT_USERNAME }}" ]  && ENV_VARS="$ENV_VARS@CALLBACK_DEFAULT_USERNAME=${{ vars.CALLBACK_DEFAULT_USERNAME }}"
+          [ -n "${{ vars.JWT_EXPIRATION_MS }}" ]          && ENV_VARS="$ENV_VARS@JWT_EXPIRATION_MS=${{ vars.JWT_EXPIRATION_MS }}"
+          [ -n "${{ vars.REQUEST_LOG_BODY_ON_ERROR }}" ]  && ENV_VARS="$ENV_VARS@REQUEST_LOG_BODY_ON_ERROR=${{ vars.REQUEST_LOG_BODY_ON_ERROR }}"
+          [ -n "${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}" ] && ENV_VARS="$ENV_VARS@REQUEST_LOG_MAX_BODY_LENGTH=${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}"
+
           gcloud run deploy "${{ env.GCP_SERVICE_NAME }}" \
             --image="${{ steps.image.outputs.image }}" \
             --region="${{ env.GCP_REGION }}" \

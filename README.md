@@ -1404,6 +1404,10 @@ Sensitive values are stored in **Secret Manager** — never passed as plain vari
 | `CLOUD_RUN_SA` | Cloud Run service account name |
 | `CUSTOM_DOMAIN` | `api.bejo.temanproduk.com` |
 | `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` | Seed user values |
+| `BUSINESS_MAX_USERS` / `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` / `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | *(optional)* Business option overrides — built-in defaults apply if unset |
+| `JWT_EXPIRATION_MS` / `CALLBACK_DEFAULT_USERNAME` / `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | *(optional)* Other overrides — defaults apply if unset |
+
+> These optional overrides must be set as GitHub Actions **variables** for CI deploys (`deploy.yml`) **and** in `.env.gcp` for the one-time `init-gcp.sh` run — `--set-env-vars` replaces the whole set on each deploy, so an override only in `.env.gcp` would be reset by the next CI deploy.
 
 **GitHub Actions secret** (Settings → Secrets → Actions)
 
