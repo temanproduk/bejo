@@ -10,31 +10,34 @@ QRIS ([Quick Response Code Indonesian Standard](https://www.bi.go.id/QRIS)) is B
 
 Bejo closes that gap.
 
+> The sections below are the **product overview**. Each feature links into the [technical reference](#contents) further down for the exact API and behaviour.
+
 ## What merchants get
 
-- **Instant payment alerts** — a push notification with an audible chime the moment money lands, so staff never have to trust a customer's screenshot.
-- **Transaction history** — every payment recorded and filterable by date, for daily reconciliation and bookkeeping.
-- **Manual & external entries** — record cash sales, or log transactions from another acquirer, alongside QRIS payments. Entries can be edited or removed.
-- **QRIS management** — display the merchant's managed QRIS or upload their own image (no image is synthesized; accounts without one return `null`).
-- **Business & bank profile** — keep merchant name, address, National Merchant ID (NMID), and payout bank details up to date, with one-tap reset back to the officially registered values.
-- **Team access** — a business can have several users (staff), all sharing the same products, transactions, and settings. The creator is the **super admin** and manages who has access; a business holds up to a configurable number of users (default 5).
+- **Instant payment alerts** — a push notification with an audible chime the moment money lands, so staff never have to trust a customer's screenshot. It's delivered to **every device of every user** in the business. → triggered by the [QRIS callback](#qris-callback); see the [notification APIs](#notifications).
+- **Transaction history** — every payment recorded and filterable by date, plus dashboard totals for today / yesterday / this month. → [Transactions](#transactions).
+- **Manual & external entries** — record cash sales or log transactions from another acquirer alongside QRIS payments; entries can be edited or removed, and pushed in bulk after offline entry. → [adding & editing transactions](#transactions).
+- **Inventory & catalog** — a per-business product catalog with categories, stock levels, restocks and stock-opname; a sale can carry **line items** that draw the sold products' stock down automatically. → [Products & categories](#products--categories) and the [stock-change history](#stock-mutations).
+- **QRIS management** — display the merchant's managed QRIS or upload their own image (no image is synthesized; accounts without one return `null`). → [QRIS](#qris).
+- **Business & bank profile** — keep merchant name, address, National Merchant ID (NMID), and payout bank details up to date, with one-tap reset back to the officially registered values. → [User profile](#user-profile).
+- **Team access** — a business can have several staff users sharing the same data; the creator is the **super admin** who manages access, up to a configurable cap (default 5). → [Businesses & users](#businesses--users) below, and the [member APIs](#business-members).
 
 ## Businesses & users
 
-A **business** (merchant) owns everything — bank, QRIS, products, transactions, settings, and the shared business picture. **Many users can belong to one business** (flat role):
+A **business** (merchant) owns everything — [bank & profile](#user-profile), [QRIS](#qris), [products & inventory](#products--categories), [transactions](#transactions), [app settings](#app-settings), and a shared business picture. **Many users can belong to one business**, with a flat [role model](#account-types):
 
 | Role | Who | Can |
 |---|---|---|
-| **SUPER_ADMIN** | The user who registered the business (its creator) | Everything, plus add/update/delete the business's other users. Immutable & undeletable. |
-| **MEMBER** | Staff added by the super admin | Everything except managing users. |
+| **SUPER_ADMIN** | The user who registered the business (its creator) | Everything — plus [manage the business's other users](#business-members) and change business-wide settings ([app config](#app-settings), [picture & QRIS](#qris)). Immutable & undeletable. |
+| **MEMBER** | Staff added by the super admin | Everything except managing users and changing business-wide settings (they can still read them). |
 
-Registration creates a new business + its super admin. The super admin adds members via the [Users](#users) endpoints; deleting a member frees their username for reuse.
+Registration ([`POST /api/users/register`](#users)) creates a new business + its super admin; the super admin adds staff via the [member APIs](#business-members), and deleting a member frees their username for reuse. Every request authenticates with a [JWT + shared API token](#authentication).
 
 ## How a payment flows
 
-1. A customer scans the merchant's QRIS and pays from any Indonesian e-wallet or bank app.
-2. The payment gateway notifies Bejo, which records the transaction and sends an FCM push (with a ring sound) to **every device of every user in that business** — so the whole team is alerted.
-3. The transaction appears in the shared business history, available for filtering, reconciliation, and manual correction.
+1. A customer scans the merchant's [QRIS](#qris) and pays from any Indonesian e-wallet or bank app.
+2. The payment gateway calls Bejo's [QRIS callback](#qris-callback), which records the [transaction](#transactions) and sends an [FCM push](#notifications) (with a ring sound) to **every device of every user in that business** — so the whole team is alerted.
+3. The transaction appears in the shared [transaction history](#transactions), available for filtering, reconciliation, and [manual correction](#transactions).
 
 <br />
 
@@ -1388,7 +1391,25 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 
 ### GCP deployment
 
-Sensitive values are stored in **Secret Manager** — never passed as plain variables.
+Config is split across **three layers**, by who consumes it and how sensitive it is:
+
+| Layer | Holds | Why it lives here |
+|---|---|---|
+| **GitHub Actions secret** | only `GCP_SA_KEY` (the deploy credential) | all the CI pipeline needs to authenticate to GCP |
+| **GitHub Actions variables** | non-sensitive config: project/region/service names, seed + business options | plaintext is fine — none of it is secret |
+| **GCP Secret Manager** | runtime secrets: DB password, JWT secret, API token, Firebase creds, seed password | consumed by the **running app** on Cloud Run, not by CI |
+
+**Why runtime secrets live in Secret Manager, not GitHub:** `deploy.yml` passes them to Cloud Run as **references** (`--set-secrets="API_TOKEN=bejo-api-token:latest"`), so the value never touches the CI runner, its logs, or the Cloud Run revision's plaintext env. Only the **runtime** service account (`bejo-cloudrun`, granted `secretmanager.secretAccessor` by `init-gcp.sh`) can read them — the CI service account can't, so a GitHub compromise can't leak your DB password. You also get Secret Manager's versioning, rotation, and per-access audit for free. `init-gcp.sh` creates these from `.env.gcp` and `deploy.yml` mounts them:
+
+| Secret Manager secret | From `.env.gcp` | Mounted as container env |
+|---|---|---|
+| `bejo-db-password` | `DB_PASSWORD` | `DB_PASSWORD` |
+| `bejo-jwt-secret` | `JWT_SECRET` | `JWT_SECRET` |
+| `bejo-api-token` | `API_TOKEN` | `API_TOKEN` |
+| `bejo-firebase-credentials` | `FIREBASE_CREDENTIALS_BASE64` | `FIREBASE_CREDENTIALS_BASE64` |
+| `bejo-seed-password` | `SEED_PASSWORD` | `SEED_PASSWORD` |
+
+> ⚠️ Don't store these as GitHub **variables** — a GitHub variable is plaintext and readable by anyone with repo access. (The API token, in particular, belongs only in `bejo-api-token`.)
 
 **GitHub Actions variables** (Settings → Variables → Actions)
 
