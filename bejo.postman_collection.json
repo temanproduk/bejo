@@ -537,7 +537,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"amount\": 60000,\n  \"issuerName\": \"OVO\"\n}",
+              "raw": "{\n  \"amount\": 60000,\n  \"issuerName\": \"OVO\",\n  \"items\": [\n    { \"productId\": 12, \"quantity\": 5 }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -562,7 +562,7 @@
                 }
               ]
             },
-            "description": "Edits the authenticated user's transaction. Partial update — only fields present in the body are changed; type cannot be changed. Only MANUAL/PARSED transactions can be edited — MANAGED ones are immutable.\n\nOptional fields (send at least one): transactionDate, amount, acquirer, issuerName, merchantPan, customerPan, rrn.\n\nReturns HTTP 200 with the updated transaction.\nErrors: 400 (no fields / MANAGED type / invalid amount / blank acquirer), 404 Transaction not found (unknown, deleted, or another user's transaction)."
+            "description": "Edits the authenticated user's transaction. Partial update — only fields present in the body are changed; type cannot be changed. Only MANUAL/PARSED transactions can be edited — MANAGED ones are immutable.\n\nOptional fields (send at least one): transactionDate, amount, acquirer, issuerName, merchantPan, customerPan, rrn, items.\n\nitems = FULL REPLACEMENT of the sold-product line items (array of { productId, quantity }). It reconciles stock by the per-product delta vs. the existing items (increased/added lines draw more stock — validated; reduced/removed lines return stock), records one SALE stock mutation, and (for a non-empty list) re-derives amount from the subtotals. An empty list [] clears all items and returns their stock; omitting items leaves them unchanged. The response includes the post-edit items.\n\nReturns HTTP 200 with the updated transaction.\nErrors: 400 (no fields / MANAGED type / invalid amount / blank acquirer / insufficient stock / unknown or duplicate product), 404 Transaction not found (unknown, deleted, or another user's transaction)."
           }
         },
         {
@@ -597,7 +597,7 @@
                 }
               ]
             },
-            "description": "Soft-deletes the authenticated user's transaction: the row keeps a deleted_at timestamp and disappears from history. Cannot be undone via the API.\n\nReturns HTTP 200.\nErrors: 404 Transaction not found (unknown, already deleted, or another user's transaction)."
+            "description": "Soft-deletes the authenticated user's transaction: the row keeps a deleted_at timestamp and disappears from history. Cannot be undone via the API.\n\nIf the transaction has sold-product line items, deleting it RETURNS each item's quantity to its product's stock and records a SALE reversal stock mutation (a product deleted since the sale is skipped). The line-item records are kept; stock is returned exactly once.\n\nReturns HTTP 200.\nErrors: 404 Transaction not found (unknown, already deleted, or another user's transaction)."
           }
         }
       ]

@@ -1,9 +1,11 @@
 package com.bejo.dto.request;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 // Partial update — null fields are left unchanged
 public record UpdateTransactionRequestDto(
@@ -25,10 +27,19 @@ public record UpdateTransactionRequestDto(
         String rrn,
 
         @Size(max = 255, message = "acquirer maksimal 255 karakter")
-        String acquirer
+        String acquirer,
+
+        // Full REPLACEMENT of the sold-product line items (not a partial merge). Non-null
+        // replaces the items and reconciles stock by delta (returns stock for removed/reduced
+        // lines, takes it for added/increased lines) + re-derives amount. An empty list clears
+        // all items (restores their stock); null leaves the items unchanged.
+        @Valid
+        @Size(max = 200, message = "items maksimal 200 baris")
+        List<TransactionItemRequestDto> items
 ) {
     public boolean isEmpty() {
         return transactionDate == null && amount == null && issuerName == null
-                && merchantPan == null && customerPan == null && rrn == null && acquirer == null;
+                && merchantPan == null && customerPan == null && rrn == null && acquirer == null
+                && items == null;
     }
 }

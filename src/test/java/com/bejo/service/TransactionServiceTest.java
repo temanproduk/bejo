@@ -33,6 +33,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -327,7 +328,7 @@ class TransactionServiceTest {
                 .thenReturn(Optional.of(t));
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
-                null, 99_000L, null, null, null, null, null);
+                null, 99_000L, null, null, null, null, null, null);
         TransactionResponseDto dto = transactionService.update("alice", "TXN-1", req);
 
         assertThat(dto.amount()).isEqualTo(99_000L);
@@ -341,7 +342,7 @@ class TransactionServiceTest {
     @Test
     void updateWithNoFieldsIsRejected() {
         UpdateTransactionRequestDto empty = new UpdateTransactionRequestDto(
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", empty))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -358,7 +359,7 @@ class TransactionServiceTest {
                 .thenReturn(Optional.of(t));
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
-                null, 99_000L, null, null, null, null, null);
+                null, 99_000L, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -374,7 +375,7 @@ class TransactionServiceTest {
                 .thenReturn(Optional.of(t));
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
-                null, null, null, null, null, null, "  ");
+                null, null, null, null, null, null, "  ", null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -388,10 +389,125 @@ class TransactionServiceTest {
                 .thenReturn(Optional.empty());
 
         UpdateTransactionRequestDto req = new UpdateTransactionRequestDto(
-                null, 10_000L, null, null, null, null, null);
+                null, 10_000L, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-X", req))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    // ---------- editing transaction items ----------
+
+    private static void setId(Object entity, long id) {
+        try {
+            var f = entity.getClass().getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(entity, id);
+        } catch (ReflectiveOperationException e) { throw new RuntimeException(e); }
+    }
+
+    private com.bejo.entity.TransactionItem existingItem(long historyId, long productId, String name, int qty) {
+        var it = new com.bejo.entity.TransactionItem();
+        it.setHistoryId(historyId);
+        it.setProductId(productId);
+        it.setSku("SKU-" + productId);
+        it.setName(name);
+        it.setQuantity(qty);
+        it.setUnitPrice(0);
+        it.setSubtotal(0);
+        return it;
+    }
+
+    private UpdateTransactionRequestDto itemsUpdate(List<TransactionItemRequestDto> items) {
+        return new UpdateTransactionRequestDto(null, null, null, null, null, null, null, items);
+    }
+
+    @Test
+    void updateIncreasingItemQuantityDrawsMoreStockAndRederivesAmount() {
+        Transaction t = activeTransaction();
+        setId(t, 42L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(t));
+        Product coffee = product(1, "Coffee", 5, 15_000L);   // 2 sold earlier, 5 on hand
+        var existing = existingItem(42L, 1L, "Coffee", 2);
+        // reconcile sees the existing item; the response query then sees the (mock) empty set
+        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L))
+                .thenReturn(List.of(existing), List.of());
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
+
+        transactionService.update("alice", "TXN-1", itemsUpdate(List.of(new TransactionItemRequestDto(1L, 5))));
+
+        // 2 → 5 = 3 more sold, stock 5 → 2
+        assertThat(coffee.getStock()).isEqualTo(2);
+        verify(productRepository).save(coffee);
+        verify(transactionItemRepository).deleteAll(List.of(existing));
+        // amount re-derived: 5 * 15000
+        ArgumentCaptor<Transaction> cap = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(cap.capture());
+        assertThat(cap.getValue().getAmount()).isEqualTo(75_000L);
+        verify(stockMutationService).recordStockChange(eq(BIZ), eq("SALE"), any(), any());
+    }
+
+    @Test
+    void updateWithEmptyItemsRestoresStockAndClearsItems() {
+        Transaction t = activeTransaction();
+        setId(t, 42L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(t));
+        Product coffee = product(1, "Coffee", 2, 15_000L);   // 3 sold earlier, 2 on hand
+        var existing = existingItem(42L, 1L, "Coffee", 3);
+        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L))
+                .thenReturn(List.of(existing), List.of());
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
+
+        transactionService.update("alice", "TXN-1", itemsUpdate(List.of()));
+
+        // all 3 returned, stock 2 → 5
+        assertThat(coffee.getStock()).isEqualTo(5);
+        verify(transactionItemRepository).deleteAll(List.of(existing));
+        verify(transactionItemRepository, never()).save(any());   // no new item rows
+        verify(stockMutationService).recordStockChange(eq(BIZ), eq("SALE"), any(), any());
+    }
+
+    @Test
+    void updateItemsRejectedWhenIncreaseExceedsStockAndNothingChanges() {
+        Transaction t = activeTransaction();
+        setId(t, 42L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(t));
+        Product coffee = product(1, "Coffee", 1, 15_000L);   // only 1 on hand
+        var existing = existingItem(42L, 1L, "Coffee", 2);
+        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L)).thenReturn(List.of(existing));
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
+
+        // want 4 → +2 needed, only 1 available
+        assertThatThrownBy(() -> transactionService.update("alice", "TXN-1",
+                itemsUpdate(List.of(new TransactionItemRequestDto(1L, 4)))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Stok tidak cukup");
+
+        assertThat(coffee.getStock()).isEqualTo(1);              // unchanged
+        verify(productRepository, never()).save(any());
+        verify(transactionItemRepository, never()).deleteAll(anyList());
+        verify(stockMutationService, never()).recordStockChange(any(), any(), any(), any());
+    }
+
+    @Test
+    void deleteReturnsStockForLineItems() {
+        Transaction t = activeTransaction();
+        setId(t, 42L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(t));
+        Product coffee = product(1, "Coffee", 7, 15_000L);   // 3 sold earlier, 7 on hand
+        var existing = existingItem(42L, 1L, "Coffee", 3);
+        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L)).thenReturn(List.of(existing));
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
+
+        transactionService.delete("alice", "TXN-1");
+
+        assertThat(coffee.getStock()).isEqualTo(10);   // 3 returned
+        verify(productRepository).save(coffee);
+        verify(stockMutationService).recordStockChange(eq(BIZ), eq("SALE"), any(), any());
+        assertThat(t.getDeletedAt()).isNotNull();      // still soft-deleted
     }
 
     // ---------- bulk create ----------

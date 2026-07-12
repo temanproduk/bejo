@@ -39,8 +39,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -232,12 +236,16 @@ public class TransactionService {
         Long businessId = businessContext.requireBusinessId(username);
         Transaction t = transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull(transactionId, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
-        List<TransactionItemResponseDto> items = transactionItemRepository.findByHistoryIdOrderByIdAsc(t.getId()).stream()
+        List<TransactionItemResponseDto> items = itemDtos(t.getId());
+        return toDto(t, merchantName(businessId), items.isEmpty() ? null : items);
+    }
+
+    private List<TransactionItemResponseDto> itemDtos(Long historyId) {
+        return transactionItemRepository.findByHistoryIdOrderByIdAsc(historyId).stream()
                 .map(i -> new TransactionItemResponseDto(
                         i.getProductId(), i.getSku(), i.getName(),
                         i.getQuantity(), i.getUnitPrice(), i.getSubtotal()))
                 .toList();
-        return toDto(t, merchantName(businessId), items.isEmpty() ? null : items);
     }
 
     /**
@@ -356,10 +364,105 @@ public class TransactionService {
         if (request.customerPan() != null) t.setCustomerPan(request.customerPan());
         if (request.rrn() != null) t.setRrn(request.rrn());
         if (request.acquirer() != null) t.setAcquirer(request.acquirer());
+        // Optional line-item replacement — reconciles stock and (when non-empty) re-derives
+        // the amount, so it runs after the scalar amount is applied.
+        if (request.items() != null) reconcileItems(businessId, t, request.items());
         transactionRepository.save(t);
         log.info("[TXN] Updated transactionId={} businessId={}", transactionId, businessId);
 
-        return toDto(t, merchantName(businessId));
+        List<TransactionItemResponseDto> items = itemDtos(t.getId());
+        return toDto(t, merchantName(businessId), items.isEmpty() ? null : items);
+    }
+
+    /**
+     * Replaces a transaction's line items with {@code newItems} and reconciles product
+     * stock by the per-product <b>delta</b> against the existing items: a product sold in
+     * greater quantity draws its stock further down (validated), a reduced/removed line
+     * returns stock. Atomic and two-pass — an unknown product (referenced by the new list),
+     * a duplicate product line, or insufficient stock for an increase rejects the whole edit
+     * before anything changes. When {@code newItems} is non-empty the transaction amount is
+     * re-derived from the line subtotals; an empty list clears the items (returning all their
+     * stock) and leaves the amount as set by the scalar update. A single SALE stock mutation
+     * records the net changes.
+     */
+    private void reconcileItems(Long businessId, Transaction t, List<TransactionItemRequestDto> newItems) {
+        // Old quantities per product (from the current line items)
+        Map<Long, Integer> oldQty = new LinkedHashMap<>();
+        List<TransactionItem> existing = transactionItemRepository.findByHistoryIdOrderByIdAsc(t.getId());
+        for (TransactionItem it : existing) oldQty.merge(it.getProductId(), it.getQuantity(), Integer::sum);
+
+        // New quantities per product (reject duplicate product lines)
+        Map<Long, Integer> newQty = new LinkedHashMap<>();
+        for (TransactionItemRequestDto item : newItems) {
+            if (newQty.putIfAbsent(item.productId(), item.quantity()) != null) {
+                throw new IllegalArgumentException("Produk duplikat dalam satu transaksi: " + item.productId());
+            }
+        }
+
+        Set<Long> allIds = new LinkedHashSet<>();
+        allIds.addAll(oldQty.keySet());
+        allIds.addAll(newQty.keySet());
+
+        // Pass 1 — resolve owned products + validate stock for increases (nothing changes yet)
+        Map<Long, Product> products = new HashMap<>();
+        for (Long pid : allIds) {
+            int wanted = newQty.getOrDefault(pid, 0);
+            Product product = productRepository.findByIdAndBusinessId(pid, businessId).orElse(null);
+            if (product == null) {
+                // A product in the NEW list must exist; a removed line whose product was since
+                // deleted is just dropped (its stock can't be returned).
+                if (wanted > 0) throw new IllegalArgumentException("Produk tidak ditemukan: " + pid);
+                continue;
+            }
+            int delta = wanted - oldQty.getOrDefault(pid, 0);   // >0 = sell more → stock down
+            if (delta > 0 && product.getStock() < delta) {
+                throw new IllegalArgumentException("Stok tidak cukup untuk " + product.getName()
+                        + " (tersedia " + product.getStock() + ", diminta tambahan " + delta + ")");
+            }
+            products.put(pid, product);
+        }
+
+        // Pass 2 — apply the stock deltas, then rebuild the line-item rows
+        List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
+        for (Long pid : allIds) {
+            Product product = products.get(pid);
+            if (product == null) continue;      // removed line whose product is gone
+            int delta = newQty.getOrDefault(pid, 0) - oldQty.getOrDefault(pid, 0);
+            if (delta != 0) {
+                int previous = product.getStock();
+                int updated = previous - delta;
+                product.setStock(updated);
+                productRepository.save(product);
+                changes.add(new StockMutationService.StockChangeLine(product, previous, updated));
+            }
+        }
+
+        transactionItemRepository.deleteAll(existing);
+        long total = 0;
+        for (TransactionItemRequestDto item : newItems) {
+            Product product = products.get(item.productId());
+            long unitPrice = product.getPrice();
+            long subtotal = unitPrice * item.quantity();
+            total += subtotal;
+            TransactionItem ti = new TransactionItem();
+            ti.setHistoryId(t.getId());
+            ti.setProductId(product.getId());
+            ti.setSku(product.getSku());
+            ti.setName(product.getName());
+            ti.setQuantity(item.quantity());
+            ti.setUnitPrice(unitPrice);
+            ti.setSubtotal(subtotal);
+            transactionItemRepository.save(ti);
+        }
+        // Derive amount from items when present; an empty list keeps the scalar-updated amount
+        if (!newItems.isEmpty()) t.setAmount(total);
+
+        if (!changes.isEmpty()) {
+            stockMutationService.recordStockChange(businessId, StockMutationType.SALE,
+                    "Sale edit " + t.getTransactionId(), changes);
+        }
+        log.info("[TXN] Reconciled items for transactionId={}: {} line(s), {} stock change(s)",
+                t.getTransactionId(), newItems.size(), changes.size());
     }
 
     @Transactional
@@ -367,9 +470,35 @@ public class TransactionService {
         Long businessId = businessContext.requireBusinessId(username);
         Transaction t = transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull(transactionId, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
+        // Return the sold stock to its products (a deleted sale un-sells its items). The item
+        // rows are kept (soft delete) as the historical record; stock is credited back once —
+        // an already-deleted transaction can't be deleted again, so there's no double-return.
+        restoreStockFromItems(businessId, t);
         t.setDeletedAt(LocalDateTime.now());
         transactionRepository.save(t);
         log.info("[TXN] Soft-deleted transactionId={} businessId={}", transactionId, businessId);
+    }
+
+    // Credits each line item's quantity back to its product's stock (best-effort per product —
+    // a product deleted since the sale is skipped) and records one SALE reversal mutation.
+    private void restoreStockFromItems(Long businessId, Transaction t) {
+        List<TransactionItem> items = transactionItemRepository.findByHistoryIdOrderByIdAsc(t.getId());
+        if (items.isEmpty()) return;
+        List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
+        for (TransactionItem item : items) {
+            Product product = productRepository.findByIdAndBusinessId(item.getProductId(), businessId).orElse(null);
+            if (product == null) continue;   // product deleted — can't return its stock
+            int previous = product.getStock();
+            int updated = previous + item.getQuantity();
+            product.setStock(updated);
+            productRepository.save(product);
+            changes.add(new StockMutationService.StockChangeLine(product, previous, updated));
+        }
+        if (!changes.isEmpty()) {
+            stockMutationService.recordStockChange(businessId, StockMutationType.SALE,
+                    "Sale delete " + t.getTransactionId(), changes);
+            log.info("[TXN] Returned stock for {} line(s) on delete of transactionId={}", changes.size(), t.getTransactionId());
+        }
     }
 
     private String merchantName(Long businessId) {

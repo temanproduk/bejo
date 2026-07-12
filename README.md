@@ -524,6 +524,9 @@ Edits a transaction. Partial update — only the fields present in the body are 
 | `merchantPan` | Max 50 chars |
 | `customerPan` | Max 50 chars |
 | `rrn` | Max 255 chars |
+| `items` | **Full replacement** of the sold-product line items (array of `{ productId, quantity }`, max 200). See below. |
+
+**Editing `items`** — providing `items` replaces the transaction's line items and **reconciles stock by the per-product delta** against the existing ones: a line whose quantity goes **up** (or a newly added product) draws that much **more** stock down (validated — an unknown product, a duplicate line, or insufficient stock for the increase returns `400` and nothing changes); a line whose quantity goes **down** or is **removed** **returns** stock. It's atomic, records one `SALE` [stock mutation](#stock-mutations) for the net change, and — for a non-empty list — **re-derives `amount`** from the line subtotals. An **empty list** (`[]`) clears all items and returns their stock (amount keeps its scalar value); omitting `items` (null) leaves them unchanged. The response includes the post-edit `items`.
 
 **Success — HTTP 200**
 
@@ -543,13 +546,15 @@ Edits a transaction. Partial update — only the fields present in the body are 
 }
 ```
 
-**Errors:** `400 Tidak ada field yang diubah`, `400 Transaksi bertipe MANAGED tidak dapat diubah`, `400 amount harus lebih dari 0`, `400 acquirer tidak boleh kosong`, `404 Transaction not found` (unknown, deleted, or another user's transaction)
+**Errors:** `400 Tidak ada field yang diubah`, `400 Transaksi bertipe MANAGED tidak dapat diubah`, `400 amount harus lebih dari 0`, `400 acquirer tidak boleh kosong`, `400 Stok tidak cukup untuk … (tersedia N, diminta tambahan M)`, `400 Produk tidak ditemukan: <id>`, `400 Produk duplikat dalam satu transaksi: <id>` (item edits), `404 Transaction not found` (unknown, deleted, or another user's transaction)
 
 ---
 
 #### `DELETE /api/transactions/{transactionId}`
 
 Soft-deletes a transaction: the row is kept in the database with a `deleted_at` timestamp and disappears from history. Deletion cannot be undone via the API. Only the authenticated user's own transactions can be deleted.
+
+**Stock return:** if the transaction has sold-product [line items](#post-apitransactions), deleting it **returns each item's quantity to its product's stock** and records a `SALE` reversal [stock mutation](#stock-mutations). (A product deleted since the sale is skipped.) The line-item records are kept; stock is returned exactly once.
 
 **Success — HTTP 200**
 

@@ -94,8 +94,8 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `GET` | `/api/transactions/{transactionId}` | JWT | One transaction **with its sold-product line items** (the history list omits items) |
 | `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header. Optional `items` (product line items) — validates + reduces stock, records a SALE stock mutation |
 | `POST` | `/api/transactions/bulk` | JWT | Bulk-sync MANUAL/PARSED transactions (offline entry); per-item `idempotencyKey`, partial-success result |
-| `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable) |
-| `DELETE` | `/api/transactions/{transactionId}` | JWT | Soft-delete a transaction (sets `deleted_at`) |
+| `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable). Optional `items` fully replaces the line items, reconciling stock by delta + re-deriving amount |
+| `DELETE` | `/api/transactions/{transactionId}` | JWT | Soft-delete a transaction (sets `deleted_at`); returns any sold line items' stock to their products |
 | `PUT` | `/api/devices/{deviceId}/fcm-token` | JWT | Update FCM push token (scoped to the authenticated user's session) |
 | `POST` | `/api/notifications/test` | JWT | **Test:** send an FCM push from the request payload to one device (no DB write) |
 | `POST` | `/api/notifications/user` | JWT | **Test/utility:** broadcast an FCM push to **all** the caller's devices (no `deviceId`; via `sendToUser`; no DB write) |
@@ -186,12 +186,15 @@ Registration/user-management live in `UserService` + `MemberService` (not `AuthS
 A MANUAL/PARSED transaction may optionally carry `items` — a list of `(productId, quantity)` tuples for the products sold. `TransactionService.create` handles them atomically (the method is `@Transactional`, so any failure rolls back the whole transaction):
 - **Two-pass, validate-then-apply** — pass 1 resolves every line to one of the merchant's own products and checks `stock >= quantity`; an unknown product, a duplicate product line, or **insufficient stock** throws `IllegalArgumentException` (400) and nothing changes. Pass 2 reduces each product's `stock`, saves a `transaction_items` row (snapshotting `sku`/`name`/`unitPrice` = the product's current selling price, plus `subtotal`), and records a **SALE** `StockMutation` (via `StockMutationService.recordStockChange`) so the stock ledger stays complete.
 - `transaction_items.history_id` → `bejo_history.id`; `product_id` is a plain reference (no FK) so history survives a later product edit/delete. When items are present the transaction **`amount` is derived** from the sum of line subtotals (the client-sent amount is overridden), so the total can never disagree with its items.
-- **Reading them back:** the history list (`GET /api/transactions`) omits items to keep the payload small; `GET /api/transactions/{transactionId}` returns the transaction **with** its `items`. `TransactionResponseDto.items` is `@JsonInclude(NON_NULL)`, so it's absent on the list and present on the detail.
+- **Reading them back:** the history list (`GET /api/transactions`) omits items to keep the payload small; `GET /api/transactions/{transactionId}` returns the transaction **with** its `items`. `TransactionResponseDto.items` is `@JsonInclude(NON_NULL)`, so it's absent on the list and present on the detail. `PATCH` returns the transaction with its (post-edit) items.
+- **Editing items** (`PATCH /api/transactions/{transactionId}` with `items`) is a **full replacement**, handled by `TransactionService.reconcileItems`: it diffs the new items against the existing ones and adjusts stock by the **per-product delta** — an increased/added line draws more stock down (validated, same 400s as create), a reduced/removed line **returns** stock. Atomic two-pass; one **SALE** mutation records the net changes (note `"Sale edit …"`). A non-empty list **re-derives `amount`**; an empty list `[]` clears all items and returns their stock (amount keeps the scalar-updated value); `items: null` leaves the items untouched. A removed line whose product was since deleted is dropped without returning stock.
 - Bulk sync (`POST /api/transactions/bulk`) does **not** process items (offline stock validation is out of scope) — items on a bulk item are ignored.
 
 ### Transaction soft delete
 
 `bejo_history.deleted_at = NULL` → active; non-null → deleted. `DELETE /api/transactions/{transactionId}` sets the timestamp; the row is never removed. History/edit/delete queries filter on `deleted_at IS NULL`, but `existsByTransactionId` and the idempotency-key replay lookup deliberately include deleted rows — the DB unique constraints span all rows, so a deleted `transaction_id`/`idempotency_key` still can't be reused.
+
+**Stock return on delete:** if the deleted transaction has line items, `TransactionService.restoreStockFromItems` credits each item's quantity back to its product (best-effort — a product deleted since the sale is skipped) and records one **SALE** reversal `StockMutation` (note `"Sale delete …"`). The `transaction_items` rows are kept (the soft-deleted transaction is the historical record); stock is returned exactly once — a deleted transaction can't be deleted again (the `deleted_at IS NULL` lookup 404s), so there's no double-return.
 
 ### QRIS payment callback
 

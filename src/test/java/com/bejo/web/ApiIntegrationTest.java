@@ -2020,6 +2020,111 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void editTransactionItemsReconcilesStockAndAmount() throws Exception {
+        String token = registerAndLogin("txn_edit1");
+        long coffee = createProductPriced(token, "COF", 10, 15000);
+        long tea = createProductPriced(token, "TEA", 5, 8000);
+
+        // Create: coffee×3, tea×2 → stock 7 / 3
+        MvcResult created = mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "edit-items-1").contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "type", "MANUAL", "transactionDate", "2026-07-01T10:30:00", "amount", 61000,
+                                "items", List.of(Map.of("productId", coffee, "quantity", 3),
+                                                 Map.of("productId", tea, "quantity", 2))))))
+                .andExpect(status().isCreated()).andReturn();
+        String txnId = objectMapper.readTree(created.getResponse().getContentAsString())
+                .at("/data/transactionId").asText();
+
+        // Edit: raise coffee to 5, drop tea → coffee 7→5, tea 3→5 (returned), amount re-derived 75000
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "items", List.of(Map.of("productId", coffee, "quantity", 5))))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.amount").value(75000))
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].quantity").value(5));
+        assertThat(stockOf(token, coffee)).isEqualTo(5);
+        assertThat(stockOf(token, tea)).isEqualTo(5);
+
+        // Clearing items ([]) returns coffee's stock and removes the line items
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON).content("{\"items\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items").doesNotExist());
+        assertThat(stockOf(token, coffee)).isEqualTo(10);
+        mockMvc.perform(get("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.items").doesNotExist());
+    }
+
+    @Test
+    void editTransactionItemsRejectsInsufficientStockAndLeavesEverythingUnchanged() throws Exception {
+        String token = registerAndLogin("txn_edit2");
+        long coffee = createProductPriced(token, "COF", 3, 15000);
+        MvcResult created = mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "edit-items-2").contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "type", "MANUAL", "transactionDate", "2026-07-01T10:30:00", "amount", 30000,
+                                "items", List.of(Map.of("productId", coffee, "quantity", 2))))))
+                .andExpect(status().isCreated()).andReturn();
+        String txnId = objectMapper.readTree(created.getResponse().getContentAsString())
+                .at("/data/transactionId").asText();
+
+        // stock is now 1 (3−2); editing to qty 5 needs +3 more but only 1 is available → 400
+        mockMvc.perform(patch("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "items", List.of(Map.of("productId", coffee, "quantity", 5))))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("Stok tidak cukup")));
+
+        // Nothing changed — stock and the original line item are intact
+        assertThat(stockOf(token, coffee)).isEqualTo(1);
+        mockMvc.perform(get("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.items[0].quantity").value(2));
+    }
+
+    @Test
+    void deleteTransactionWithItemsReturnsStock() throws Exception {
+        String token = registerAndLogin("txn_del1");
+        long coffee = createProductPriced(token, "COF", 10, 15000);
+
+        MvcResult created = mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "del-items-1").contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "type", "MANUAL", "transactionDate", "2026-07-01T10:30:00", "amount", 45000,
+                                "items", List.of(Map.of("productId", coffee, "quantity", 3))))))
+                .andExpect(status().isCreated()).andReturn();
+        String txnId = objectMapper.readTree(created.getResponse().getContentAsString())
+                .at("/data/transactionId").asText();
+        assertThat(stockOf(token, coffee)).isEqualTo(7);   // 3 sold
+
+        // Deleting the sale returns its stock
+        mockMvc.perform(delete("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        assertThat(stockOf(token, coffee)).isEqualTo(10);  // 3 returned
+
+        // ...and it's gone from history, with a SALE reversal mutation recorded
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(0));
+        mockMvc.perform(get("/api/stock-mutations")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data[0].type").value("SALE"))
+                .andExpect(jsonPath("$.data[0].items[0].quantityChange").value(3));
+    }
+
+    @Test
     void manualTransactionWithInsufficientStockIsRejectedAndStockUnchanged() throws Exception {
         String token = registerAndLogin("txn_items2");
         long coffee = createProductPriced(token, "COF", 2, 15000);
