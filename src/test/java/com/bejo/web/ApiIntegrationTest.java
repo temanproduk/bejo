@@ -2254,7 +2254,7 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void aPingCanOnlyBeRespondedOnTheDayItWasSent() throws Exception {
+    void aPingExpires24HoursAfterItWasSent() throws Exception {
         Map<String, String> biz = businessWithMember("pres_admin18", "pres_member18");
         MvcResult ping = mockMvc.perform(post("/api/presences/pings")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -2264,11 +2264,24 @@ class ApiIntegrationTest {
         long pingId = objectMapper.readTree(ping.getResponse().getContentAsString())
                 .at("/data/presences/0/id").asLong();
 
-        // Backdate the ping to yesterday — "where are you right now?" answered a day late
-        // tells the super admin nothing, so it has expired
-        com.bejo.entity.Presence stale = presenceRepository.findById(pingId).orElseThrow();
-        stale.setClockDatetime(LocalDateTime.now().minusDays(1));
-        presenceRepository.save(stale);
+        // Still answerable 10 hours on — the window is a rolling 24h, not the calendar date
+        com.bejo.entity.Presence entry = presenceRepository.findById(pingId).orElseThrow();
+        entry.setClockDatetime(LocalDateTime.now().minusHours(10));
+        presenceRepository.save(entry);
+
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2, "longitude", 106.8))))
+                .andExpect(status().isOk());
+
+        // A second ping, this one older than 24h, has expired
+        entry = presenceRepository.findById(pingId).orElseThrow();
+        entry.setResponseDatetime(null);
+        entry.setClockDatetime(LocalDateTime.now().minusHours(25));
+        presenceRepository.save(entry);
 
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -2278,7 +2291,7 @@ class ApiIntegrationTest {
                                 "latitude", -6.2, "longitude", 106.8))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(
-                        "Ping ini sudah kedaluwarsa — hanya dapat direspons di hari yang sama"));
+                        "Ping ini sudah kedaluwarsa — hanya dapat direspons dalam 24 jam"));
     }
 
     @Test

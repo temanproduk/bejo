@@ -1248,11 +1248,11 @@ The member taps the ping in the app and replies **with their location**:
 
 Stamps `responseDatetime`, the coordinates, and the `note` on the entry, and returns it. **A PING is created with no location and no note — this is the only thing that writes them.** The super admin who sent the ping sets neither; they read the member's reply in the [history](#get-apipresences--attendance-history), next to the response time.
 
-**Same day only.** A ping expires at the end of the day it was sent — "where are you right now?" answered a day late tells the super admin nothing (`400` — `"Ping ini sudah kedaluwarsa — hanya dapat direspons di hari yang sama"`).
+**Within 24 hours.** A ping expires 24 hours after it was sent (`400` — `"Ping ini sudah kedaluwarsa — hanya dapat direspons dalam 24 jam"`). It's a rolling window rather than a calendar date, so a ping sent at 23:00 stays answerable through the night instead of dying an hour later at midnight.
 
 **Once only.** The member may have the app on several devices and can answer from any of them, but only the **first** reply is accepted; a second gets `400` (`"Ping ini sudah direspons"`).
 
-`403` if the ping belongs to someone else, `400` if the location is missing / the entry isn't a `PING` / it expired / it was already answered, `404` if it isn't in the caller's business.
+`403` if the ping belongs to someone else, `400` if the location is missing / the entry isn't a `PING` / it is more than 24 hours old / it was already answered, `404` if it isn't in the caller's business.
 
 #### `GET /api/presences` — Attendance history
 

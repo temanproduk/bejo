@@ -502,17 +502,30 @@ class PresenceServiceTest {
     }
 
     @Test
-    void yesterdaysPingCanNoLongerBeResponded() {
+    void aPingOlderThan24HoursCanNoLongerBeResponded() {
         Presence stale = ping(203L, 2L);
-        stale.setClockDatetime(LocalDateTime.now().minusDays(1));
+        stale.setClockDatetime(LocalDateTime.now().minusHours(25));
         when(presenceRepository.findByIdAndBusinessId(203L, BIZ)).thenReturn(Optional.of(stale));
 
-        // "Where are you right now?" answered a day late says nothing
         assertThatThrownBy(() -> service.respond("budi", 203L, reply()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("kedaluwarsa");
 
         verify(presenceRepository, never()).markResponded(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aPingFromLastNightIsStillAnswerableThisMorning() {
+        // The window is a rolling 24h, not the calendar date: a ping sent at 23:00 must not
+        // die an hour later at midnight.
+        Presence lastNight = ping(204L, 2L);
+        lastNight.setClockDatetime(LocalDateTime.now().minusHours(10));
+        when(presenceRepository.findByIdAndBusinessId(204L, BIZ)).thenReturn(Optional.of(lastNight));
+        when(presenceRepository.markResponded(eq(204L), any(), any(), any(), any())).thenReturn(1);
+
+        PresenceResponseDto dto = service.respond("budi", 204L, reply());
+
+        assertThat(dto.responseDatetime()).isNotNull();
     }
 
     @Test

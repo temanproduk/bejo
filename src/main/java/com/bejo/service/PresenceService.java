@@ -59,6 +59,9 @@ public class PresenceService {
     // A member can't be pinged more often than this — a spot-check, not a nag
     private static final Duration PING_COOLDOWN = Duration.ofHours(1);
 
+    // How long a ping stays answerable after it was sent
+    private static final Duration PING_RESPONSE_WINDOW = Duration.ofHours(24);
+
     // Why a member was left out of a ping (reported back to the super admin)
     private static final String SKIPPED_NO_DEVICE = "NO_DEVICE";
     private static final String SKIPPED_COOLDOWN = "COOLDOWN";
@@ -289,11 +292,13 @@ public class PresenceService {
         if (!PresenceType.PING.equals(presence.getType())) {
             throw new IllegalArgumentException("Hanya ping yang dapat direspons");
         }
-        // A ping is a "where are you right now?" — answering yesterday's tells the admin
-        // nothing, so it expires at the end of the day it was sent.
+        // A ping keeps for a day, then it's stale. A rolling 24h window (not "the same
+        // calendar date") is what the member actually experiences — a ping sent at 23:00
+        // stays answerable through the night instead of dying an hour later at midnight.
         LocalDateTime respondedAt = LocalDateTime.now();
-        if (!presence.getClockDatetime().toLocalDate().equals(respondedAt.toLocalDate())) {
-            throw new IllegalArgumentException("Ping ini sudah kedaluwarsa — hanya dapat direspons di hari yang sama");
+        if (respondedAt.isAfter(presence.getClockDatetime().plus(PING_RESPONSE_WINDOW))) {
+            throw new IllegalArgumentException(
+                    "Ping ini sudah kedaluwarsa — hanya dapat direspons dalam 24 jam");
         }
 
         // Conditional update, not a read-then-write: two simultaneous taps (the member has the
