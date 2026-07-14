@@ -2,6 +2,7 @@ package com.bejo.controller;
 
 import com.bejo.dto.request.PresenceClockRequestDto;
 import com.bejo.dto.request.PresencePingRequestDto;
+import com.bejo.dto.request.PresenceRespondRequestDto;
 import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.dto.response.PresenceResponseDto;
 import com.bejo.service.PresenceService;
@@ -47,7 +48,8 @@ public class PresenceController {
                 .body(ApiResponseDto.success("Absen keluar berhasil dicatat", data));
     }
 
-    // Super admin only: records + pushes one PING entry to every member of the business.
+    // Super admin only: records + pushes a PING entry to the whole team, or to the one
+    // member named by userId. Only members are pinged — never the super admin's own devices.
     @PostMapping("/pings")
     public ResponseEntity<ApiResponseDto<List<PresenceResponseDto>>> ping(
             @Valid @RequestBody(required = false) PresencePingRequestDto request,
@@ -56,12 +58,13 @@ public class PresenceController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponseDto.list(data));
     }
 
-    // The member acknowledges their ping (stamps responseDatetime).
+    // The member acknowledges their ping (stamps responseDatetime) and may attach a note.
     @PostMapping("/{id}/respond")
     public ResponseEntity<ApiResponseDto<PresenceResponseDto>> respond(
             @PathVariable Long id,
+            @Valid @RequestBody(required = false) PresenceRespondRequestDto request,
             Authentication authentication) {
-        PresenceResponseDto data = presenceService.respond(authentication.getName(), id);
+        PresenceResponseDto data = presenceService.respond(authentication.getName(), id, request);
         return ResponseEntity.ok(ApiResponseDto.success("Ping direspons", data));
     }
 

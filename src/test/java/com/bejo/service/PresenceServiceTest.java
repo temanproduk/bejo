@@ -2,8 +2,10 @@ package com.bejo.service;
 
 import com.bejo.constant.BusinessRole;
 import com.bejo.constant.PresenceType;
+import com.bejo.constant.PushType;
 import com.bejo.dto.request.PresenceClockRequestDto;
 import com.bejo.dto.request.PresencePingRequestDto;
+import com.bejo.dto.request.PresenceRespondRequestDto;
 import com.bejo.dto.response.PresenceResponseDto;
 import com.bejo.entity.Presence;
 import com.bejo.entity.User;
@@ -97,13 +99,14 @@ class PresenceServiceTest {
         assertThat(p.getResponseDatetime()).isNull();
         assertThat(dto.type()).isEqualTo(PresenceType.CLOCK_IN);
 
-        // The super admin's devices get a display notification naming the member
+        // The super admin's devices get a data-only push the app renders itself
         ArgumentCaptor<Map<String, String>> data = captureData();
-        verify(pushNotificationService).sendNotificationToUser(eq("boss"),
-                eq("budi telah absen masuk!"),
-                eq("Pastikan jadwal absen sesuai prosedur. Sukses terus ya!"),
-                data.capture());
-        assertThat(data.getValue()).containsEntry("presenceType", PresenceType.CLOCK_IN)
+        verify(pushNotificationService).sendUrgentToUser(eq("boss"), data.capture());
+        assertThat(data.getValue())
+                .containsEntry("type", PushType.PRESENCE)          // not a TRANSACTION push
+                .containsEntry("title", "budi telah absen masuk!")
+                .containsEntry("body", "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!")
+                .containsEntry("presenceType", PresenceType.CLOCK_IN)
                 .containsEntry("presenceId", "100");
     }
 
@@ -115,8 +118,9 @@ class PresenceServiceTest {
         service.clockOut("budi", new PresenceClockRequestDto(-6.2, 106.8, LocalDateTime.now(), null));
 
         verify(presenceRepository).save(any(Presence.class));
-        verify(pushNotificationService).sendNotificationToUser(eq("boss"),
-                eq("budi telah absen keluar!"), any(), anyMap());
+        ArgumentCaptor<Map<String, String>> data = captureData();
+        verify(pushNotificationService).sendUrgentToUser(eq("boss"), data.capture());
+        assertThat(data.getValue()).containsEntry("title", "budi telah absen keluar!");
     }
 
     @Test
@@ -204,7 +208,7 @@ class PresenceServiceTest {
     void clockInIsRecordedEvenWhenThePushFails() {
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
                 .thenReturn(Optional.of(admin));
-        when(pushNotificationService.sendNotificationToUser(any(), any(), any(), anyMap()))
+        when(pushNotificationService.sendUrgentToUser(any(), anyMap()))
                 .thenThrow(new RuntimeException("FCM down"));
 
         PresenceResponseDto dto = service.clockIn("budi",
@@ -222,7 +226,7 @@ class PresenceServiceTest {
         when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
                 .thenReturn(List.of(member, other));
 
-        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto("Masih di toko?"));
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(null));
 
         assertThat(created).hasSize(2);
         assertThat(created).allSatisfy(dto -> {
@@ -231,9 +235,60 @@ class PresenceServiceTest {
             assertThat(dto.latitude()).isNull();   // the admin sends no location
         });
         verify(presenceRepository, times(2)).save(any(Presence.class));
-        // The note doubles as the push body
-        verify(pushNotificationService).sendNotificationToUser(eq("budi"), eq("Ping absen!"), eq("Masih di toko?"), anyMap());
-        verify(pushNotificationService).sendNotificationToUser(eq("siti"), eq("Ping absen!"), eq("Masih di toko?"), anyMap());
+        ArgumentCaptor<Map<String, String>> data = captureData();
+        verify(pushNotificationService).sendUrgentToUser(eq("budi"), data.capture());
+        verify(pushNotificationService).sendUrgentToUser(eq("siti"), anyMap());
+        assertThat(data.getValue())
+                .containsEntry("type", PushType.PRESENCE)
+                .containsEntry("presenceType", PresenceType.PING)
+                .containsEntry("title", "Ping Absen Bejoo!")
+                .containsEntry("body", "Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?");
+
+        // The super admin sent it — their own devices must NOT be pinged
+        verify(pushNotificationService, never()).sendUrgentToUser(eq("boss"), anyMap());
+    }
+
+    @Test
+    void pingCanTargetOneMemberOnly() {
+        User other = user(3L, "siti", "Siti", BusinessRole.MEMBER);
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member, other));
+
+        // Only Siti is targeted — Budi is not pinged at all
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(3L));
+
+        assertThat(created).hasSize(1);
+        assertThat(created.get(0).username()).isEqualTo("siti");
+        verify(presenceRepository, times(1)).save(any(Presence.class));
+        verify(pushNotificationService).sendUrgentToUser(eq("siti"), anyMap());
+        verify(pushNotificationService, never()).sendUrgentToUser(eq("budi"), anyMap());
+    }
+
+    @Test
+    void pingToAnUnknownMemberIsRejectedAndNothingIsSent() {
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member));
+
+        // 99 isn't a member of this business
+        assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(99L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tidak ditemukan");
+
+        verify(presenceRepository, never()).save(any());
+        verifyNoInteractions(pushNotificationService);
+    }
+
+    @Test
+    void pingTargetingTheSuperAdminIsRejected() {
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member));
+
+        // The super admin (id 1) is not a MEMBER — they don't take attendance
+        assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(1L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tidak ditemukan");
+
+        verify(presenceRepository, never()).save(any());
     }
 
     @Test
@@ -264,13 +319,16 @@ class PresenceServiceTest {
         Presence ping = ping(200L, 2L);
         when(presenceRepository.findByIdAndBusinessId(200L, BIZ)).thenReturn(Optional.of(ping));
         // The conditional update only touches a row while responseDatetime is still null
-        when(presenceRepository.markResponded(eq(200L), any())).thenReturn(1).thenReturn(0);
+        when(presenceRepository.markResponded(eq(200L), any(), any())).thenReturn(1).thenReturn(0);
 
-        PresenceResponseDto dto = service.respond("budi", 200L);
+        // The member's reply carries their note — the ping itself had none
+        PresenceResponseDto dto = service.respond("budi", 200L, new PresenceRespondRequestDto("Lagi antar pesanan"));
         assertThat(dto.responseDatetime()).isNotNull();
+        assertThat(dto.note()).isEqualTo("Lagi antar pesanan");
+        verify(presenceRepository).markResponded(eq(200L), any(), eq("Lagi antar pesanan"));
 
         // Already responded — the update matches no row, so the second tap is rejected
-        assertThatThrownBy(() -> service.respond("budi", 200L))
+        assertThatThrownBy(() -> service.respond("budi", 200L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("sudah direspons");
     }
@@ -280,7 +338,7 @@ class PresenceServiceTest {
         Presence ping = ping(201L, 3L);   // belongs to user 3, not budi (2)
         when(presenceRepository.findByIdAndBusinessId(201L, BIZ)).thenReturn(Optional.of(ping));
 
-        assertThatThrownBy(() -> service.respond("budi", 201L))
+        assertThatThrownBy(() -> service.respond("budi", 201L, null))
                 .isInstanceOf(ForbiddenException.class);
 
         assertThat(ping.getResponseDatetime()).isNull();
@@ -292,7 +350,7 @@ class PresenceServiceTest {
         clockIn.setType(PresenceType.CLOCK_IN);
         when(presenceRepository.findByIdAndBusinessId(202L, BIZ)).thenReturn(Optional.of(clockIn));
 
-        assertThatThrownBy(() -> service.respond("budi", 202L))
+        assertThatThrownBy(() -> service.respond("budi", 202L, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("ping");
     }

@@ -2,8 +2,10 @@ package com.bejo.service;
 
 import com.bejo.constant.BusinessRole;
 import com.bejo.constant.PresenceType;
+import com.bejo.constant.PushType;
 import com.bejo.dto.request.PresenceClockRequestDto;
 import com.bejo.dto.request.PresencePingRequestDto;
+import com.bejo.dto.request.PresenceRespondRequestDto;
 import com.bejo.dto.response.PresenceResponseDto;
 import com.bejo.entity.Presence;
 import com.bejo.entity.User;
@@ -48,8 +50,8 @@ public class PresenceService {
     private static final Logger log = LoggerFactory.getLogger(PresenceService.class);
 
     private static final String CLOCK_PUSH_BODY = "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!";
-    private static final String PING_PUSH_TITLE = "Ping absen!";
-    private static final String PING_PUSH_BODY = "Ketuk untuk konfirmasi kamu sedang bertugas ya!";
+    private static final String PING_PUSH_TITLE = "Ping Absen Bejoo!";
+    private static final String PING_PUSH_BODY = "Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?";
 
     private final PresenceRepository presenceRepository;
     private final UserRepository userRepository;
@@ -127,8 +129,8 @@ public class PresenceService {
         String verb = PresenceType.CLOCK_IN.equals(type) ? "masuk" : "keluar";
         String title = member.getUsername() + " telah absen " + verb + "!";
         try {
-            pushNotificationService.sendNotificationToUser(
-                    superAdmin.getUsername(), title, CLOCK_PUSH_BODY, pushData(presence));
+            pushNotificationService.sendUrgentToUser(
+                    superAdmin.getUsername(), pushData(presence, title, CLOCK_PUSH_BODY));
         } catch (RuntimeException e) {
             log.error("[PRESENCE] Push step failed for presenceId={} (entry still recorded): {}",
                     presence.getId(), e.getMessage(), e);
@@ -136,8 +138,9 @@ public class PresenceService {
     }
 
     /**
-     * Super-admin spot-check: records one PING entry per member and pushes it to their
-     * devices. Each member acknowledges their own entry via {@link #respond}, which stamps
+     * Super-admin spot-check: records one PING entry per targeted member and pushes it to
+     * their devices. With no {@code userId} the whole team is pinged; with one, only that
+     * member. Each member acknowledges their own entry via {@link #respond}, which stamps
      * {@code responseDatetime}.
      */
     @Transactional
@@ -146,16 +149,10 @@ public class PresenceService {
         if (!caller.isSuperAdmin()) {
             throw new ForbiddenException("Hanya super admin yang dapat mengirim ping absen");
         }
-        List<User> members = userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(
-                caller.getBusinessId(), BusinessRole.MEMBER);
-        if (members.isEmpty()) {
-            throw new IllegalArgumentException("Belum ada anggota tim yang dapat dikirimi ping");
-        }
+        Long targetUserId = request != null ? request.userId() : null;
+        List<User> members = resolvePingTargets(caller.getBusinessId(), targetUserId);
 
         LocalDateTime sentAt = LocalDateTime.now();
-        String body = request != null && request.note() != null && !request.note().isBlank()
-                ? request.note() : PING_PUSH_BODY;
-
         List<PresenceResponseDto> created = new ArrayList<>();
         for (User member : members) {
             Presence presence = new Presence();
@@ -166,26 +163,52 @@ public class PresenceService {
             presence.setType(PresenceType.PING);
             presence.setClockDatetime(sentAt);
             presence.setPresenceDate(sentAt.toLocalDate());
-            presence.setNote(request != null ? request.note() : null);
+            // note stays null: it's reserved for the member's reply (see respond)
             presenceRepository.save(presence);
             created.add(toDto(presence));
 
             try {
-                pushNotificationService.sendNotificationToUser(
-                        member.getUsername(), PING_PUSH_TITLE, body, pushData(presence));
+                pushNotificationService.sendUrgentToUser(
+                        member.getUsername(), pushData(presence, PING_PUSH_TITLE, PING_PUSH_BODY));
             } catch (RuntimeException e) {
                 log.error("[PRESENCE] Ping push failed for username={} (entry still recorded): {}",
                         member.getUsername(), e.getMessage(), e);
             }
         }
-        log.info("[PRESENCE] PING sent to {} member(s) of businessId={} by {}",
-                created.size(), caller.getBusinessId(), callerUsername);
+        log.info("[PRESENCE] PING sent to {} member(s) of businessId={} by {} ({})",
+                created.size(), caller.getBusinessId(), callerUsername,
+                targetUserId != null ? "userId=" + targetUserId : "whole team");
         return created;
     }
 
-    /** The member taps the ping in the app: stamps {@code responseDatetime} (exactly once). */
+    /**
+     * Who this ping goes to: just {@code userId}, or the whole team when it's omitted. The id
+     * must be an active MEMBER of the caller's own business — an unknown id, someone else's
+     * staff, or the super admin themselves is a 400 (and nothing is sent).
+     */
+    private List<User> resolvePingTargets(Long businessId, Long userId) {
+        List<User> members = userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(
+                businessId, BusinessRole.MEMBER);
+        if (userId == null) {
+            if (members.isEmpty()) {
+                throw new IllegalArgumentException("Belum ada anggota tim yang dapat dikirimi ping");
+            }
+            return members;
+        }
+        return members.stream()
+                .filter(m -> m.getId().equals(userId))
+                .findFirst()
+                .map(List::of)
+                .orElseThrow(() -> new IllegalArgumentException("Anggota tim tidak ditemukan: " + userId));
+    }
+
+    /**
+     * The member taps the ping in the app: stamps {@code responseDatetime} (exactly once),
+     * plus an optional {@code note} — their reply, which the super admin then reads in the
+     * history. The ping itself carries no note; this is what fills it.
+     */
     @Transactional
-    public PresenceResponseDto respond(String username, Long presenceId) {
+    public PresenceResponseDto respond(String username, Long presenceId, PresenceRespondRequestDto request) {
         User user = businessContext.requireUser(username);
         Presence presence = presenceRepository.findByIdAndBusinessId(presenceId, user.getBusinessId())
                 .orElseThrow(() -> new ResourceNotFoundException("Presence not found: " + presenceId));
@@ -199,10 +222,12 @@ public class PresenceService {
         // Conditional update, not a read-then-write: two simultaneous taps both see a null
         // responseDatetime above, but only one of them updates a row here.
         LocalDateTime respondedAt = LocalDateTime.now();
-        if (presenceRepository.markResponded(presenceId, respondedAt) == 0) {
+        String note = request != null ? request.note() : null;
+        if (presenceRepository.markResponded(presenceId, respondedAt, note) == 0) {
             throw new IllegalArgumentException("Ping ini sudah direspons");
         }
         presence.setResponseDatetime(respondedAt);
+        presence.setNote(note);
         log.info("[PRESENCE] PING id={} responded by username={}", presenceId, username);
         return toDto(presence);
     }
@@ -271,10 +296,17 @@ public class PresenceService {
         return new LocalDate[]{ym.atDay(1), ym.atEndOfMonth()};
     }
 
-    // Routing payload carried alongside the display notification (the app opens the entry)
-    private Map<String, String> pushData(Presence presence) {
+    /**
+     * The data-only push payload. {@code type=PRESENCE} ({@link PushType}) is what tells the
+     * app this is an attendance event and not a payment; {@code presenceType} says which kind.
+     * {@code title}/{@code body} are the text the app renders (FCM draws nothing itself), and
+     * {@code presenceId} is the entry to open — for a PING, the one to respond to.
+     */
+    private Map<String, String> pushData(Presence presence, String title, String body) {
         Map<String, String> data = new HashMap<>();
-        data.put("type", "PRESENCE");
+        data.put("type", PushType.PRESENCE);
+        data.put("title", title);
+        data.put("body", body);
         data.put("presenceType", presence.getType());
         data.put("presenceId", String.valueOf(presence.getId()));
         data.put("userId", String.valueOf(presence.getUserId()));

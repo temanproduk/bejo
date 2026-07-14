@@ -1637,7 +1637,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"note\": \"Masih di toko?\"\n}",
+              "raw": "{}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1655,7 +1655,48 @@
                 "pings"
               ]
             },
-            "description": "Super-admin spot-check. Records one PING entry per member of the business and pushes each member a notification (title \"Ping absen!\"; the note becomes the body when given). 403 for a plain member, 400 if the business has no members yet.\n\nThe member acknowledges their entry with POST /api/presences/{id}/respond, which stamps responseDatetime."
+            "description": "Super-admin spot-check to the WHOLE TEAM — omit userId (send an empty body). Records one PING entry per MEMBER of the business.\n\nOnly members are pinged — never the super admin's own devices.\n\nPushes each targeted member a data-only, high-priority push: title \"Ping Absen Bejoo!\", body \"Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?\" (fixed copy).\n\nThe ping carries no note — the note on a PING entry is reserved for the MEMBER's reply, sent with POST /api/presences/{id}/respond.\n\n403 for a plain member, 400 if the business has no members yet."
+          }
+        },
+        {
+          "name": "Ping One Member (super admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/presences/pings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "presences",
+                "pings"
+              ]
+            },
+            "description": "Same endpoint, but userId targets ONE member instead of the whole team. Get the id from GET /api/users/members.\n\nPushes each targeted member a data-only, high-priority push: title \"Ping Absen Bejoo!\", body \"Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?\" (fixed copy).\n\nThe ping carries no note — the note on a PING entry is reserved for the MEMBER's reply, sent with POST /api/presences/{id}/respond.\n\n400 if userId isn't an active member of your own business (an unknown id, another business's staff, or your own super-admin id) — nothing is sent."
           }
         },
         {
@@ -1670,6 +1711,10 @@
               {
                 "key": "Authorization",
                 "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
               }
             ],
             "url": {
@@ -1691,7 +1736,16 @@
                 }
               ]
             },
-            "description": "The member taps the ping in the app — no body. Stamps responseDatetime on their own PING entry, exactly once (a conditional update, so two simultaneous taps can't both stamp it).\n\n403 if the ping belongs to another user; 400 if the entry isn't a PING or was already responded to; 404 if it isn't in the caller's business."
+            "description": "The member taps the ping in the app. Stamps responseDatetime on their own PING entry, exactly once (a conditional update, so two simultaneous taps can't both stamp it).\n\nThe body is OPTIONAL — a bare tap (no body) is a valid reply. An optional note lets the member say where they are; it's stored on the PING entry, and the super admin reads it in the presence history next to the response time. This is the only thing that writes a PING's note.\n\n403 if the ping belongs to another user; 400 if the entry isn't a PING or was already responded to; 404 if it isn't in the caller's business.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Lagi antar pesanan\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {

@@ -1,6 +1,7 @@
 package com.bejo.service;
 
 import com.bejo.constant.Acquirer;
+import com.bejo.constant.PushType;
 import com.bejo.constant.TransactionStatus;
 import com.bejo.constant.TransactionType;
 import com.bejo.dto.request.QrMpmNotifyRequestDto;
@@ -128,6 +129,8 @@ public class QrisCallbackService {
 
     private Map<String, String> buildPushData(Transaction t, String merchantName) {
         Map<String, String> data = new HashMap<>();
+        // Tells the app this push is a payment, not an attendance event (PushType.PRESENCE)
+        data.put("type", PushType.TRANSACTION);
         data.put("title", "Pembayaran Diterima");
         data.put("body", "Pembayaran Rp" + t.getAmount() + " diterima");
         data.put("transactionId", t.getTransactionId());

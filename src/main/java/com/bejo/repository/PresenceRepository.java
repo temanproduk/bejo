@@ -39,12 +39,15 @@ public interface PresenceRepository extends JpaRepository<Presence, Long> {
     boolean existsByUserIdAndTypeAndPresenceDate(Long userId, String type, LocalDate presenceDate);
 
     /**
-     * Stamps a PING's response time only if it hasn't been answered yet, and reports whether
-     * it did (0 = someone already answered it). A read-then-write in the service would let two
-     * simultaneous taps both pass the "not answered" check; this settles it in one statement.
+     * Stamps a PING's response time (and the member's optional note) only if it hasn't been
+     * answered yet, and reports whether it did (0 = someone already answered it). A
+     * read-then-write in the service would let two simultaneous taps both pass the "not
+     * answered" check; this settles it in one statement.
      */
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE Presence p SET p.responseDatetime = :respondedAt "
+    @Query("UPDATE Presence p SET p.responseDatetime = :respondedAt, p.note = :note "
             + "WHERE p.id = :id AND p.responseDatetime IS NULL")
-    int markResponded(@Param("id") Long id, @Param("respondedAt") LocalDateTime respondedAt);
+    int markResponded(@Param("id") Long id,
+                      @Param("respondedAt") LocalDateTime respondedAt,
+                      @Param("note") String note);
 }

@@ -1,12 +1,14 @@
 package com.bejo.dto.request;
 
-import jakarta.validation.constraints.Size;
-
 /**
- * Body of {@code POST /api/presences/pings} — the super admin's spot-check to every
- * member. Everything is optional; the note (when given) doubles as the push body.
+ * Body of {@code POST /api/presences/pings} — the super admin's spot-check. The only field
+ * is optional: omit {@code userId} to ping the <b>whole team</b> (its members — never the
+ * super admin's own devices), or set it to ping just that one member.
+ *
+ * <p>There is deliberately no {@code note} here: the note on a PING entry belongs to the
+ * <b>member's reply</b> ({@link PresenceRespondRequestDto}), not to the admin who sent it.
  */
 public record PresencePingRequestDto(
-        @Size(max = 255, message = "note maksimal 255 karakter")
-        String note
+        // null = every member of the business; set = only that member
+        Long userId
 ) {}

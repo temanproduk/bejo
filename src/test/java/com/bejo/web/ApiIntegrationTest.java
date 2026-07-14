@@ -2257,36 +2257,109 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("adminToken"))
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("note", "Masih di toko?"))))
+                        .content("{}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.count").value(1))               // one entry per member
                 .andExpect(jsonPath("$.data[0].type").value("PING"))
                 .andExpect(jsonPath("$.data[0].username").value("pres_member4"))
+                .andExpect(jsonPath("$.data[0].note").doesNotExist())  // the note is the member's to write
                 .andReturn();
         String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
 
-        // The member taps it — responseDatetime is stamped
+        // The member taps it and replies with a note — responseDatetime is stamped
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
                         .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("note", "Lagi antar pesanan"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.responseDatetime").isNotEmpty());
+                .andExpect(jsonPath("$.data.responseDatetime").isNotEmpty())
+                .andExpect(jsonPath("$.data.note").value("Lagi antar pesanan"));
 
         // Responding twice is rejected
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
                         .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(0));
 
-        // The ping shows up in the history alongside clock entries
+        // The super admin reads the reply (note + response time) in the history
         mockMvc.perform(get("/api/presences")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("adminToken")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.data[0].type").value("PING"))
-                .andExpect(jsonPath("$.data[0].responseDatetime").isNotEmpty());
+                .andExpect(jsonPath("$.data[0].responseDatetime").isNotEmpty())
+                .andExpect(jsonPath("$.data[0].note").value("Lagi antar pesanan"));
+    }
+
+    @Test
+    void respondingWithoutANoteIsFine() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin14", "pres_member14");
+        MvcResult ping = mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
+
+        // A bare tap — no body at all
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.responseDatetime").isNotEmpty())
+                .andExpect(jsonPath("$.data.note").doesNotExist());
+    }
+
+    @Test
+    void pingGoesToTheWholeTeamOrToOneMember() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin13", "pres_member13a");
+        // A second member in the same business
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("pres_member13b"))))
+                .andExpect(status().isCreated());
+
+        // No userId → the whole team (both members)
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.count").value(2));
+
+        // userId → only that member gets an entry
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "userId", Long.parseLong(biz.get("memberId"))))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].username").value("pres_member13a"));
+
+        // An id outside the business is rejected — and nothing is recorded
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("userId", 999999))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // 3 pings total: 2 from the team-wide one, 1 from the targeted one
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(jsonPath("$.count").value(3));
     }
 
     @Test

@@ -3,12 +3,13 @@ package com.bejo.service;
 import com.bejo.entity.Session;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
+import com.bejo.constant.PushType;
 import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.AndroidConfig;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.MessagingErrorCode;
-import com.google.firebase.messaging.Notification;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -23,10 +24,16 @@ import java.util.function.Function;
  * Low-level FCM sender shared by the callback flow, the presence flow and the
  * test-notification API. Does not touch the database (beyond clearing dead tokens).
  *
- * <p>Two message shapes: <b>data-only</b> ({@code sendToToken}/{@code sendToUser}/
- * {@code sendToBusiness}) — the app builds the notification itself, used for payments;
- * and <b>notification</b> ({@code sendNotificationTo…}) — a title/body FCM displays
- * directly, used for presence clock-in/out and pings.
+ * <p><b>Every message is data-only</b> — no FCM {@code notification} block. A notification
+ * message is drawn by the system tray and never reaches {@code onMessageReceived} while the
+ * app is backgrounded, so the app gets no code execution and can't react (pop a dialog,
+ * decide how to alert). Data-only hands every delivery to the app instead. The tradeoff is
+ * that a <b>force-stopped</b> app displays nothing at all — an accepted cost, since the
+ * point of these pushes is for the app to act on them.
+ *
+ * <p>The payload's {@code type} ({@link PushType}) is how the app tells a payment from an
+ * attendance event. Presence pushes additionally go out at {@link #sendUrgentToUser high
+ * priority}, which wakes the app promptly even in Doze.
  */
 @Service
 public class PushNotificationService {
@@ -80,17 +87,18 @@ public class PushNotificationService {
     }
 
     /**
-     * Best-effort display-notification broadcast to every device of one user (presence
-     * clock-in/out → the super admin; a ping → the member). FCM renders title/body itself;
-     * {@code data} rides along only so the app can route the tap. Never throws.
+     * Best-effort data-only broadcast to every device of one user, at <b>high priority</b> —
+     * used by the presence flow (a clock-in/out → the super admin; a ping → the member).
+     * High priority tells FCM to deliver immediately and wake the app even in Doze, so it can
+     * show its dialog / build its own heads-up notification on arrival. Never throws.
      */
-    public int sendNotificationToUser(String username, String title, String body, Map<String, String> data) {
+    public int sendUrgentToUser(String username, Map<String, String> data) {
         if (!isConfigured()) {
-            log.warn("[PUSH] Firebase not configured — skipping notification for username={}", username);
+            log.warn("[PUSH] Firebase not configured — skipping push for username={}", username);
             return 0;
         }
         return sendToSessions(sessionRepository.findByUsername(username),
-                token -> notificationMessage(token, title, body, data), "username=" + username);
+                token -> urgentDataMessage(token, data), "username=" + username);
     }
 
     /**
@@ -149,12 +157,14 @@ public class PushNotificationService {
         return Message.builder().putAllData(data).setToken(token).build();
     }
 
-    private Message notificationMessage(String token, String title, String body, Map<String, String> data) {
-        Message.Builder builder = Message.builder()
-                .setNotification(Notification.builder().setTitle(title).setBody(body).build())
-                .setToken(token);
-        if (data != null) builder.putAllData(data);
-        return builder.build();
+    // Same data-only shape, but flagged HIGH so FCM delivers it at once instead of batching
+    // it until the device next wakes — the app has to act on a presence event promptly.
+    private Message urgentDataMessage(String token, Map<String, String> data) {
+        return Message.builder()
+                .putAllData(data)
+                .setAndroidConfig(AndroidConfig.builder().setPriority(AndroidConfig.Priority.HIGH).build())
+                .setToken(token)
+                .build();
     }
 
     private String send(Message message) throws FirebaseMessagingException {

@@ -1,5 +1,6 @@
 package com.bejo.service;
 
+import com.bejo.constant.PushType;
 import com.bejo.entity.Session;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
@@ -50,13 +51,15 @@ class PushNotificationServiceTest {
     }
 
     /**
-     * The presence pushes must reach FCM as <b>display notifications</b> (a title/body FCM
-     * renders itself), not as the data-only messages the payment flow sends. Nothing else
-     * checks the shape of the Message actually handed to FCM, so this drives the real
-     * FirebaseMessaging call with a mocked SDK and inspects it.
+     * The presence push must reach FCM as a <b>data-only, high-priority</b> message. Both
+     * halves matter and neither is visible anywhere else: a {@code notification} block would
+     * be drawn by the system tray and never reach {@code onMessageReceived} in the background
+     * (so the app could never auto-show its dialog), and normal priority lets FCM hold the
+     * message until the device next wakes. So drive the real send with a mocked SDK and look
+     * at the Message on the wire.
      */
     @Test
-    void notificationPushCarriesTitleAndBodyToFcm() throws Exception {
+    void presencePushIsDataOnlyAndHighPriority() throws Exception {
         Session session = new Session();
         session.setUsername("budi");
         session.setDeviceId("device-1");
@@ -67,30 +70,34 @@ class PushNotificationServiceTest {
         ArgumentCaptor<Message> sent = ArgumentCaptor.forClass(Message.class);
         when(fcm.send(sent.capture())).thenReturn("message-id-1");
 
+        Map<String, String> data = Map.of(
+                "type", PushType.PRESENCE,
+                "title", "budi telah absen masuk!",
+                "body", "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!",
+                "presenceType", "CLOCK_IN",
+                "presenceId", "7");
+
         int delivered;
         try (MockedStatic<FirebaseApp> apps = mockStatic(FirebaseApp.class);
              MockedStatic<FirebaseMessaging> messaging = mockStatic(FirebaseMessaging.class)) {
             apps.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));  // "configured"
             messaging.when(FirebaseMessaging::getInstance).thenReturn(fcm);
 
-            delivered = service().sendNotificationToUser("budi",
-                    "budi telah absen masuk!",
-                    "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!",
-                    Map.of("type", "PRESENCE", "presenceId", "7"));
+            delivered = service().sendUrgentToUser("budi", data);
         }
 
         assertThat(delivered).isEqualTo(1);
         Message message = sent.getValue();
         assertThat(field(message, "token")).isEqualTo("token-abc");
 
-        // A notification block (not just data) — this is what makes the phone display it
-        Object notification = field(message, "notification");
-        assertThat(notification).isNotNull();
-        assertThat(field(notification, "title")).isEqualTo("budi telah absen masuk!");
-        assertThat(field(notification, "body")).isEqualTo("Pastikan jadwal absen sesuai prosedur. Sukses terus ya!");
+        // No notification block — the app must get onMessageReceived and render it itself
+        assertThat(field(message, "notification")).isNull();
+        assertThat(field(message, "data")).isEqualTo(data);
 
-        // …with the routing payload riding along
-        assertThat(field(message, "data")).isEqualTo(Map.of("type", "PRESENCE", "presenceId", "7"));
+        // …and FCM is told to deliver it now, not whenever the device next wakes
+        Object android = field(message, "androidConfig");
+        assertThat(android).isNotNull();
+        assertThat(String.valueOf(field(android, "priority"))).isEqualToIgnoringCase("high");
     }
 
     @Test
@@ -110,12 +117,13 @@ class PushNotificationServiceTest {
             apps.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
             messaging.when(FirebaseMessaging::getInstance).thenReturn(fcm);
 
-            service().sendToUser("budi", Map.of("title", "Pembayaran Diterima"));
+            service().sendToUser("budi", Map.of("type", PushType.TRANSACTION, "title", "Pembayaran Diterima"));
         }
 
         // The app builds the payment notification itself — no notification block on the wire
         assertThat(field(sent.getValue(), "notification")).isNull();
-        assertThat(field(sent.getValue(), "data")).isEqualTo(Map.of("title", "Pembayaran Diterima"));
+        assertThat(field(sent.getValue(), "data"))
+                .isEqualTo(Map.of("type", PushType.TRANSACTION, "title", "Pembayaran Diterima"));
     }
 
     // The Firebase SDK's Message/Notification expose no getters — read the field directly.

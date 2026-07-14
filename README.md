@@ -75,6 +75,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [Users](#users)
   - [Transactions](#transactions)
   - [Notifications](#notifications)
+    - [Push payloads](#push-payloads)
   - [Devices](#devices)
   - [User profile](#user-profile)
   - [Products & categories](#products--categories)
@@ -572,6 +573,28 @@ Soft-deletes a transaction: the row is kept in the database with a `deleted_at` 
 ---
 
 ### Notifications
+
+#### Push payloads
+
+**Every push Bejo sends is a data-only FCM message** — there is no `notification` block on the wire, so FCM displays nothing by itself and the **app renders each push**. That's deliberate: a notification-block message is drawn by the system tray and never reaches `onMessageReceived` while the app is backgrounded, which would leave the app no way to react (auto-show a dialog, choose how to alert). Data-only hands every delivery to the app. The tradeoff: a **force-stopped** app shows nothing at all.
+
+Since nothing is pre-rendered, **`data.type` is how the app tells the kinds apart**, and every payload carries `title` + `body` for the app to display:
+
+| `type` | Sent when | Also carries |
+|---|---|---|
+| `TRANSACTION` | A QRIS payment lands ([callback](#qris-callback)) — to **every device of every user** in the business | `transactionId`, `transactionDate`, `amount`, `status`, `issuerName`, `merchantName`, `merchantPan`, `customerPan` |
+| `PRESENCE` | An [attendance](#employee-presence) event — a clock-in/out to the **super admin**, a ping to the **member** | `presenceType` (`CLOCK_IN` / `CLOCK_OUT` / `PING`), `presenceId`, `userId`, `username`, `clockDatetime` |
+
+Presence pushes additionally go out at **Android priority `high`**, so FCM delivers them at once and wakes the app even in Doze rather than batching them until the device next wakes.
+
+```json
+// PRESENCE ping — the app can open the response dialog for presenceId 13
+{ "type": "PRESENCE", "presenceType": "PING", "presenceId": "13",
+  "title": "Ping Absen Bejoo!", "body": "Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?",
+  "userId": "4", "username": "budi", "clockDatetime": "2026-03-10T14:00" }
+```
+
+**What the app can and can't do on arrival:** with the app in the **foreground** it can show a dialog immediately. **Backgrounded**, Android (10+) forbids starting an Activity from a push — the app cannot auto-open itself; the realistic behaviour is a high-importance heads-up notification the app posts itself, which opens the dialog when tapped. (A full-screen intent does auto-launch on a locked screen, but Android 14+ and Play policy restrict that permission to calling/alarm apps.)
 
 #### `POST /api/notifications/test`
 
@@ -1145,19 +1168,28 @@ Staff attendance for the business: members clock in and out with their location,
 }
 ```
 
-The business's **super admin** gets a push notification: title `"budi telah absen masuk!"`, body `"Pastikan jadwal absen sesuai prosedur. Sukses terus ya!"`. Unlike the payment pushes (which are data-only), this is a **display notification** FCM renders itself; a small data payload (`type: PRESENCE`, `presenceId`, `presenceType`, `userId`, `username`) rides along so the app can route the tap. The push is best-effort — it never fails the attendance entry.
+The business's **super admin** gets a push: title `"budi telah absen masuk!"`, body `"Pastikan jadwal absen sesuai prosedur. Sukses terus ya!"` — see [push payloads](#push-payloads) for the exact data and why. The push is best-effort — it never fails the attendance entry.
 
 #### `POST /api/presences/clock-out` — Clock out (member)
 
 Same body and response shape, with `type: "CLOCK_OUT"`. The super admin's push title becomes `"budi telah absen keluar!"`.
 
-#### `POST /api/presences/pings` — Ping the team (super admin only)
+#### `POST /api/presences/pings` — Ping the team, or one member (super admin only)
 
 ```json
-{ "note": "Masih di toko?" }
+{ "userId": 4 }
 ```
 
-Body is optional. Records one `PING` entry **per member** of the business and pushes each of them a notification — title `"Ping absen!"`, body = the `note` when given, else `"Ketuk untuk konfirmasi kamu sedang bertugas ya!"`. `400` if the business has no members yet; `403` for a non–super-admin.
+The body (and `userId` in it) is optional: **omit it to ping the whole team**, or set it to ping just that one member. "The whole team" means the business's **members** — a ping never goes to the super admin's own devices.
+
+Records one `PING` entry per targeted member and pushes each of them:
+
+> **Ping Absen Bejoo!**
+> Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?
+
+The ping carries **no note** — the `note` on a PING entry is reserved for the member's reply (see [respond](#post-apipresencesidrespond--acknowledge-a-ping-member)).
+
+`400` if `userId` isn't an active member of the caller's own business (an unknown id, another business's staff, or the super admin's own id) — and nothing is sent. `400` if the business has no members yet (team-wide ping); `403` for a non–super-admin.
 
 `201 Created` — the created entries (one per member; `latitude`/`longitude` are null since the admin sends no location, and `responseDatetime` is null until the member taps):
 
@@ -1175,7 +1207,15 @@ Body is optional. Records one `PING` entry **per member** of the business and pu
 
 #### `POST /api/presences/{id}/respond` — Acknowledge a ping (member)
 
-The member taps the ping in the app; no body. Stamps `responseDatetime` on their entry and returns it. `403` if the ping belongs to someone else, `400` if the entry isn't a `PING` or was already responded to (a ping can only be acknowledged once), `404` if it isn't in the caller's business.
+The member taps the ping in the app. The body is optional — a bare tap is a valid reply — but they may attach a note saying where they are or what they're doing:
+
+```json
+{ "note": "Lagi antar pesanan" }
+```
+
+Stamps `responseDatetime` on the entry, stores the `note` on it, and returns the entry. **This is the only thing that writes a PING's `note`** — the super admin who sent the ping doesn't set one; they read the member's reply in the [history](#get-apipresences--attendance-history), next to the response time.
+
+`403` if the ping belongs to someone else, `400` if the entry isn't a `PING` or was already responded to (a ping can only be acknowledged once), `404` if it isn't in the caller's business.
 
 #### `GET /api/presences` — Attendance history
 
