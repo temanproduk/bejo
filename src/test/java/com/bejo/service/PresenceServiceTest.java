@@ -292,6 +292,70 @@ class PresenceServiceTest {
     }
 
     @Test
+    void aMemberPingedWithinTheHourIsSkippedOnATeamPing() {
+        User other = user(3L, "siti", "Siti", BusinessRole.MEMBER);
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member, other));
+        // Budi was pinged 10 minutes ago; Siti never
+        when(presenceRepository.findLastPingAtByUserIds(eq(BIZ), any()))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, LocalDateTime.now().minusMinutes(10)}));
+
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(null));
+
+        // Budi is skipped, but he doesn't block Siti
+        assertThat(created).hasSize(1);
+        assertThat(created.get(0).username()).isEqualTo("siti");
+        verify(pushNotificationService).sendUrgentToUser(eq("siti"), anyMap());
+        verify(pushNotificationService, never()).sendUrgentToUser(eq("budi"), anyMap());
+    }
+
+    @Test
+    void aTargetedPingWithinTheHourIsRejected() {
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member));
+        when(presenceRepository.findLastPingAtByUserIds(eq(BIZ), any()))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, LocalDateTime.now().minusMinutes(10)}));
+
+        // The admin asked for this one member — tell them it didn't happen
+        assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(2L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("baru saja di-ping")
+                .hasMessageContaining("50 menit");
+
+        verify(presenceRepository, never()).save(any());
+        verifyNoInteractions(pushNotificationService);
+    }
+
+    @Test
+    void aTeamPingIsRejectedWhenEveryMemberIsCoolingDown() {
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member));
+        when(presenceRepository.findLastPingAtByUserIds(eq(BIZ), any()))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, LocalDateTime.now().minusMinutes(30)}));
+
+        // Skipping everyone would be a silent no-op — say so instead
+        assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Semua anggota tim baru saja di-ping");
+
+        verify(presenceRepository, never()).save(any());
+    }
+
+    @Test
+    void pingingIsAllowedAgainOnceTheHourHasPassed() {
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member));
+        // Exactly at the boundary — an hour and a second ago is no longer "within the hour"
+        when(presenceRepository.findLastPingAtByUserIds(eq(BIZ), any()))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, LocalDateTime.now().minusHours(1).minusSeconds(1)}));
+
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(2L));
+
+        assertThat(created).hasSize(1);
+        verify(pushNotificationService).sendUrgentToUser(eq("budi"), anyMap());
+    }
+
+    @Test
     void memberCannotPing() {
         assertThatThrownBy(() -> service.ping("budi", new PresencePingRequestDto(null)))
                 .isInstanceOf(ForbiddenException.class)

@@ -20,6 +20,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
@@ -48,6 +49,9 @@ import java.util.Set;
 public class PresenceService {
 
     private static final Logger log = LoggerFactory.getLogger(PresenceService.class);
+
+    // A member can't be pinged more often than this — a spot-check, not a nag
+    private static final Duration PING_COOLDOWN = Duration.ofHours(1);
 
     private static final String CLOCK_PUSH_BODY = "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!";
     private static final String PING_PUSH_TITLE = "Ping Absen Bejoo!";
@@ -153,6 +157,8 @@ public class PresenceService {
         List<User> members = resolvePingTargets(caller.getBusinessId(), targetUserId);
 
         LocalDateTime sentAt = LocalDateTime.now();
+        members = applyPingCooldown(caller.getBusinessId(), members, targetUserId != null, sentAt);
+
         List<PresenceResponseDto> created = new ArrayList<>();
         for (User member : members) {
             Presence presence = new Presence();
@@ -200,6 +206,44 @@ public class PresenceService {
                 .findFirst()
                 .map(List::of)
                 .orElseThrow(() -> new IllegalArgumentException("Anggota tim tidak ditemukan: " + userId));
+    }
+
+    /**
+     * Drops members pinged within the last {@link #PING_COOLDOWN} — nobody gets pinged twice
+     * in an hour. A <b>targeted</b> ping to a cooling-down member is a 400 (the admin asked
+     * for that one person and must be told it didn't happen). On a <b>team-wide</b> ping those
+     * members are simply skipped so one recently-pinged person doesn't block the rest; if that
+     * leaves nobody, it's a 400 too rather than a silent no-op.
+     */
+    private List<User> applyPingCooldown(Long businessId, List<User> members, boolean targeted, LocalDateTime now) {
+        Map<Long, LocalDateTime> lastPingAt = new HashMap<>();
+        for (Object[] row : presenceRepository.findLastPingAtByUserIds(
+                businessId, members.stream().map(User::getId).toList())) {
+            lastPingAt.put((Long) row[0], (LocalDateTime) row[1]);
+        }
+
+        List<User> eligible = new ArrayList<>();
+        for (User member : members) {
+            LocalDateTime last = lastPingAt.get(member.getId());
+            if (last == null || !last.isAfter(now.minus(PING_COOLDOWN))) {
+                eligible.add(member);
+                continue;
+            }
+            // Round the remaining wait UP: truncating would say "49 menit" with 49m59s left,
+            // and a retry at that mark would just bounce again.
+            long waitSeconds = Duration.between(now, last.plus(PING_COOLDOWN)).toSeconds();
+            long waitMinutes = Math.max(1, (waitSeconds + 59) / 60);
+            if (targeted) {
+                throw new IllegalArgumentException(member.getName() + " baru saja di-ping. "
+                        + "Coba lagi dalam " + waitMinutes + " menit");
+            }
+            log.info("[PRESENCE] Skipping ping to username={} — pinged {} (cooldown, {} min left)",
+                    member.getUsername(), last, waitMinutes);
+        }
+        if (eligible.isEmpty()) {
+            throw new IllegalArgumentException("Semua anggota tim baru saja di-ping. Coba lagi nanti");
+        }
+        return eligible;
     }
 
     /**

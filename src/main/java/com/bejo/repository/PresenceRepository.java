@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -37,6 +38,17 @@ public interface PresenceRepository extends JpaRepository<Presence, Long> {
 
     // A member clocks in at most once and out at most once per calendar day
     boolean existsByUserIdAndTypeAndPresenceDate(Long userId, String type, LocalDate presenceDate);
+
+    /**
+     * When each of these members was last pinged — the ping cooldown reads this. One query for
+     * the whole team (a per-member lookup would be an N+1 on a team-wide ping); members never
+     * pinged are simply absent from the result. Each row is {@code [userId, lastPingedAt]}.
+     */
+    @Query("SELECT p.userId, MAX(p.clockDatetime) FROM Presence p "
+            + "WHERE p.businessId = :businessId AND p.type = 'PING' AND p.userId IN :userIds "
+            + "GROUP BY p.userId")
+    List<Object[]> findLastPingAtByUserIds(@Param("businessId") Long businessId,
+                                           @Param("userIds") List<Long> userIds);
 
     /**
      * Stamps a PING's response time (and the member's optional note) only if it hasn't been

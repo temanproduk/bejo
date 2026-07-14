@@ -1189,6 +1189,14 @@ Records one `PING` entry per targeted member and pushes each of them:
 
 The ping carries **no note** — the `note` on a PING entry is reserved for the member's reply (see [respond](#post-apipresencesidrespond--acknowledge-a-ping-member)).
 
+**Cooldown: a member can only be pinged once an hour.** It's a spot-check, not a nag.
+
+| | Behaviour |
+|---|---|
+| **Targeted** ping to a member pinged < 1h ago | `400` — `"Budi baru saja di-ping. Coba lagi dalam 50 menit"`. You asked for that person; you're told it didn't happen. |
+| **Team-wide** ping | Members pinged < 1h ago are **skipped**; everyone else is pinged, and the response's `count`/`data` shows exactly who was. One recently-pinged person can't block the whole team. |
+| **Team-wide**, everyone cooling down | `400` — nobody is left to reach, and a silent no-op would be worse. |
+
 `400` if `userId` isn't an active member of the caller's own business (an unknown id, another business's staff, or the super admin's own id) — and nothing is sent. `400` if the business has no members yet (team-wide ping); `403` for a non–super-admin.
 
 `201 Created` — the created entries (one per member; `latitude`/`longitude` are null since the admin sends no location, and `responseDatetime` is null until the member taps):

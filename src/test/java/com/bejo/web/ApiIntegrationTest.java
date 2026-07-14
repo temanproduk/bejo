@@ -2297,6 +2297,62 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void aMemberCannotBePingedTwiceWithinAnHour() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin15", "pres_member15a");
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("pres_member15b"))))
+                .andExpect(status().isCreated());
+
+        // Ping just the first member
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "userId", Long.parseLong(biz.get("memberId"))))))
+                .andExpect(status().isCreated());
+
+        // Immediately again → rejected, nothing recorded
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "userId", Long.parseLong(biz.get("memberId"))))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // A team-wide ping still reaches the OTHER member — one cooled-down member
+        // doesn't block the rest
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].username").value("pres_member15b"));
+
+        // Now both are cooling down → the team ping has nobody left to reach
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // 2 pings recorded in total, not 4
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(jsonPath("$.count").value(2));
+    }
+
+    @Test
     void respondingWithoutANoteIsFine() throws Exception {
         Map<String, String> biz = businessWithMember("pres_admin14", "pres_member14");
         MvcResult ping = mockMvc.perform(post("/api/presences/pings")
@@ -2326,15 +2382,6 @@ class ApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(memberBody("pres_member13b"))))
                 .andExpect(status().isCreated());
 
-        // No userId → the whole team (both members)
-        mockMvc.perform(post("/api/presences/pings")
-                        .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + biz.get("adminToken"))
-                        .contentType(APPLICATION_JSON)
-                        .content("{}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.count").value(2));
-
         // userId → only that member gets an entry
         mockMvc.perform(post("/api/presences/pings")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -2355,11 +2402,22 @@ class ApiIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(0));
 
-        // 3 pings total: 2 from the team-wide one, 1 from the targeted one
+        // No userId → the whole team, but 13a was just pinged, so only 13b is reached
+        // (the hour-long cooldown; see aMemberCannotBePingedTwiceWithinAnHour)
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].username").value("pres_member13b"));
+
+        // 2 pings total: one per member
         mockMvc.perform(get("/api/presences")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("adminToken")))
-                .andExpect(jsonPath("$.count").value(3));
+                .andExpect(jsonPath("$.count").value(2));
     }
 
     @Test

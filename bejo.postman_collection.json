@@ -1655,7 +1655,7 @@
                 "pings"
               ]
             },
-            "description": "Super-admin spot-check to the WHOLE TEAM — omit userId (send an empty body). Records one PING entry per MEMBER of the business.\n\nOnly members are pinged — never the super admin's own devices.\n\nPushes each targeted member a data-only, high-priority push: title \"Ping Absen Bejoo!\", body \"Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?\" (fixed copy).\n\nThe ping carries no note — the note on a PING entry is reserved for the MEMBER's reply, sent with POST /api/presences/{id}/respond.\n\n403 for a plain member, 400 if the business has no members yet."
+            "description": "Super-admin spot-check to the WHOLE TEAM — omit userId (send an empty body). Records one PING entry per MEMBER of the business.\n\nOnly members are pinged — never the super admin's own devices.\n\nPushes each targeted member a data-only, high-priority push: title \"Ping Absen Bejoo!\", body \"Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?\" (fixed copy).\n\nThe ping carries no note — the note on a PING entry is reserved for the MEMBER's reply, sent with POST /api/presences/{id}/respond.\n\n403 for a plain member, 400 if the business has no members yet.\n\nCOOLDOWN: a member can only be pinged once an HOUR. A targeted ping inside that hour is rejected with 400 (\"... baru saja di-ping. Coba lagi dalam N menit\"). On a team-wide ping, members pinged within the hour are SKIPPED and the rest are pinged — the response's count/data shows who actually got it; 400 only if every member is still cooling down."
           }
         },
         {
@@ -1696,7 +1696,7 @@
                 "pings"
               ]
             },
-            "description": "Same endpoint, but userId targets ONE member instead of the whole team. Get the id from GET /api/users/members.\n\nPushes each targeted member a data-only, high-priority push: title \"Ping Absen Bejoo!\", body \"Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?\" (fixed copy).\n\nThe ping carries no note — the note on a PING entry is reserved for the MEMBER's reply, sent with POST /api/presences/{id}/respond.\n\n400 if userId isn't an active member of your own business (an unknown id, another business's staff, or your own super-admin id) — nothing is sent."
+            "description": "Same endpoint, but userId targets ONE member instead of the whole team. Get the id from GET /api/users/members.\n\nPushes each targeted member a data-only, high-priority push: title \"Ping Absen Bejoo!\", body \"Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?\" (fixed copy).\n\nThe ping carries no note — the note on a PING entry is reserved for the MEMBER's reply, sent with POST /api/presences/{id}/respond.\n\n400 if userId isn't an active member of your own business (an unknown id, another business's staff, or your own super-admin id) — nothing is sent.\n\nCOOLDOWN: a member can only be pinged once an HOUR. A targeted ping inside that hour is rejected with 400 (\"... baru saja di-ping. Coba lagi dalam N menit\"). On a team-wide ping, members pinged within the hour are SKIPPED and the rest are pinged — the response's count/data shows who actually got it; 400 only if every member is still cooling down."
           }
         },
         {
