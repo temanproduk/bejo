@@ -2376,6 +2376,61 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void presenceListIsOptionallyPaginated() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin12", "pres_member12");
+
+        // 5 entries across 5 days (one clock-in per day — the daily cap)
+        for (int day = 1; day <= 5; day++) {
+            clock(biz.get("memberToken"), "clock-in", String.format("2026-05-%02dT08:00:00", day));
+        }
+
+        // No page/size → everything on page 1 (default size 50)
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(5))
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.total").value(5));
+
+        // size=2 → 3 pages; page 1 holds the two newest (newest first)
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .param("page", "1").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2))
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.totalPages").value(3))
+                .andExpect(jsonPath("$.total").value(5))
+                .andExpect(jsonPath("$.data[0].presenceDate").value("2026-05-05"))
+                .andExpect(jsonPath("$.data[1].presenceDate").value("2026-05-04"));
+
+        // Last page carries the remainder
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .param("page", "3").param("size", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.page").value(3))
+                .andExpect(jsonPath("$.data[0].presenceDate").value("2026-05-01"));
+
+        // Pagination composes with the filters (month + member)
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .param("userId", biz.get("memberId"))
+                        .param("year", "2026").param("month", "5")
+                        .param("size", "3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(3))
+                .andExpect(jsonPath("$.totalPages").value(2))
+                .andExpect(jsonPath("$.total").value(5));
+    }
+
+    @Test
     void removedMembersEntriesRemainButAreFlaggedInactive() throws Exception {
         Map<String, String> biz = businessWithMember("pres_admin11", "pres_member11");
         clock(biz.get("memberToken"), "clock-in", "2026-03-12T08:00:00");
