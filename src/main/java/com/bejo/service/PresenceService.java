@@ -248,8 +248,9 @@ public class PresenceService {
 
     /**
      * The member taps the ping in the app: stamps {@code responseDatetime} (exactly once),
-     * plus an optional {@code note} — their reply, which the super admin then reads in the
-     * history. The ping itself carries no note; this is what fills it.
+     * <b>where they were</b> when they answered, and an optional {@code note} — the reply the
+     * super admin reads in the history. A PING is created with no location and no note; this
+     * is what fills them.
      */
     @Transactional
     public PresenceResponseDto respond(String username, Long presenceId, PresenceRespondRequestDto request) {
@@ -266,12 +267,14 @@ public class PresenceService {
         // Conditional update, not a read-then-write: two simultaneous taps both see a null
         // responseDatetime above, but only one of them updates a row here.
         LocalDateTime respondedAt = LocalDateTime.now();
-        String note = request != null ? request.note() : null;
-        if (presenceRepository.markResponded(presenceId, respondedAt, note) == 0) {
+        if (presenceRepository.markResponded(presenceId, respondedAt, request.note(),
+                request.latitude(), request.longitude()) == 0) {
             throw new IllegalArgumentException("Ping ini sudah direspons");
         }
         presence.setResponseDatetime(respondedAt);
-        presence.setNote(note);
+        presence.setNote(request.note());
+        presence.setLatitude(request.latitude());
+        presence.setLongitude(request.longitude());
         log.info("[PRESENCE] PING id={} responded by username={}", presenceId, username);
         return toDto(presence);
     }

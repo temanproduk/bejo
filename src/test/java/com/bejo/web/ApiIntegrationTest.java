@@ -2266,14 +2266,18 @@ class ApiIntegrationTest {
                 .andReturn();
         String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
 
-        // The member taps it and replies with a note — responseDatetime is stamped
+        // The member taps it and replies with their location + a note
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("memberToken"))
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("note", "Lagi antar pesanan"))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.1751,
+                                "longitude", 106.8650,
+                                "note", "Lagi antar pesanan"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.responseDatetime").isNotEmpty())
+                .andExpect(jsonPath("$.data.latitude").value(-6.1751))
                 .andExpect(jsonPath("$.data.note").value("Lagi antar pesanan"));
 
         // Responding twice is rejected
@@ -2281,11 +2285,12 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("memberToken"))
                         .contentType(APPLICATION_JSON)
-                        .content("{}"))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.1751, "longitude", 106.8650))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(0));
 
-        // The super admin reads the reply (note + response time) in the history
+        // The super admin reads the reply — response time, WHERE they were, and the note
         mockMvc.perform(get("/api/presences")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("adminToken")))
@@ -2293,6 +2298,8 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.data[0].type").value("PING"))
                 .andExpect(jsonPath("$.data[0].responseDatetime").isNotEmpty())
+                .andExpect(jsonPath("$.data[0].latitude").value(-6.1751))
+                .andExpect(jsonPath("$.data[0].longitude").value(106.8650))
                 .andExpect(jsonPath("$.data[0].note").value("Lagi antar pesanan"));
     }
 
@@ -2353,7 +2360,7 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void respondingWithoutANoteIsFine() throws Exception {
+    void respondingNeedsALocationButTheNoteIsOptional() throws Exception {
         Map<String, String> biz = businessWithMember("pres_admin14", "pres_member14");
         MvcResult ping = mockMvc.perform(post("/api/presences/pings")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -2362,12 +2369,32 @@ class ApiIntegrationTest {
                 .andReturn();
         String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
 
-        // A bare tap — no body at all
+        // No body at all → rejected: a ping is a spot-check, the answer must say where they are
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("memberToken")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // A note but no coordinates → also rejected
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("note", "di jalan"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // Location alone is enough — the note stays optional
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2088, "longitude", 106.8456))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.responseDatetime").isNotEmpty())
+                .andExpect(jsonPath("$.data.latitude").value(-6.2088))
                 .andExpect(jsonPath("$.data.note").doesNotExist());
     }
 
@@ -2600,11 +2627,15 @@ class ApiIntegrationTest {
                 .andReturn();
         String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
 
-        // An outsider can't even see the entry exists
+        // An outsider can't even see the entry exists (a valid body, so this is the
+        // ownership check answering, not validation)
         String outsiderToken = registerAndLogin("pres_outsider9");
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
                         .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + outsiderToken))
+                        .header("Authorization", "Bearer " + outsiderToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2088, "longitude", 106.8456))))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status").value(0));
     }

@@ -383,16 +383,19 @@ class PresenceServiceTest {
         Presence ping = ping(200L, 2L);
         when(presenceRepository.findByIdAndBusinessId(200L, BIZ)).thenReturn(Optional.of(ping));
         // The conditional update only touches a row while responseDatetime is still null
-        when(presenceRepository.markResponded(eq(200L), any(), any())).thenReturn(1).thenReturn(0);
+        when(presenceRepository.markResponded(eq(200L), any(), any(), any(), any())).thenReturn(1).thenReturn(0);
 
-        // The member's reply carries their note — the ping itself had none
-        PresenceResponseDto dto = service.respond("budi", 200L, new PresenceRespondRequestDto("Lagi antar pesanan"));
+        // The reply carries where the member is + their note — the ping itself had neither
+        PresenceResponseDto dto = service.respond("budi", 200L,
+                new PresenceRespondRequestDto(-6.2, 106.8, "Lagi antar pesanan"));
         assertThat(dto.responseDatetime()).isNotNull();
         assertThat(dto.note()).isEqualTo("Lagi antar pesanan");
-        verify(presenceRepository).markResponded(eq(200L), any(), eq("Lagi antar pesanan"));
+        assertThat(dto.latitude()).isEqualTo(-6.2);
+        assertThat(dto.longitude()).isEqualTo(106.8);
+        verify(presenceRepository).markResponded(eq(200L), any(), eq("Lagi antar pesanan"), eq(-6.2), eq(106.8));
 
         // Already responded — the update matches no row, so the second tap is rejected
-        assertThatThrownBy(() -> service.respond("budi", 200L, null))
+        assertThatThrownBy(() -> service.respond("budi", 200L, reply()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("sudah direspons");
     }
@@ -402,7 +405,7 @@ class PresenceServiceTest {
         Presence ping = ping(201L, 3L);   // belongs to user 3, not budi (2)
         when(presenceRepository.findByIdAndBusinessId(201L, BIZ)).thenReturn(Optional.of(ping));
 
-        assertThatThrownBy(() -> service.respond("budi", 201L, null))
+        assertThatThrownBy(() -> service.respond("budi", 201L, reply()))
                 .isInstanceOf(ForbiddenException.class);
 
         assertThat(ping.getResponseDatetime()).isNull();
@@ -414,7 +417,7 @@ class PresenceServiceTest {
         clockIn.setType(PresenceType.CLOCK_IN);
         when(presenceRepository.findByIdAndBusinessId(202L, BIZ)).thenReturn(Optional.of(clockIn));
 
-        assertThatThrownBy(() -> service.respond("budi", 202L, null))
+        assertThatThrownBy(() -> service.respond("budi", 202L, reply()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("ping");
     }
@@ -482,6 +485,10 @@ class PresenceServiceTest {
         u.setBusinessId(BIZ);
         u.setBusinessRole(role);
         return u;
+    }
+
+    private PresenceRespondRequestDto reply() {
+        return new PresenceRespondRequestDto(-6.2, 106.8, null);
     }
 
     private Presence ping(Long id, Long userId) {

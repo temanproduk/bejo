@@ -1736,10 +1736,10 @@
                 }
               ]
             },
-            "description": "The member taps the ping in the app. Stamps responseDatetime on their own PING entry, exactly once (a conditional update, so two simultaneous taps can't both stamp it).\n\nThe body is OPTIONAL — a bare tap (no body) is a valid reply. An optional note lets the member say where they are; it's stored on the PING entry, and the super admin reads it in the presence history next to the response time. This is the only thing that writes a PING's note.\n\n403 if the ping belongs to another user; 400 if the entry isn't a PING or was already responded to; 404 if it isn't in the caller's business.",
+            "description": "The member taps the ping in the app and replies WITH THEIR LOCATION. Stamps responseDatetime on their own PING entry, exactly once (a conditional update, so two simultaneous taps can't both stamp it).\n\nlatitude + longitude are REQUIRED — a ping is a spot-check, so the answer must say where the member actually is. note is optional.\n\nA PING entry is created with no location and no note; this is the only thing that writes them. The super admin reads the reply (response time + coordinates + note) in the presence history.\n\n403 if the ping belongs to another user; 400 if the location is missing, the entry isn't a PING, or it was already responded to; 404 if it isn't in the caller's business.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"note\": \"Lagi antar pesanan\"\n}",
+              "raw": "{\n  \"latitude\": -6.1751,\n  \"longitude\": 106.865,\n  \"note\": \"Lagi antar pesanan\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

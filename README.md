@@ -1215,13 +1215,15 @@ The ping carries **no note** — the `note` on a PING entry is reserved for the 
 
 #### `POST /api/presences/{id}/respond` — Acknowledge a ping (member)
 
-The member taps the ping in the app. The body is optional — a bare tap is a valid reply — but they may attach a note saying where they are or what they're doing:
+The member taps the ping in the app and replies **with their location**:
 
 ```json
-{ "note": "Lagi antar pesanan" }
+{ "latitude": -6.1751, "longitude": 106.8650, "note": "Lagi antar pesanan" }
 ```
 
-Stamps `responseDatetime` on the entry, stores the `note` on it, and returns the entry. **This is the only thing that writes a PING's `note`** — the super admin who sent the ping doesn't set one; they read the member's reply in the [history](#get-apipresences--attendance-history), next to the response time.
+`latitude` + `longitude` are **required** — a ping is a spot-check, so the answer is only worth anything if it says where the member actually is. `note` is optional (free text: where they are, what they're doing).
+
+Stamps `responseDatetime`, the coordinates, and the `note` on the entry, and returns it. **A PING is created with no location and no note — this is the only thing that writes them.** The super admin who sent the ping sets neither; they read the member's reply in the [history](#get-apipresences--attendance-history), next to the response time.
 
 `403` if the ping belongs to someone else, `400` if the entry isn't a `PING` or was already responded to (a ping can only be acknowledged once), `404` if it isn't in the caller's business.
 

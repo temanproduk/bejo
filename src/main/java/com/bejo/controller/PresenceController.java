@@ -58,11 +58,12 @@ public class PresenceController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponseDto.list(data));
     }
 
-    // The member acknowledges their ping (stamps responseDatetime) and may attach a note.
+    // The member acknowledges their ping: stamps responseDatetime + where they are (a ping is
+    // a spot-check, so the location is required), plus an optional note.
     @PostMapping("/{id}/respond")
     public ResponseEntity<ApiResponseDto<PresenceResponseDto>> respond(
             @PathVariable Long id,
-            @Valid @RequestBody(required = false) PresenceRespondRequestDto request,
+            @Valid @RequestBody PresenceRespondRequestDto request,
             Authentication authentication) {
         PresenceResponseDto data = presenceService.respond(authentication.getName(), id, request);
         return ResponseEntity.ok(ApiResponseDto.success("Ping direspons", data));

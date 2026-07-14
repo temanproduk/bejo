@@ -51,15 +51,19 @@ public interface PresenceRepository extends JpaRepository<Presence, Long> {
                                            @Param("userIds") List<Long> userIds);
 
     /**
-     * Stamps a PING's response time (and the member's optional note) only if it hasn't been
-     * answered yet, and reports whether it did (0 = someone already answered it). A
-     * read-then-write in the service would let two simultaneous taps both pass the "not
-     * answered" check; this settles it in one statement.
+     * Stamps a PING's response — the time, where the member was, and their optional note —
+     * only if it hasn't been answered yet, and reports whether it did (0 = someone already
+     * answered it). A read-then-write in the service would let two simultaneous taps both pass
+     * the "not answered" check; this settles it in one statement, so a late second tap can't
+     * overwrite the first reply's location or note either.
      */
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE Presence p SET p.responseDatetime = :respondedAt, p.note = :note "
+    @Query("UPDATE Presence p SET p.responseDatetime = :respondedAt, p.note = :note, "
+            + "p.latitude = :latitude, p.longitude = :longitude "
             + "WHERE p.id = :id AND p.responseDatetime IS NULL")
     int markResponded(@Param("id") Long id,
                       @Param("respondedAt") LocalDateTime respondedAt,
-                      @Param("note") String note);
+                      @Param("note") String note,
+                      @Param("latitude") Double latitude,
+                      @Param("longitude") Double longitude);
 }
