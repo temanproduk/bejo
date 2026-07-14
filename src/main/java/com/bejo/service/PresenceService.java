@@ -238,8 +238,8 @@ public class PresenceService {
         for (User member : candidates) {
             if (!withDevice.contains(member.getUsername())) {
                 if (targeted) {
-                    throw new IllegalArgumentException(member.getName()
-                            + " belum ada sesi login yang aktif yang bisa dikirim notifikasi");
+                    throw new IllegalArgumentException(member.getUsername()
+                            + " belum ada sesi login aktif yang bisa dikirim notifikasi");
                 }
                 log.info("[PRESENCE] Skipping ping to username={} — no device registered", member.getUsername());
                 skipped.add(skippedMember(member, SKIPPED_NO_DEVICE));
