@@ -256,7 +256,7 @@ public class PresenceService {
             long waitSeconds = Duration.between(now, last.plus(PING_COOLDOWN)).toSeconds();
             long waitMinutes = Math.max(1, (waitSeconds + 59) / 60);
             if (targeted) {
-                throw new IllegalArgumentException(member.getName() + " baru saja di-ping. "
+                throw new IllegalArgumentException(member.getUsername() + " baru saja di-ping. "
                         + "Coba lagi dalam " + waitMinutes + " menit");
             }
             log.info("[PRESENCE] Skipping ping to username={} — pinged {} (cooldown, {} min left)",

@@ -355,11 +355,11 @@ class PresenceServiceTest {
         when(presenceRepository.findLastPingAtByUserIds(eq(BIZ), any()))
                 .thenReturn(List.<Object[]>of(new Object[]{2L, LocalDateTime.now().minusMinutes(10)}));
 
-        // The admin asked for this one member — tell them it didn't happen
+        // The admin asked for this one member — tell them it didn't happen. Named by username
+        // ("budi"), like every other member-facing message from this endpoint.
         assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(2L)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("baru saja di-ping")
-                .hasMessageContaining("50 menit");
+                .hasMessage("budi baru saja di-ping. Coba lagi dalam 50 menit");
 
         verify(presenceRepository, never()).save(any());
         verifyNoInteractions(pushNotificationService);
