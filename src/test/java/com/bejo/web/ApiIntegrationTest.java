@@ -2360,6 +2360,45 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void pagingIsStableAcrossEntriesSharingATimestamp() throws Exception {
+        // A team-wide ping writes one row per member with the IDENTICAL clockDatetime, so
+        // ordering by that column alone leaves the tie broken arbitrarily — page 1 and page 2
+        // could then repeat or skip an entry. The id tiebreaker is what makes paging stable.
+        Map<String, String> biz = businessWithMember("pres_admin16", "pres_member16a");
+        for (String extra : List.of("pres_member16b", "pres_member16c")) {
+            mockMvc.perform(post("/api/users/members")
+                            .header("X-API-TOKEN", API_TOKEN)
+                            .header("Authorization", "Bearer " + biz.get("adminToken"))
+                            .contentType(APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(memberBody(extra))))
+                    .andExpect(status().isCreated());
+        }
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.count").value(3));
+
+        // Walk the pages: every entry must appear exactly once
+        List<Integer> ids = new java.util.ArrayList<>();
+        for (int page = 1; page <= 3; page++) {
+            MvcResult result = mockMvc.perform(get("/api/presences")
+                            .header("X-API-TOKEN", API_TOKEN)
+                            .header("Authorization", "Bearer " + biz.get("adminToken"))
+                            .param("page", String.valueOf(page))
+                            .param("size", "1"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalPages").value(3))
+                    .andReturn();
+            objectMapper.readTree(result.getResponse().getContentAsString())
+                    .at("/data").forEach(entry -> ids.add(entry.get("id").asInt()));
+        }
+        assertThat(ids).hasSize(3).doesNotHaveDuplicates();
+    }
+
+    @Test
     void respondingNeedsALocationButTheNoteIsOptional() throws Exception {
         Map<String, String> biz = businessWithMember("pres_admin14", "pres_member14");
         MvcResult ping = mockMvc.perform(post("/api/presences/pings")

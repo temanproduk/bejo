@@ -19,19 +19,25 @@ import java.util.Optional;
  * month-year) written out explicitly rather than as one query with nullable parameters —
  * a null-typed parameter in an {@code (:x IS NULL OR ...)} predicate is what forces
  * Postgres to guess the bind type.
+ *
+ * <p>They all order by {@code clockDatetime DESC, id DESC}. The {@code id} is not decoration:
+ * a team-wide ping writes one row per member with the <b>identical</b> {@code clockDatetime},
+ * and ordering by a non-unique column alone leaves tied rows in whatever order the database
+ * feels like — across a page boundary that means an entry can show up twice, or not at all.
+ * The id breaks every tie, so paging is stable.
  */
 @Repository
 public interface PresenceRepository extends JpaRepository<Presence, Long> {
 
-    Page<Presence> findByBusinessIdOrderByClockDatetimeDesc(Long businessId, Pageable pageable);
+    Page<Presence> findByBusinessIdOrderByClockDatetimeDescIdDesc(Long businessId, Pageable pageable);
 
-    Page<Presence> findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+    Page<Presence> findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
             Long businessId, LocalDate from, LocalDate to, Pageable pageable);
 
-    Page<Presence> findByBusinessIdAndUserIdOrderByClockDatetimeDesc(
+    Page<Presence> findByBusinessIdAndUserIdOrderByClockDatetimeDescIdDesc(
             Long businessId, Long userId, Pageable pageable);
 
-    Page<Presence> findByBusinessIdAndUserIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+    Page<Presence> findByBusinessIdAndUserIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
             Long businessId, Long userId, LocalDate from, LocalDate to, Pageable pageable);
 
     Optional<Presence> findByIdAndBusinessId(Long id, Long businessId);

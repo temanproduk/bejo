@@ -426,12 +426,12 @@ class PresenceServiceTest {
 
     @Test
     void memberListingIsScopedToThemselves() {
-        when(presenceRepository.findByBusinessIdAndUserIdOrderByClockDatetimeDesc(eq(BIZ), eq(2L), any()))
+        when(presenceRepository.findByBusinessIdAndUserIdOrderByClockDatetimeDescIdDesc(eq(BIZ), eq(2L), any()))
                 .thenReturn(Page.empty());
 
         service.list("budi", null, null, null, PageRequest.of(0, 50));
 
-        verify(presenceRepository).findByBusinessIdAndUserIdOrderByClockDatetimeDesc(eq(BIZ), eq(2L), any());
+        verify(presenceRepository).findByBusinessIdAndUserIdOrderByClockDatetimeDescIdDesc(eq(BIZ), eq(2L), any());
     }
 
     @Test
@@ -444,25 +444,25 @@ class PresenceServiceTest {
 
     @Test
     void superAdminListsTheWholeBusinessFilteredByMonthYear() {
-        when(presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+        when(presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
                 eq(BIZ), any(), any(), any())).thenReturn(Page.empty());
 
         service.list("boss", null, 2026, 7, PageRequest.of(0, 50));
 
         // July 2026 → the whole month, inclusive
-        verify(presenceRepository).findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+        verify(presenceRepository).findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
                 eq(BIZ), eq(LocalDate.of(2026, 7, 1)), eq(LocalDate.of(2026, 7, 31)), any());
     }
 
     @Test
     void monthWithoutYearMeansThatMonthOfTheCurrentYear() {
-        when(presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+        when(presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
                 eq(BIZ), any(), any(), any())).thenReturn(Page.empty());
 
         service.list("boss", null, null, 7, PageRequest.of(0, 50));
 
         int thisYear = LocalDate.now().getYear();
-        verify(presenceRepository).findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+        verify(presenceRepository).findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
                 eq(BIZ), eq(LocalDate.of(thisYear, 7, 1)), eq(LocalDate.of(thisYear, 7, 31)), any());
     }
 

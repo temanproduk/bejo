@@ -19,6 +19,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -132,13 +134,8 @@ public class PresenceService {
         }
         String verb = PresenceType.CLOCK_IN.equals(type) ? "masuk" : "keluar";
         String title = member.getUsername() + " telah absen " + verb + "!";
-        try {
-            pushNotificationService.sendUrgentToUser(
-                    superAdmin.getUsername(), pushData(presence, title, CLOCK_PUSH_BODY));
-        } catch (RuntimeException e) {
-            log.error("[PRESENCE] Push step failed for presenceId={} (entry still recorded): {}",
-                    presence.getId(), e.getMessage(), e);
-        }
+        pushAfterCommit(superAdmin.getUsername(), pushData(presence, title, CLOCK_PUSH_BODY),
+                "presenceId=" + presence.getId());
     }
 
     /**
@@ -173,13 +170,8 @@ public class PresenceService {
             presenceRepository.save(presence);
             created.add(toDto(presence));
 
-            try {
-                pushNotificationService.sendUrgentToUser(
-                        member.getUsername(), pushData(presence, PING_PUSH_TITLE, PING_PUSH_BODY));
-            } catch (RuntimeException e) {
-                log.error("[PRESENCE] Ping push failed for username={} (entry still recorded): {}",
-                        member.getUsername(), e.getMessage(), e);
-            }
+            pushAfterCommit(member.getUsername(), pushData(presence, PING_PUSH_TITLE, PING_PUSH_BODY),
+                    "presenceId=" + presence.getId());
         }
         log.info("[PRESENCE] PING sent to {} member(s) of businessId={} by {} ({})",
                 created.size(), caller.getBusinessId(), callerUsername,
@@ -305,13 +297,13 @@ public class PresenceService {
         Page<Presence> entries;
         if (range == null) {
             entries = scopedUserId == null
-                    ? presenceRepository.findByBusinessIdOrderByClockDatetimeDesc(businessId, pageable)
-                    : presenceRepository.findByBusinessIdAndUserIdOrderByClockDatetimeDesc(businessId, scopedUserId, pageable);
+                    ? presenceRepository.findByBusinessIdOrderByClockDatetimeDescIdDesc(businessId, pageable)
+                    : presenceRepository.findByBusinessIdAndUserIdOrderByClockDatetimeDescIdDesc(businessId, scopedUserId, pageable);
         } else {
             entries = scopedUserId == null
-                    ? presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+                    ? presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
                             businessId, range[0], range[1], pageable)
-                    : presenceRepository.findByBusinessIdAndUserIdAndPresenceDateBetweenOrderByClockDatetimeDesc(
+                    : presenceRepository.findByBusinessIdAndUserIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
                             businessId, scopedUserId, range[0], range[1], pageable);
         }
         if (entries.isEmpty()) return entries.map(p -> toDto(p, true));
@@ -341,6 +333,39 @@ public class PresenceService {
         }
         YearMonth ym = YearMonth.of(y, month);
         return new LocalDate[]{ym.atDay(1), ym.atEndOfMonth()};
+    }
+
+    /**
+     * Sends the push <b>only once the entry is actually committed</b>. Pushing inline would
+     * fire while the transaction is still open: a later failure (the {@code uq_presence_clock_daily}
+     * index catching a racing double tap, or one member's insert failing part-way through a
+     * team-wide ping) rolls the row back, leaving a phone buzzing about an attendance entry
+     * that doesn't exist — and, for a ping, a {@code presenceId} that 404s when tapped.
+     *
+     * <p>Still best-effort: a failure here is logged, never rethrown, so a dead FCM can't
+     * fail a request whose data is already committed. Outside a transaction (tests calling
+     * the service directly) it just sends immediately.
+     */
+    private void pushAfterCommit(String username, Map<String, String> data, String scope) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            sendQuietly(username, data, scope);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendQuietly(username, data, scope);
+            }
+        });
+    }
+
+    private void sendQuietly(String username, Map<String, String> data, String scope) {
+        try {
+            pushNotificationService.sendUrgentToUser(username, data);
+        } catch (RuntimeException e) {
+            log.error("[PRESENCE] Push failed for username={} {} (entry still recorded): {}",
+                    username, scope, e.getMessage(), e);
+        }
     }
 
     /**
