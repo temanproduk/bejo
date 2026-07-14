@@ -10,6 +10,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -2148,6 +2149,297 @@ class ApiIntegrationTest {
         mockMvc.perform(get("/api/transactions")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(0));
+    }
+
+    // ---------- employee daily presence ----------
+
+    // Registers a business, adds one member to it, and returns {adminToken, memberToken, memberId}.
+    private Map<String, String> businessWithMember(String adminUsername, String memberUsername) throws Exception {
+        String adminToken = registerAndLogin(adminUsername);
+        MvcResult result = mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody(memberUsername))))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String memberId = objectMapper.readTree(result.getResponse().getContentAsString()).at("/data/id").asText();
+        String memberToken = login(memberUsername, "password1", "d-" + memberUsername);
+        return Map.of("adminToken", adminToken, "memberToken", memberToken, "memberId", memberId);
+    }
+
+    private void clock(String token, String path, String clockDatetime) throws Exception {
+        mockMvc.perform(post("/api/presences/" + path)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2088,
+                                "longitude", 106.8456,
+                                "clockDatetime", clockDatetime))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value(1));
+    }
+
+    @Test
+    void memberClocksInAndOutAndBothSidesSeeIt() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin1", "pres_member1");
+
+        clock(biz.get("memberToken"), "clock-in", "2026-03-10T08:01:00");
+        clock(biz.get("memberToken"), "clock-out", "2026-03-10T17:04:00");
+
+        // The member sees their own two entries
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2))
+                .andExpect(jsonPath("$.data[0].type").value("CLOCK_OUT"))   // newest first
+                .andExpect(jsonPath("$.data[0].presenceDate").value("2026-03-10"))
+                .andExpect(jsonPath("$.data[1].type").value("CLOCK_IN"))
+                .andExpect(jsonPath("$.data[1].latitude").value(-6.2088))
+                .andExpect(jsonPath("$.data[1].username").value("pres_member1"));
+
+        // The super admin sees the whole business, filtered to that member + month
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .param("userId", biz.get("memberId"))
+                        .param("year", "2026")
+                        .param("month", "3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2));
+
+        // A different month is empty
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .param("year", "2026")
+                        .param("month", "4"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(0));
+    }
+
+    @Test
+    void superAdminCannotClockIn() throws Exception {
+        String adminToken = registerAndLogin("pres_admin2");
+
+        mockMvc.perform(post("/api/presences/clock-in")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2, "longitude", 106.8,
+                                "clockDatetime", "2026-03-10T08:00:00"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void clockInRequiresLocationAndDatetime() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin3", "pres_member3");
+
+        mockMvc.perform(post("/api/presences/clock-in")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("note", "lupa lokasi"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void superAdminPingsAndTheMemberResponds() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin4", "pres_member4");
+
+        MvcResult ping = mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("note", "Masih di toko?"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.count").value(1))               // one entry per member
+                .andExpect(jsonPath("$.data[0].type").value("PING"))
+                .andExpect(jsonPath("$.data[0].username").value("pres_member4"))
+                .andReturn();
+        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
+
+        // The member taps it — responseDatetime is stamped
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.responseDatetime").isNotEmpty());
+
+        // Responding twice is rejected
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // The ping shows up in the history alongside clock entries
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].type").value("PING"))
+                .andExpect(jsonPath("$.data[0].responseDatetime").isNotEmpty());
+    }
+
+    @Test
+    void memberCannotPingOrSeeAnotherMembersPresence() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin5", "pres_member5");
+
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // Someone else's userId (the super admin's own entries) is off limits to a member
+        long otherUserId = Long.parseLong(biz.get("memberId")) + 1000;
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .param("userId", String.valueOf(otherUserId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void pingWorksWithNoBodyAtAll() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin7", "pres_member7");
+
+        // The body is optional — Spring passes null, the service falls back to the default push text
+        mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].type").value("PING"));
+    }
+
+    @Test
+    void monthWithoutYearFallsBackToTheCurrentYear() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin8", "pres_member8");
+
+        // An entry today — found by "this month" with no year given
+        LocalDateTime now = LocalDateTime.now();
+        clock(biz.get("memberToken"), "clock-in", now.toString());
+
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .param("month", String.valueOf(now.getMonthValue())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1));
+
+        // …and an out-of-range month is still rejected
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .param("month", "13"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void aMemberClocksInOnlyOncePerDay() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin10", "pres_member10");
+
+        clock(biz.get("memberToken"), "clock-in", "2026-03-10T08:01:00");
+
+        // A second clock-in the same day is rejected — and records nothing
+        mockMvc.perform(post("/api/presences/clock-in")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2, "longitude", 106.8,
+                                "clockDatetime", "2026-03-10T09:30:00"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Kamu sudah absen masuk hari ini"));
+
+        // A clock-out the SAME day is fine (one of each type), as is the next day's clock-in
+        clock(biz.get("memberToken"), "clock-out", "2026-03-10T17:04:00");
+        clock(biz.get("memberToken"), "clock-in", "2026-03-11T08:00:00");
+
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                .andExpect(jsonPath("$.count").value(3));
+    }
+
+    @Test
+    void removedMembersEntriesRemainButAreFlaggedInactive() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin11", "pres_member11");
+        clock(biz.get("memberToken"), "clock-in", "2026-03-12T08:00:00");
+
+        // Still on the team → active
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(jsonPath("$.data[0].userActive").value(true));
+
+        mockMvc.perform(delete("/api/users/members/" + biz.get("memberId"))
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isOk());
+
+        // History survives the removal, flagged so the app can mark them as ex-staff
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].username").value("pres_member11"))
+                .andExpect(jsonPath("$.data[0].type").value("CLOCK_IN"))
+                .andExpect(jsonPath("$.data[0].userActive").value(false));
+    }
+
+    @Test
+    void respondingToAnotherBusinessesPingIs404() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin9", "pres_member9");
+        MvcResult ping = mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
+
+        // An outsider can't even see the entry exists
+        String outsiderToken = registerAndLogin("pres_outsider9");
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + outsiderToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void presenceRequiresAuthentication() throws Exception {
+        mockMvc.perform(get("/api/presences").header("X-API-TOKEN", API_TOKEN))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void presenceOfOneBusinessIsInvisibleToAnother() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin6", "pres_member6");
+        clock(biz.get("memberToken"), "clock-in", "2026-03-11T08:00:00");
+
+        // A second, unrelated business sees none of it
+        String outsiderToken = registerAndLogin("pres_outsider6");
+        mockMvc.perform(get("/api/presences")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + outsiderToken))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(0));
     }
 

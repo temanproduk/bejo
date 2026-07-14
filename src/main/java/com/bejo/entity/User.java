@@ -21,7 +21,7 @@ public class User {
 
     // Not DB-unique: a soft-deleted user keeps its row but its username is reusable.
     // Uniqueness among ACTIVE users is enforced in-app (+ a partial unique index in Postgres).
-    @Column(nullable = false)
+    @Column(nullable = false, length = 50)
     private String username;
 
     @Column(name = "password_hash", nullable = false)

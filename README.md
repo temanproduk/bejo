@@ -21,6 +21,7 @@ Bejo closes that gap.
 - **QRIS management** — display the merchant's managed QRIS or upload their own image (no image is synthesized; accounts without one return `null`). → [QRIS](#qris).
 - **Business & bank profile** — keep merchant name, address, National Merchant ID (NMID), and payout bank details up to date, with one-tap reset back to the officially registered values. → [User profile](#user-profile).
 - **Team access** — a business can have several staff users sharing the same data; the creator is the **super admin** who manages access, up to a configurable cap (default 5). → [Businesses & users](#businesses--users) below, and the [member APIs](#business-members).
+- **Staff attendance** — staff clock in and out from the app with their GPS location, and the owner's phone rings each time ("Budi telah absen masuk!"). The owner can also ping the team for a spot-check, which staff acknowledge with one tap, and review everyone's attendance by member and by month. → [Employee presence](#employee-presence).
 
 ## Businesses & users
 
@@ -78,6 +79,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [User profile](#user-profile)
   - [Products & categories](#products--categories)
   - [Stock mutations](#stock-mutations)
+  - [Employee presence](#employee-presence)
   - [App settings](#app-settings)
   - [QRIS](#qris)
   - [QRIS callback](#qris-callback)
@@ -1096,6 +1098,99 @@ Returns mutations (PURCHASE/ADJUSTMENT/UPDATE) newest-first, each **with its lin
 #### `GET /api/stock-mutations/{id}` — Stock mutation detail
 
 Returns one mutation **including its `items`** (each with `previousStock`/`newStock`/`quantityChange`). `404` if not found / not owned.
+
+---
+
+### Employee presence
+
+Staff attendance for the business: members clock in and out with their location, the super admin can ping the team for a spot-check, and both read the history. All endpoints require JWT. Every entry — clock-in, clock-out, and ping — is one row in the same table, distinguished by `type` (`CLOCK_IN` | `CLOCK_OUT` | `PING`).
+
+**Who may do what:** only a **member** clocks in/out (a super admin gets `403` — they don't take attendance); only the **super admin** sends pings; a member responds only to **their own** ping. On the history the super admin sees the whole business, a member only their own entries.
+
+**Once per day:** a member may clock in **at most once** and clock out **at most once** per calendar day. A repeat is rejected with `400` (`"Kamu sudah absen masuk hari ini"`); the next day resets. Clocking out on the same day as clocking in is of course fine — the limit is one of *each* type. Pings are not limited: the super admin may ping the same member several times a day.
+
+#### `POST /api/presences/clock-in` — Clock in (member)
+
+```json
+{
+  "latitude": -6.2088,
+  "longitude": 106.8456,
+  "clockDatetime": "2026-03-10T08:01:00",
+  "note": "Tiba di toko"
+}
+```
+
+`latitude`, `longitude` and `clockDatetime` are required; `note` (≤255 chars) is optional. The time is **client-supplied**, so an entry made offline keeps its real time when it syncs — but a `clockDatetime` more than a day in the future is rejected (`400`) as a wrong device clock.
+
+`201 Created`:
+
+```json
+{
+  "status": 1,
+  "message": "Absen masuk berhasil dicatat",
+  "data": {
+    "id": 12,
+    "userId": 4,
+    "username": "budi",
+    "name": "Budi",
+    "type": "CLOCK_IN",
+    "clockDatetime": "2026-03-10T08:01:00",
+    "presenceDate": "2026-03-10",
+    "latitude": -6.2088,
+    "longitude": 106.8456,
+    "note": "Tiba di toko",
+    "userActive": true,
+    "createdAt": "2026-03-10T08:01:03"
+  }
+}
+```
+
+The business's **super admin** gets a push notification: title `"budi telah absen masuk!"`, body `"Pastikan jadwal absen sesuai prosedur. Sukses terus ya!"`. Unlike the payment pushes (which are data-only), this is a **display notification** FCM renders itself; a small data payload (`type: PRESENCE`, `presenceId`, `presenceType`, `userId`, `username`) rides along so the app can route the tap. The push is best-effort — it never fails the attendance entry.
+
+#### `POST /api/presences/clock-out` — Clock out (member)
+
+Same body and response shape, with `type: "CLOCK_OUT"`. The super admin's push title becomes `"budi telah absen keluar!"`.
+
+#### `POST /api/presences/pings` — Ping the team (super admin only)
+
+```json
+{ "note": "Masih di toko?" }
+```
+
+Body is optional. Records one `PING` entry **per member** of the business and pushes each of them a notification — title `"Ping absen!"`, body = the `note` when given, else `"Ketuk untuk konfirmasi kamu sedang bertugas ya!"`. `400` if the business has no members yet; `403` for a non–super-admin.
+
+`201 Created` — the created entries (one per member; `latitude`/`longitude` are null since the admin sends no location, and `responseDatetime` is null until the member taps):
+
+```json
+{
+  "status": 1,
+  "count": 2,
+  "data": [
+    { "id": 13, "userId": 4, "username": "budi", "name": "Budi", "type": "PING",
+      "clockDatetime": "2026-03-10T14:00:00", "presenceDate": "2026-03-10",
+      "note": "Masih di toko?", "responseDatetime": null, "createdAt": "2026-03-10T14:00:00" }
+  ]
+}
+```
+
+#### `POST /api/presences/{id}/respond` — Acknowledge a ping (member)
+
+The member taps the ping in the app; no body. Stamps `responseDatetime` on their entry and returns it. `403` if the ping belongs to someone else, `400` if the entry isn't a `PING` or was already responded to (a ping can only be acknowledged once), `404` if it isn't in the caller's business.
+
+#### `GET /api/presences` — Attendance history
+
+Newest first. Query params (all optional):
+
+| Param | Meaning |
+|---|---|
+| `userId` | Filter to one team member. **Super admin only** — a member passing anyone else's id gets `403` (they are always scoped to their own entries). |
+| `year` | Calendar year to filter by (2000–2100). Without `month`, covers the whole year. |
+| `month` | Month `1`–`12`. **`month` alone means that month of the current year** — `year` is only needed to look at a past one. |
+| `page` / `size` | Pagination (default page `1`, size `50`, max `200`). |
+
+Omit both `year` and `month` for the full history. Each entry carries its `type`, `clockDatetime`, `presenceDate`, location, `note`, `responseDatetime` (pings only), and `userActive`, plus `count`/`page`/`totalPages`/`total`.
+
+**Removed staff:** the member's `username`/`name` are snapshotted on each entry, so a removed member's attendance stays in the history rather than vanishing — but it comes back with **`userActive: false`**, so the app can mark it as ex-staff. Entries of current staff are `userActive: true`.
 
 ---
 

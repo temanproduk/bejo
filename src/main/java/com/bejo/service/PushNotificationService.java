@@ -8,6 +8,7 @@ import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.MessagingErrorCode;
+import com.google.firebase.messaging.Notification;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -16,10 +17,16 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
- * Low-level FCM sender shared by the callback flow and the test-notification API.
- * Sends data-only messages; does not touch the database.
+ * Low-level FCM sender shared by the callback flow, the presence flow and the
+ * test-notification API. Does not touch the database (beyond clearing dead tokens).
+ *
+ * <p>Two message shapes: <b>data-only</b> ({@code sendToToken}/{@code sendToUser}/
+ * {@code sendToBusiness}) — the app builds the notification itself, used for payments;
+ * and <b>notification</b> ({@code sendNotificationTo…}) — a title/body FCM displays
+ * directly, used for presence clock-in/out and pings.
  */
 @Service
 public class PushNotificationService {
@@ -53,17 +60,9 @@ public class PushNotificationService {
         return code == MessagingErrorCode.UNREGISTERED || code == MessagingErrorCode.SENDER_ID_MISMATCH;
     }
 
-    /** Send to a single device token. Propagates FirebaseMessagingException to the caller. */
+    /** Send a data-only message to a single device token. Propagates FirebaseMessagingException. */
     public String sendToToken(String pushToken, Map<String, String> data) throws FirebaseMessagingException {
-        Message message = Message.builder().putAllData(data).setToken(pushToken).build();
-        try {
-            String messageId = FirebaseMessaging.getInstance().send(message);
-            successCounter.increment();
-            return messageId;
-        } catch (FirebaseMessagingException e) {
-            failureCounter.increment();
-            throw e;
-        }
+        return send(dataMessage(pushToken, data));
     }
 
     /**
@@ -76,7 +75,22 @@ public class PushNotificationService {
             log.warn("[PUSH] Firebase not configured — skipping push for username={}", username);
             return 0;
         }
-        return sendToSessions(sessionRepository.findByUsername(username), data, "username=" + username);
+        return sendToSessions(sessionRepository.findByUsername(username),
+                token -> dataMessage(token, data), "username=" + username);
+    }
+
+    /**
+     * Best-effort display-notification broadcast to every device of one user (presence
+     * clock-in/out → the super admin; a ping → the member). FCM renders title/body itself;
+     * {@code data} rides along only so the app can route the tap. Never throws.
+     */
+    public int sendNotificationToUser(String username, String title, String body, Map<String, String> data) {
+        if (!isConfigured()) {
+            log.warn("[PUSH] Firebase not configured — skipping notification for username={}", username);
+            return 0;
+        }
+        return sendToSessions(sessionRepository.findByUsername(username),
+                token -> notificationMessage(token, title, body, data), "username=" + username);
     }
 
     /**
@@ -94,11 +108,12 @@ public class PushNotificationService {
             log.warn("[PUSH] No active users for businessId={} — nothing sent", businessId);
             return 0;
         }
-        return sendToSessions(sessionRepository.findByUsernameIn(usernames), data, "businessId=" + businessId);
+        return sendToSessions(sessionRepository.findByUsernameIn(usernames),
+                token -> dataMessage(token, data), "businessId=" + businessId);
     }
 
-    // Shared fan-out: send to each session's token, auto-clearing dead ones. Never throws.
-    private int sendToSessions(List<Session> sessions, Map<String, String> data, String scope) {
+    // Shared fan-out: send each session's token its own Message, auto-clearing dead ones. Never throws.
+    private int sendToSessions(List<Session> sessions, Function<String, Message> message, String scope) {
         int withToken = 0;
         int sent = 0;
         for (Session s : sessions) {
@@ -106,7 +121,7 @@ public class PushNotificationService {
             if (token == null || token.isBlank()) continue;
             withToken++;
             try {
-                String messageId = sendToToken(token, data);
+                String messageId = send(message.apply(token));
                 sent++;
                 log.info("[PUSH] Sent to FCM deviceId={} messageId={}", s.getDeviceId(), messageId);
             } catch (FirebaseMessagingException e) {
@@ -128,5 +143,28 @@ public class PushNotificationService {
             log.info("[PUSH] Delivered {} of {} push(es) for {}", sent, withToken, scope);
         }
         return sent;
+    }
+
+    private Message dataMessage(String token, Map<String, String> data) {
+        return Message.builder().putAllData(data).setToken(token).build();
+    }
+
+    private Message notificationMessage(String token, String title, String body, Map<String, String> data) {
+        Message.Builder builder = Message.builder()
+                .setNotification(Notification.builder().setTitle(title).setBody(body).build())
+                .setToken(token);
+        if (data != null) builder.putAllData(data);
+        return builder.build();
+    }
+
+    private String send(Message message) throws FirebaseMessagingException {
+        try {
+            String messageId = FirebaseMessaging.getInstance().send(message);
+            successCounter.increment();
+            return messageId;
+        } catch (FirebaseMessagingException e) {
+            failureCounter.increment();
+            throw e;
+        }
     }
 }

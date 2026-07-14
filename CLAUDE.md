@@ -126,6 +126,11 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `PUT` | `/api/app-settings/keywords` | JWT (super admin) | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
 | `PUT` | `/api/app-settings/qris-with-profile-picture` | JWT (super admin) | Toggle composing the QRIS image onto the profile picture (`{enabled}`; default false) |
 | `PUT` | `/api/app-settings/inventory` | JWT (super admin) | Toggle inventory management (`{enabled}`; default false) |
+| `POST` | `/api/presences/clock-in` | JWT (member) | Employee clock-in: `latitude`/`longitude`/`clockDatetime` required, `note` optional; pushes a notification to the super admin |
+| `POST` | `/api/presences/clock-out` | JWT (member) | Employee clock-out (same body); pushes a notification to the super admin |
+| `POST` | `/api/presences/pings` | JWT (super admin) | Spot-check: records + pushes one PING entry to **every** member (optional `note` = the push body) |
+| `POST` | `/api/presences/{id}/respond` | JWT (member) | Acknowledge one's own PING (stamps `responseDatetime`; only once) |
+| `GET` | `/api/presences` | JWT | Attendance history; super admin sees the whole business (optional `userId` filter), a member only their own. Optional `year` + `month`; paginated (`page`/`size`) |
 
 All responses follow `{ "status": 1\|0, "message": "...", "data": {...}, "count": N }` — null fields are omitted. Paginated list endpoints (`GET /api/transactions`, `/api/products`, `/api/stock-mutations`) additionally return `page` (1-based), `totalPages`, and `total`; `count` is the size of the current page. Pagination is optional — omit `page`/`size` for page 1 of 50 (`size` cap 200). Built via `util/Pagination.of(page,size)` → `ApiResponseDto.page(Page<T>)`.
 
@@ -140,7 +145,8 @@ controller/   → thin HTTP layer; validation via @Valid
 service/      → business logic, metrics via Micrometer Counter
 repository/   → Spring Data JPA interfaces
 entity/       → JPA entities (Business, User, BusinessBank, BusinessQris,
-                BusinessAppSettings, Session, Transaction, TransactionItem, TokenBlacklist)
+                BusinessAppSettings, Session, Transaction, TransactionItem, Presence,
+                TokenBlacklist)
 dto/          → request records (@NotBlank validated) + response records.
                 Every DTO class name ends with `Dto` (e.g. LoginRequestDto,
                 TransactionDto); requests and responses are separate types.
@@ -153,7 +159,7 @@ converter/    → JPA AttributeConverters storing JSON in TEXT columns
 exception/    → GlobalExceptionHandler + ResourceNotFoundException
 ```
 
-Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `BusinessRole` (`SUPER_ADMIN`, `MEMBER`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults), `StockMutationType` (`PURCHASE`, `ADJUSTMENT`, `UPDATE`, `SALE`).
+Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `BusinessRole` (`SUPER_ADMIN`, `MEMBER`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults), `StockMutationType` (`PURCHASE`, `ADJUSTMENT`, `UPDATE`, `SALE`), `PresenceType` (`CLOCK_IN`, `CLOCK_OUT`, `PING`).
 
 Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by consulting `RequestMappingHandlerMapping`. It must be injected with `@Qualifier("requestMappingHandlerMapping")` (actuator registers a second bean of that type) and the request path must be parsed via `ServletRequestPathUtils.parseAndCache` because the entry point runs before `DispatcherServlet`.
 
@@ -237,6 +243,19 @@ Basic per-business SKU catalog with simple inventory, scoped by `business_id` (r
 
 `GET /api/app-settings` returns defaults (empty lists/map, blacklist on, whitelist off, both toggles off) when no row exists yet — it never 404s. `PUT /api/app-settings/monitored-apps` replaces the whole map; `PUT /api/app-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
 
+### Employee daily presence
+
+`PresenceController` → `PresenceService` back employee attendance in the `presences` table. Three entry kinds share the table, distinguished by `type` (`PresenceType`): `CLOCK_IN`, `CLOCK_OUT`, `PING`.
+
+- **Clock in/out** (`POST /api/presences/clock-in` · `/clock-out`) — **members only**; a super admin gets 403 (they don't take attendance). Body requires `latitude`/`longitude`/`clockDatetime` (+ optional `note`). The time is **client-supplied** (an offline entry keeps its real time when it syncs) but a `clockDatetime` more than a day ahead is rejected (400) as a wrong/forged device clock.
+- **Once per day** — a member may clock in **at most once** and clock out **at most once** per calendar day (`presence_date`); a repeat is a 400 (`"Kamu sudah absen masuk hari ini"`). Enforced twice: `PresenceService` checks first (the friendly path), and the partial unique index `uq_presence_clock_daily (user_id, type, presence_date) WHERE type IN ('CLOCK_IN','CLOCK_OUT')` settles a race between two simultaneous taps (→ 409 via `GlobalExceptionHandler`). PINGs are excluded from the index — the super admin may ping the same member repeatedly.
+- **Ping** (`POST /api/presences/pings`) — **super admin only**; a spot-check that writes one `PING` row **per member** (400 if the business has no members yet) and pushes it to each. The member acknowledges via `POST /api/presences/{id}/respond`, which stamps `response_datetime` — only on their own row, only a `PING`, only once. "Only once" is a **conditional update** (`PresenceRepository.markResponded` updates `WHERE response_datetime IS NULL` and returns the row count; 0 → 400), not a read-then-write, so two simultaneous taps can't both stamp it.
+- **History** (`GET /api/presences`) — newest first, paginated. The **super admin sees the whole business** and may filter to one member with `userId`; a **member is always scoped to their own** entries (passing another user's `userId` is a 403). `year` (+ optional `month`) narrows to that calendar period, ranged over the `presence_date` column; **`month` without `year` means that month of the current year** (no 400). Each entry carries `userActive` — false once the member has been removed from the business (their rows stay in the history; one batched query per page resolves it, no N+1).
+
+**Push:** unlike the payment callback's data-only messages, presence pushes are **display notifications** (`PushNotificationService.sendNotificationToUser` → an FCM `Notification` with title/body, plus a small data map for tap routing). A clock-in/out rings the **super admin** (title `"<username> telah absen masuk!"` / `"… keluar!"`, body `"Pastikan jadwal absen sesuai prosedur. Sukses terus ya!"`); a ping rings **each member** (the request's `note`, when given, becomes the push body). Every push is best-effort — FCM being down never fails or rolls back the attendance entry.
+
+`username`/`name` are **snapshotted** on the row and `user_id` carries no FK, so the history survives a member rename or soft-delete.
+
 ### Timezone
 
 The whole app is pinned to **WIB (`Asia/Jakarta`, UTC+7)**: `BejoApplication.main` calls `TimeZone.setDefault(AppTime.ZONE)` before Spring starts, so every `LocalDate/LocalDateTime.now()` (transaction/session times, soft-delete stamps, the summary buckets) is Jakarta wall-clock regardless of the container zone (Cloud Run is UTC). `TIMESTAMP` columns are zoneless wall-clock, so this only affects new `now()` values, never reinterprets stored rows. `util/AppTime.ZONE` is the single source of truth — reference it where the zone must be explicit (e.g. `TransactionService.summary` default, `QrisCallbackService` normalizes an offset-bearing `X-TIMESTAMP` to WIB via `atZoneSameInstant`). Jackson also serializes dates in this zone (`spring.jackson.time-zone`).
@@ -253,7 +272,7 @@ The whole app is pinned to **WIB (`Asia/Jakarta`, UTC+7)**: `BejoApplication.mai
 
 ## Database
 
-Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup; `ddl-auto: none`. `V1__init_schema.sql` is the single consolidated baseline — it was **rewritten** for the user↔business decoupling (there were no production users to preserve), so the DB must be **dropped & recreated** rather than migrated (`podman compose down -v` to drop the volume). Going forward, add new versioned migrations (`V2+`) for schema changes and never edit an applied migration in place (Flyway validates checksums against the live DB).
+Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup; `ddl-auto: none`. `V1__init_schema.sql` is the single consolidated baseline — it was **rewritten** for the user↔business decoupling (there were no production users to preserve), so the DB must be **dropped & recreated** rather than migrated (`podman compose down -v` to drop the volume). Schema changes since then are additive versioned migrations (`V2__presence.sql` is the first) — never edit an applied migration in place (Flyway validates checksums against the live DB).
 
 Key tables:
 - `businesses` — the merchant; business name/address/nmid (+ `initial_*` for reset) + `size`/`industry` (NOT NULL, immutable, config-validated) + optional `store_photo` + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `nmid WHERE nmid IS NOT NULL` (callback routing)
@@ -266,6 +285,9 @@ Key tables:
 - `product_categories` — per-business categories; name unique per `business_id`
 - `products` — per-business SKUs; `sku` unique per `business_id`; optional `short_description`; nullable `category_id` FK; `stock` (INTEGER), `price`/`cost_price` (BIGINT IDR), optional base64 `photo` (TEXT, ≤500 KB decoded)
 - `stock_mutations` / `stock_mutation_items` — per-business stock-change history (type `PURCHASE`/`ADJUSTMENT`/`UPDATE`/`SALE`); each line snapshots the product + `previous_stock`/`new_stock`/`quantity_change`, with `unit_price`/`subtotal` for purchases; `total_amount` is the purchase sum
+- `presences` — employee attendance (`V2__presence.sql`), scoped by `business_id`; type `CLOCK_IN`/`CLOCK_OUT`/`PING`; `clock_datetime` + `presence_date` (the month-year filter's column), `latitude`/`longitude` (null on a PING), nullable `response_datetime` (a PING's acknowledgment); `username`/`name` snapshotted and `user_id` unconstrained (no FK) so history survives a member rename/soft-delete; partial unique index `uq_presence_clock_daily` caps clock-ins/outs at one per member per day
+
+`username` is **`VARCHAR(50)` everywhere** it's stored (`users`, `bejo_sessions`, `presences`) and capped at 50 by the register/add-member DTOs; the entities declare `@Column(length = 50)` so the H2 test schema matches Postgres.
 
 ## Tests
 

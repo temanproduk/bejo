@@ -121,6 +121,12 @@ public class GlobalExceptionHandler {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("QRIS code sudah digunakan"));
             }
+            // Only reachable when two clock-in (or clock-out) taps race past the service's
+            // own check — the friendly 400 handles the ordinary case.
+            if ("uq_presence_clock_daily".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponseDto.error("Kamu sudah absen hari ini"));
+            }
         }
         log.error("Data integrity violation", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)

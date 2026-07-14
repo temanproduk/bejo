@@ -31,6 +31,19 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByIdAndBusinessIdAndDeletedAtIsNull(Long id, Long businessId);
 
+    // Users of a business holding a given role (active only) — the business's MEMBERs are
+    // who a presence ping fans out to.
+    List<User> findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(Long businessId, String businessRole);
+
+    // The business's super admin — the recipient of the clock-in/clock-out pushes. A business
+    // has exactly one, but findFirst keeps a malformed row from blowing up the push step.
+    Optional<User> findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(Long businessId, String businessRole);
+
     @Query("SELECT u.username FROM User u WHERE u.businessId = :businessId AND u.deletedAt IS NULL")
     List<String> findUsernamesByBusinessId(@Param("businessId") Long businessId);
+
+    // Which of these users are still active — the presence history keeps a removed member's
+    // entries, and flags them so the app can tell them apart.
+    @Query("SELECT u.id FROM User u WHERE u.id IN :ids AND u.deletedAt IS NULL")
+    List<Long> findActiveIdsByIdIn(@Param("ids") List<Long> ids);
 }
