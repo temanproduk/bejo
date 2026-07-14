@@ -31,19 +31,25 @@ public interface PresenceRepository extends JpaRepository<Presence, Long> {
 
     Page<Presence> findByBusinessIdOrderByClockDatetimeDescIdDesc(Long businessId, Pageable pageable);
 
-    Page<Presence> findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
-            Long businessId, LocalDate from, LocalDate to, Pageable pageable);
+    Page<Presence> findByBusinessIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
+            Long businessId, LocalDateTime from, LocalDateTime to, Pageable pageable);
 
     Page<Presence> findByBusinessIdAndUserIdOrderByClockDatetimeDescIdDesc(
             Long businessId, Long userId, Pageable pageable);
 
-    Page<Presence> findByBusinessIdAndUserIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
-            Long businessId, Long userId, LocalDate from, LocalDate to, Pageable pageable);
+    Page<Presence> findByBusinessIdAndUserIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
+            Long businessId, Long userId, LocalDateTime from, LocalDateTime to, Pageable pageable);
 
     Optional<Presence> findByIdAndBusinessId(Long id, Long businessId);
 
-    // A member clocks in at most once and out at most once per calendar day
-    boolean existsByUserIdAndTypeAndPresenceDate(Long userId, String type, LocalDate presenceDate);
+    /**
+     * Does this member already have an entry of this type on this calendar day? Backs both the
+     * once-per-day clock rule and the "you must clock in before you clock out" check. The day
+     * is a {@code [00:00, 23:59:59.999999999]} range over {@code clock_datetime} — there is no
+     * stored date column to compare against (see {@code V3__presence_drop_presence_date.sql}).
+     */
+    boolean existsByUserIdAndTypeAndClockDatetimeBetween(
+            Long userId, String type, LocalDateTime dayStart, LocalDateTime dayEnd);
 
     /**
      * When each of these members was last pinged — the ping cooldown reads this. One query for

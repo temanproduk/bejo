@@ -26,6 +26,15 @@ public interface SessionRepository extends JpaRepository<Session, Long> {
     // member's devices
     List<Session> findByUsernameIn(Collection<String> usernames);
 
+    /**
+     * Which of these users have at least one device that can actually receive a push. The ping
+     * flow only targets these: recording a PING for a member with no registered device would
+     * start their hour-long cooldown for a message nobody could ever receive.
+     */
+    @Query("SELECT DISTINCT s.username FROM Session s "
+            + "WHERE s.username IN :usernames AND s.pushToken IS NOT NULL AND s.pushToken <> ''")
+    List<String> findUsernamesWithPushToken(@Param("usernames") Collection<String> usernames);
+
     @Modifying
     @Query("UPDATE Session s SET s.pushToken = :pushToken, s.lastUpdated = :now WHERE s.username = :username AND s.deviceId = :deviceId")
     int updatePushToken(@Param("username") String username,

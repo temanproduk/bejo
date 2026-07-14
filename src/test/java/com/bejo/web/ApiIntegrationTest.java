@@ -36,6 +36,7 @@ class ApiIntegrationTest {
     @Autowired private com.bejo.repository.TransactionRepository transactionRepository;
     @Autowired private com.bejo.repository.UserRepository userRepository;
     @Autowired private com.bejo.repository.SessionRepository sessionRepository;
+    @Autowired private com.bejo.repository.PresenceRepository presenceRepository;
 
     // ---------- helpers ----------
 
@@ -2222,6 +2223,65 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void clockingOutRequiresThatDaysClockIn() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin17", "pres_member17");
+
+        // You can't leave a shift you never started
+        mockMvc.perform(post("/api/presences/clock-out")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2, "longitude", 106.8,
+                                "clockDatetime", "2026-04-10T17:00:00"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Kamu belum absen masuk hari ini"));
+
+        // Clock in on the 10th → that day's clock-out is now allowed
+        clock(biz.get("memberToken"), "clock-in", "2026-04-10T08:00:00");
+        clock(biz.get("memberToken"), "clock-out", "2026-04-10T17:00:00");
+
+        // …but the NEXT day's clock-out still needs its own clock-in — yesterday's doesn't carry over
+        mockMvc.perform(post("/api/presences/clock-out")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2, "longitude", 106.8,
+                                "clockDatetime", "2026-04-11T17:00:00"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(0));
+    }
+
+    @Test
+    void aPingCanOnlyBeRespondedOnTheDayItWasSent() throws Exception {
+        Map<String, String> biz = businessWithMember("pres_admin18", "pres_member18");
+        MvcResult ping = mockMvc.perform(post("/api/presences/pings")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long pingId = objectMapper.readTree(ping.getResponse().getContentAsString())
+                .at("/data/presences/0/id").asLong();
+
+        // Backdate the ping to yesterday — "where are you right now?" answered a day late
+        // tells the super admin nothing, so it has expired
+        com.bejo.entity.Presence stale = presenceRepository.findById(pingId).orElseThrow();
+        stale.setClockDatetime(LocalDateTime.now().minusDays(1));
+        presenceRepository.save(stale);
+
+        mockMvc.perform(post("/api/presences/" + pingId + "/respond")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken"))
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "latitude", -6.2, "longitude", 106.8))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(
+                        "Ping ini sudah kedaluwarsa — hanya dapat direspons di hari yang sama"));
+    }
+
+    @Test
     void superAdminCannotClockIn() throws Exception {
         String adminToken = registerAndLogin("pres_admin2");
 
@@ -2259,12 +2319,13 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.count").value(1))               // one entry per member
-                .andExpect(jsonPath("$.data[0].type").value("PING"))
-                .andExpect(jsonPath("$.data[0].username").value("pres_member4"))
-                .andExpect(jsonPath("$.data[0].note").doesNotExist())  // the note is the member's to write
+                .andExpect(jsonPath("$.data.pinged").value(1))            // one entry per member
+                .andExpect(jsonPath("$.data.totalMembers").value(1))
+                .andExpect(jsonPath("$.data.presences[0].type").value("PING"))
+                .andExpect(jsonPath("$.data.presences[0].username").value("pres_member4"))
+                .andExpect(jsonPath("$.data.presences[0].note").doesNotExist())  // the note is the member's to write
                 .andReturn();
-        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
+        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/presences/0/id").asText();
 
         // The member taps it and replies with their location + a note
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
@@ -2312,6 +2373,7 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(memberBody("pres_member15b"))))
                 .andExpect(status().isCreated());
+        login("pres_member15b", "password1", "d-15b");   // a ping only reaches a registered device
 
         // Ping just the first member
         mockMvc.perform(post("/api/presences/pings")
@@ -2340,8 +2402,8 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.count").value(1))
-                .andExpect(jsonPath("$.data[0].username").value("pres_member15b"));
+                .andExpect(jsonPath("$.data.pinged").value(1))
+                .andExpect(jsonPath("$.data.presences[0].username").value("pres_member15b"));
 
         // Now both are cooling down → the team ping has nobody left to reach
         mockMvc.perform(post("/api/presences/pings")
@@ -2372,6 +2434,7 @@ class ApiIntegrationTest {
                             .contentType(APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(memberBody(extra))))
                     .andExpect(status().isCreated());
+            login(extra, "password1", "d-" + extra);   // a ping only reaches a registered device
         }
         mockMvc.perform(post("/api/presences/pings")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -2379,7 +2442,7 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.count").value(3));
+                .andExpect(jsonPath("$.data.pinged").value(3));
 
         // Walk the pages: every entry must appear exactly once
         List<Integer> ids = new java.util.ArrayList<>();
@@ -2406,7 +2469,7 @@ class ApiIntegrationTest {
                         .header("Authorization", "Bearer " + biz.get("adminToken")))
                 .andExpect(status().isCreated())
                 .andReturn();
-        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
+        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/presences/0/id").asText();
 
         // No body at all → rejected: a ping is a spot-check, the answer must say where they are
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
@@ -2447,6 +2510,7 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(memberBody("pres_member13b"))))
                 .andExpect(status().isCreated());
+        login("pres_member13b", "password1", "d-13b");   // a ping only reaches a registered device
 
         // userId → only that member gets an entry
         mockMvc.perform(post("/api/presences/pings")
@@ -2456,8 +2520,9 @@ class ApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "userId", Long.parseLong(biz.get("memberId"))))))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.count").value(1))
-                .andExpect(jsonPath("$.data[0].username").value("pres_member13a"));
+                .andExpect(jsonPath("$.data.pinged").value(1))
+                .andExpect(jsonPath("$.data.totalMembers").value(2))
+                .andExpect(jsonPath("$.data.presences[0].username").value("pres_member13a"));
 
         // An id outside the business is rejected — and nothing is recorded
         mockMvc.perform(post("/api/presences/pings")
@@ -2476,8 +2541,11 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.count").value(1))
-                .andExpect(jsonPath("$.data[0].username").value("pres_member13b"));
+                .andExpect(jsonPath("$.data.pinged").value(1))          // only 13b: 13a is cooling down
+                .andExpect(jsonPath("$.data.totalMembers").value(2))
+                .andExpect(jsonPath("$.data.skipped[0].username").value("pres_member13a"))
+                .andExpect(jsonPath("$.data.skipped[0].reason").value("COOLDOWN"))
+                .andExpect(jsonPath("$.data.presences[0].username").value("pres_member13b"));
 
         // 2 pings total: one per member
         mockMvc.perform(get("/api/presences")
@@ -2512,13 +2580,13 @@ class ApiIntegrationTest {
     void pingWorksWithNoBodyAtAll() throws Exception {
         Map<String, String> biz = businessWithMember("pres_admin7", "pres_member7");
 
-        // The body is optional — Spring passes null, the service falls back to the default push text
+        // The body is optional — Spring passes null, which means "the whole team"
         mockMvc.perform(post("/api/presences/pings")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + biz.get("adminToken")))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.count").value(1))
-                .andExpect(jsonPath("$.data[0].type").value("PING"));
+                .andExpect(jsonPath("$.data.pinged").value(1))
+                .andExpect(jsonPath("$.data.presences[0].type").value("PING"));
     }
 
     @Test
@@ -2664,7 +2732,7 @@ class ApiIntegrationTest {
                         .content("{}"))
                 .andExpect(status().isCreated())
                 .andReturn();
-        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/0/id").asText();
+        String pingId = objectMapper.readTree(ping.getResponse().getContentAsString()).at("/data/presences/0/id").asText();
 
         // An outsider can't even see the entry exists (a valid body, so this is the
         // ownership check answering, not validation)

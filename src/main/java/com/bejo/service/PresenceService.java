@@ -6,12 +6,15 @@ import com.bejo.constant.PushType;
 import com.bejo.dto.request.PresenceClockRequestDto;
 import com.bejo.dto.request.PresencePingRequestDto;
 import com.bejo.dto.request.PresenceRespondRequestDto;
+import com.bejo.dto.response.PingResultResponseDto;
+import com.bejo.dto.response.PingResultResponseDto.SkippedMemberDto;
 import com.bejo.dto.response.PresenceResponseDto;
 import com.bejo.entity.Presence;
 import com.bejo.entity.User;
 import com.bejo.exception.ForbiddenException;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.PresenceRepository;
+import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +28,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -55,21 +59,28 @@ public class PresenceService {
     // A member can't be pinged more often than this — a spot-check, not a nag
     private static final Duration PING_COOLDOWN = Duration.ofHours(1);
 
+    // Why a member was left out of a ping (reported back to the super admin)
+    private static final String SKIPPED_NO_DEVICE = "NO_DEVICE";
+    private static final String SKIPPED_COOLDOWN = "COOLDOWN";
+
     private static final String CLOCK_PUSH_BODY = "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!";
     private static final String PING_PUSH_TITLE = "Ping Absen Bejoo!";
     private static final String PING_PUSH_BODY = "Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?";
 
     private final PresenceRepository presenceRepository;
     private final UserRepository userRepository;
+    private final SessionRepository sessionRepository;
     private final PushNotificationService pushNotificationService;
     private final BusinessContext businessContext;
 
     public PresenceService(PresenceRepository presenceRepository,
                            UserRepository userRepository,
+                           SessionRepository sessionRepository,
                            PushNotificationService pushNotificationService,
                            BusinessContext businessContext) {
         this.presenceRepository = presenceRepository;
         this.userRepository = userRepository;
+        this.sessionRepository = sessionRepository;
         this.pushNotificationService = pushNotificationService;
         this.businessContext = businessContext;
     }
@@ -98,10 +109,16 @@ public class PresenceService {
         // could both pass this check, so the DB's uq_presence_clock_daily index has the last
         // word (a 409 from GlobalExceptionHandler); this is the friendly path.
         LocalDate day = request.clockDatetime().toLocalDate();
-        if (presenceRepository.existsByUserIdAndTypeAndPresenceDate(user.getId(), type, day)) {
+        if (hasEntryOn(user.getId(), type, day)) {
             throw new IllegalArgumentException(PresenceType.CLOCK_IN.equals(type)
                     ? "Kamu sudah absen masuk hari ini"
                     : "Kamu sudah absen keluar hari ini");
+        }
+        // You can't leave a shift you never started: a clock-out needs that day's clock-in.
+        // Keyed on the clock-out's own day, so a clock-out just after midnight belongs to the
+        // new day and needs a clock-in on it — the shift is per calendar day, not overnight.
+        if (PresenceType.CLOCK_OUT.equals(type) && !hasEntryOn(user.getId(), PresenceType.CLOCK_IN, day)) {
+            throw new IllegalArgumentException("Kamu belum absen masuk hari ini");
         }
 
         Presence presence = new Presence();
@@ -111,7 +128,6 @@ public class PresenceService {
         presence.setName(user.getName());
         presence.setType(type);
         presence.setClockDatetime(request.clockDatetime());
-        presence.setPresenceDate(request.clockDatetime().toLocalDate());
         presence.setLatitude(request.latitude());
         presence.setLongitude(request.longitude());
         presence.setNote(request.note());
@@ -139,25 +155,44 @@ public class PresenceService {
     }
 
     /**
-     * Super-admin spot-check: records one PING entry per targeted member and pushes it to
-     * their devices. With no {@code userId} the whole team is pinged; with one, only that
-     * member. Each member acknowledges their own entry via {@link #respond}, which stamps
-     * {@code responseDatetime}.
+     * Super-admin spot-check: records one PING entry per targeted member and pushes it to all
+     * of that member's devices. With no {@code userId} the whole team is pinged; with one,
+     * only that member. Each member acknowledges their own entry via {@link #respond}.
+     *
+     * <p>Two things can keep a member out of it — <b>no registered device</b> (nothing could
+     * ever reach them, and recording a PING would start their cooldown for a message they
+     * can't receive) and the <b>{@link #PING_COOLDOWN}</b>. On a team-wide ping they're
+     * skipped; on a targeted one they're a 400, because the admin asked for that person by
+     * name and must be told it didn't happen. The result reports how many of the team were
+     * actually reached, and who wasn't, so a partial ping never looks like a full one.
      */
     @Transactional
-    public List<PresenceResponseDto> ping(String callerUsername, PresencePingRequestDto request) {
+    public PingResultResponseDto ping(String callerUsername, PresencePingRequestDto request) {
         User caller = businessContext.requireUser(callerUsername);
         if (!caller.isSuperAdmin()) {
             throw new ForbiddenException("Hanya super admin yang dapat mengirim ping absen");
         }
+        List<User> allMembers = userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(
+                caller.getBusinessId(), BusinessRole.MEMBER);
+        if (allMembers.isEmpty()) {
+            throw new IllegalArgumentException("Belum ada anggota tim yang dapat dikirimi ping");
+        }
+
         Long targetUserId = request != null ? request.userId() : null;
-        List<User> members = resolvePingTargets(caller.getBusinessId(), targetUserId);
+        boolean targeted = targetUserId != null;
+        List<User> candidates = targeted
+                ? List.of(allMembers.stream()
+                        .filter(m -> m.getId().equals(targetUserId))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalArgumentException("Anggota tim tidak ditemukan: " + targetUserId)))
+                : allMembers;
 
         LocalDateTime sentAt = LocalDateTime.now();
-        members = applyPingCooldown(caller.getBusinessId(), members, targetUserId != null, sentAt);
+        List<SkippedMemberDto> skipped = new ArrayList<>();
+        List<User> targets = eligiblePingTargets(caller.getBusinessId(), candidates, targeted, sentAt, skipped);
 
         List<PresenceResponseDto> created = new ArrayList<>();
-        for (User member : members) {
+        for (User member : targets) {
             Presence presence = new Presence();
             presence.setBusinessId(caller.getBusinessId());
             presence.setUserId(member.getId());
@@ -165,57 +200,49 @@ public class PresenceService {
             presence.setName(member.getName());
             presence.setType(PresenceType.PING);
             presence.setClockDatetime(sentAt);
-            presence.setPresenceDate(sentAt.toLocalDate());
-            // note stays null: it's reserved for the member's reply (see respond)
+            // note + location stay null: they're the member's to fill in when they reply
             presenceRepository.save(presence);
             created.add(toDto(presence));
 
+            // sendUrgentToUser fans out to every device the member has registered
             pushAfterCommit(member.getUsername(), pushData(presence, PING_PUSH_TITLE, PING_PUSH_BODY),
                     "presenceId=" + presence.getId());
         }
-        log.info("[PRESENCE] PING sent to {} member(s) of businessId={} by {} ({})",
-                created.size(), caller.getBusinessId(), callerUsername,
-                targetUserId != null ? "userId=" + targetUserId : "whole team");
-        return created;
+        log.info("[PRESENCE] PING sent to {}/{} member(s) of businessId={} by {} ({}), skipped={}",
+                created.size(), allMembers.size(), caller.getBusinessId(), callerUsername,
+                targeted ? "userId=" + targetUserId : "whole team", skipped.size());
+        return new PingResultResponseDto(created.size(), allMembers.size(), skipped, created);
     }
 
     /**
-     * Who this ping goes to: just {@code userId}, or the whole team when it's omitted. The id
-     * must be an active MEMBER of the caller's own business — an unknown id, someone else's
-     * staff, or the super admin themselves is a 400 (and nothing is sent).
+     * Filters the ping candidates down to those that can actually be pinged — they have a
+     * device registered for push, and they aren't inside the cooldown. Skipped members are
+     * collected (with the reason) for the result; on a targeted ping the first reason instead
+     * becomes a 400. If nothing survives, that's a 400 too rather than a silent no-op.
      */
-    private List<User> resolvePingTargets(Long businessId, Long userId) {
-        List<User> members = userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(
-                businessId, BusinessRole.MEMBER);
-        if (userId == null) {
-            if (members.isEmpty()) {
-                throw new IllegalArgumentException("Belum ada anggota tim yang dapat dikirimi ping");
-            }
-            return members;
-        }
-        return members.stream()
-                .filter(m -> m.getId().equals(userId))
-                .findFirst()
-                .map(List::of)
-                .orElseThrow(() -> new IllegalArgumentException("Anggota tim tidak ditemukan: " + userId));
-    }
+    private List<User> eligiblePingTargets(Long businessId, List<User> candidates, boolean targeted,
+                                           LocalDateTime now, List<SkippedMemberDto> skipped) {
+        Set<String> withDevice = new HashSet<>(sessionRepository.findUsernamesWithPushToken(
+                candidates.stream().map(User::getUsername).toList()));
 
-    /**
-     * Drops members pinged within the last {@link #PING_COOLDOWN} — nobody gets pinged twice
-     * in an hour. A <b>targeted</b> ping to a cooling-down member is a 400 (the admin asked
-     * for that one person and must be told it didn't happen). On a <b>team-wide</b> ping those
-     * members are simply skipped so one recently-pinged person doesn't block the rest; if that
-     * leaves nobody, it's a 400 too rather than a silent no-op.
-     */
-    private List<User> applyPingCooldown(Long businessId, List<User> members, boolean targeted, LocalDateTime now) {
         Map<Long, LocalDateTime> lastPingAt = new HashMap<>();
         for (Object[] row : presenceRepository.findLastPingAtByUserIds(
-                businessId, members.stream().map(User::getId).toList())) {
+                businessId, candidates.stream().map(User::getId).toList())) {
             lastPingAt.put((Long) row[0], (LocalDateTime) row[1]);
         }
 
         List<User> eligible = new ArrayList<>();
-        for (User member : members) {
+        for (User member : candidates) {
+            if (!withDevice.contains(member.getUsername())) {
+                if (targeted) {
+                    throw new IllegalArgumentException(member.getName()
+                            + " belum memiliki perangkat yang terdaftar untuk notifikasi");
+                }
+                log.info("[PRESENCE] Skipping ping to username={} — no device registered", member.getUsername());
+                skipped.add(skippedMember(member, SKIPPED_NO_DEVICE));
+                continue;
+            }
+
             LocalDateTime last = lastPingAt.get(member.getId());
             if (last == null || !last.isAfter(now.minus(PING_COOLDOWN))) {
                 eligible.add(member);
@@ -231,11 +258,18 @@ public class PresenceService {
             }
             log.info("[PRESENCE] Skipping ping to username={} — pinged {} (cooldown, {} min left)",
                     member.getUsername(), last, waitMinutes);
+            skipped.add(skippedMember(member, SKIPPED_COOLDOWN));
         }
         if (eligible.isEmpty()) {
-            throw new IllegalArgumentException("Semua anggota tim baru saja di-ping. Coba lagi nanti");
+            throw new IllegalArgumentException(
+                    "Tidak ada anggota tim yang dapat di-ping saat ini (tidak ada perangkat terdaftar "
+                            + "atau semuanya baru saja di-ping)");
         }
         return eligible;
+    }
+
+    private SkippedMemberDto skippedMember(User member, String reason) {
+        return new SkippedMemberDto(member.getId(), member.getUsername(), member.getName(), reason);
     }
 
     /**
@@ -255,10 +289,16 @@ public class PresenceService {
         if (!PresenceType.PING.equals(presence.getType())) {
             throw new IllegalArgumentException("Hanya ping yang dapat direspons");
         }
-
-        // Conditional update, not a read-then-write: two simultaneous taps both see a null
-        // responseDatetime above, but only one of them updates a row here.
+        // A ping is a "where are you right now?" — answering yesterday's tells the admin
+        // nothing, so it expires at the end of the day it was sent.
         LocalDateTime respondedAt = LocalDateTime.now();
+        if (!presence.getClockDatetime().toLocalDate().equals(respondedAt.toLocalDate())) {
+            throw new IllegalArgumentException("Ping ini sudah kedaluwarsa — hanya dapat direspons di hari yang sama");
+        }
+
+        // Conditional update, not a read-then-write: two simultaneous taps (the member has the
+        // app on several devices) both see a null responseDatetime above, but only one of them
+        // updates a row here — the other is told it was already answered.
         if (presenceRepository.markResponded(presenceId, respondedAt, request.note(),
                 request.latitude(), request.longitude()) == 0) {
             throw new IllegalArgumentException("Ping ini sudah direspons");
@@ -293,7 +333,7 @@ public class PresenceService {
             scopedUserId = caller.getId();
         }
 
-        LocalDate[] range = monthYearRange(year, month);
+        LocalDateTime[] range = monthYearRange(year, month);
         Page<Presence> entries;
         if (range == null) {
             entries = scopedUserId == null
@@ -301,9 +341,9 @@ public class PresenceService {
                     : presenceRepository.findByBusinessIdAndUserIdOrderByClockDatetimeDescIdDesc(businessId, scopedUserId, pageable);
         } else {
             entries = scopedUserId == null
-                    ? presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
+                    ? presenceRepository.findByBusinessIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
                             businessId, range[0], range[1], pageable)
-                    : presenceRepository.findByBusinessIdAndUserIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
+                    : presenceRepository.findByBusinessIdAndUserIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
                             businessId, scopedUserId, range[0], range[1], pageable);
         }
         if (entries.isEmpty()) return entries.map(p -> toDto(p, true));
@@ -316,23 +356,34 @@ public class PresenceService {
     }
 
     /**
-     * The inclusive [from, to] days the filter covers, or null for "no period filter".
-     * A {@code month} without a {@code year} means that month of the <b>current</b> year.
+     * The {@code [from, to]} instants the period filter covers (inclusive of the last day's
+     * final moment), or null for "no period filter". A {@code month} without a {@code year}
+     * means that month of the <b>current</b> year. The range is over {@code clockDatetime} —
+     * there is no stored date column to compare against any more.
      */
-    private LocalDate[] monthYearRange(Integer year, Integer month) {
+    private LocalDateTime[] monthYearRange(Integer year, Integer month) {
         if (year == null && month == null) return null;
         int y = year != null ? year : LocalDate.now().getYear();
         if (y < 2000 || y > 2100) {
             throw new IllegalArgumentException("year harus antara 2000 dan 2100");
         }
-        if (month == null) {
-            return new LocalDate[]{LocalDate.of(y, 1, 1), LocalDate.of(y, 12, 31)};
-        }
-        if (month < 1 || month > 12) {
+        if (month != null && (month < 1 || month > 12)) {
             throw new IllegalArgumentException("month harus antara 1 dan 12");
         }
-        YearMonth ym = YearMonth.of(y, month);
-        return new LocalDate[]{ym.atDay(1), ym.atEndOfMonth()};
+        LocalDate firstDay = month == null ? LocalDate.of(y, 1, 1) : YearMonth.of(y, month).atDay(1);
+        LocalDate lastDay = month == null ? LocalDate.of(y, 12, 31) : YearMonth.of(y, month).atEndOfMonth();
+        return new LocalDateTime[]{firstDay.atStartOfDay(), endOfDay(lastDay)};
+    }
+
+    // Whole calendar day as a clock_datetime range, used by the period filter and the
+    // once-per-day / clock-in-before-clock-out checks.
+    private boolean hasEntryOn(Long userId, String type, LocalDate day) {
+        return presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(
+                userId, type, day.atStartOfDay(), endOfDay(day));
+    }
+
+    private static LocalDateTime endOfDay(LocalDate day) {
+        return day.atTime(LocalTime.MAX);
     }
 
     /**

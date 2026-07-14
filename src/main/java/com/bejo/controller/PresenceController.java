@@ -4,6 +4,7 @@ import com.bejo.dto.request.PresenceClockRequestDto;
 import com.bejo.dto.request.PresencePingRequestDto;
 import com.bejo.dto.request.PresenceRespondRequestDto;
 import com.bejo.dto.response.ApiResponseDto;
+import com.bejo.dto.response.PingResultResponseDto;
 import com.bejo.dto.response.PresenceResponseDto;
 import com.bejo.service.PresenceService;
 import com.bejo.util.Pagination;
@@ -48,14 +49,17 @@ public class PresenceController {
                 .body(ApiResponseDto.success("Absen keluar berhasil dicatat", data));
     }
 
-    // Super admin only: records + pushes a PING entry to the whole team, or to the one
-    // member named by userId. Only members are pinged — never the super admin's own devices.
+    // Super admin only: records + pushes a PING entry to the whole team, or to the one member
+    // named by userId. Only members are pinged — never the super admin's own devices, and never
+    // a member with no registered device. The result says how many of the team were reached.
     @PostMapping("/pings")
-    public ResponseEntity<ApiResponseDto<List<PresenceResponseDto>>> ping(
+    public ResponseEntity<ApiResponseDto<PingResultResponseDto>> ping(
             @Valid @RequestBody(required = false) PresencePingRequestDto request,
             Authentication authentication) {
-        List<PresenceResponseDto> data = presenceService.ping(authentication.getName(), request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponseDto.list(data));
+        // No prose here on purpose: the response carries the counts (pinged / totalMembers)
+        // and the app writes the sentence it wants to show.
+        PingResultResponseDto data = presenceService.ping(authentication.getName(), request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponseDto.success(data));
     }
 
     // The member acknowledges their ping: stamps responseDatetime + where they are (a ping is

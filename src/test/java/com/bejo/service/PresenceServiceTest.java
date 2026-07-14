@@ -6,11 +6,13 @@ import com.bejo.constant.PushType;
 import com.bejo.dto.request.PresenceClockRequestDto;
 import com.bejo.dto.request.PresencePingRequestDto;
 import com.bejo.dto.request.PresenceRespondRequestDto;
+import com.bejo.dto.response.PingResultResponseDto;
 import com.bejo.dto.response.PresenceResponseDto;
 import com.bejo.entity.Presence;
 import com.bejo.entity.User;
 import com.bejo.exception.ForbiddenException;
 import com.bejo.repository.PresenceRepository;
+import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +25,7 @@ import org.springframework.data.domain.PageRequest;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,6 +50,7 @@ class PresenceServiceTest {
 
     @Mock private PresenceRepository presenceRepository;
     @Mock private UserRepository userRepository;
+    @Mock private SessionRepository sessionRepository;
     @Mock private PushNotificationService pushNotificationService;
     @Mock private BusinessContext businessContext;
 
@@ -57,7 +61,16 @@ class PresenceServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PresenceService(presenceRepository, userRepository, pushNotificationService, businessContext);
+        service = new PresenceService(presenceRepository, userRepository, sessionRepository,
+                pushNotificationService, businessContext);
+
+        // By default every member has a device registered for push (the ping flow skips
+        // members that have none) — the no-device tests override this. Null-safe because
+        // Mockito replays the matcher with a null argument while recording an override.
+        lenient().when(sessionRepository.findUsernamesWithPushToken(any())).thenAnswer(inv -> {
+            Collection<String> usernames = inv.getArgument(0);
+            return usernames == null ? List.of() : List.copyOf(usernames);
+        });
 
         admin = user(1L, "boss", "Boss", BusinessRole.SUPER_ADMIN);
         member = user(2L, "budi", "Budi", BusinessRole.MEMBER);
@@ -115,6 +128,11 @@ class PresenceServiceTest {
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
                 .thenReturn(Optional.of(admin));
 
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(
+                eq(2L), eq(PresenceType.CLOCK_OUT), any(), any())).thenReturn(false);
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(
+                eq(2L), eq(PresenceType.CLOCK_IN), any(), any())).thenReturn(true);   // clocked in this morning
+
         service.clockOut("budi", new PresenceClockRequestDto(-6.2, 106.8, LocalDateTime.now(), null));
 
         verify(presenceRepository).save(any(Presence.class));
@@ -126,7 +144,7 @@ class PresenceServiceTest {
     @Test
     void clockingInTwiceOnTheSameDayIsRejected() {
         LocalDateTime at = LocalDateTime.of(2026, 7, 13, 9, 30);
-        when(presenceRepository.existsByUserIdAndTypeAndPresenceDate(2L, PresenceType.CLOCK_IN, at.toLocalDate()))
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(eq(2L), eq(PresenceType.CLOCK_IN), any(), any()))
                 .thenReturn(true);
 
         assertThatThrownBy(() -> service.clockIn("budi",
@@ -141,7 +159,7 @@ class PresenceServiceTest {
     @Test
     void clockingOutTwiceOnTheSameDayIsRejected() {
         LocalDateTime at = LocalDateTime.of(2026, 7, 13, 18, 0);
-        when(presenceRepository.existsByUserIdAndTypeAndPresenceDate(2L, PresenceType.CLOCK_OUT, at.toLocalDate()))
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(eq(2L), eq(PresenceType.CLOCK_OUT), any(), any()))
                 .thenReturn(true);
 
         assertThatThrownBy(() -> service.clockOut("budi",
@@ -156,7 +174,7 @@ class PresenceServiceTest {
     void clockingInIsAllowedAgainOnTheNextDay() {
         // Yesterday's clock-in doesn't block today's: the check is per calendar day
         LocalDateTime today = LocalDateTime.of(2026, 7, 14, 8, 0);
-        when(presenceRepository.existsByUserIdAndTypeAndPresenceDate(2L, PresenceType.CLOCK_IN, today.toLocalDate()))
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(eq(2L), eq(PresenceType.CLOCK_IN), any(), any()))
                 .thenReturn(false);
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
                 .thenReturn(Optional.of(admin));
@@ -172,8 +190,10 @@ class PresenceServiceTest {
     void aClockOutOnTheSameDayAsAClockInIsAllowed() {
         // The limit is one of EACH type per day — clocking out after clocking in is the norm
         LocalDateTime out = LocalDateTime.of(2026, 7, 13, 17, 0);
-        when(presenceRepository.existsByUserIdAndTypeAndPresenceDate(2L, PresenceType.CLOCK_OUT, out.toLocalDate()))
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(eq(2L), eq(PresenceType.CLOCK_OUT), any(), any()))
                 .thenReturn(false);
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(eq(2L), eq(PresenceType.CLOCK_IN), any(), any()))
+                .thenReturn(true);   // they clocked in this morning
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
                 .thenReturn(Optional.of(admin));
 
@@ -181,6 +201,25 @@ class PresenceServiceTest {
                 new PresenceClockRequestDto(-6.2, 106.8, out, null));
 
         assertThat(dto.type()).isEqualTo(PresenceType.CLOCK_OUT);
+    }
+
+    @Test
+    void clockingOutWithoutClockingInIsRejected() {
+        LocalDateTime out = LocalDateTime.of(2026, 7, 13, 17, 0);
+        // No clock-out yet today, but no clock-in either — you can't leave a shift you
+        // never started
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(
+                eq(2L), eq(PresenceType.CLOCK_OUT), any(), any())).thenReturn(false);
+        when(presenceRepository.existsByUserIdAndTypeAndClockDatetimeBetween(
+                eq(2L), eq(PresenceType.CLOCK_IN), any(), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.clockOut("budi",
+                new PresenceClockRequestDto(-6.2, 106.8, out, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("belum absen masuk hari ini");
+
+        verify(presenceRepository, never()).save(any());
+        verifyNoInteractions(pushNotificationService);
     }
 
     @Test
@@ -226,7 +265,7 @@ class PresenceServiceTest {
         when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
                 .thenReturn(List.of(member, other));
 
-        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(null));
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(null)).presences();
 
         assertThat(created).hasSize(2);
         assertThat(created).allSatisfy(dto -> {
@@ -255,7 +294,7 @@ class PresenceServiceTest {
                 .thenReturn(List.of(member, other));
 
         // Only Siti is targeted — Budi is not pinged at all
-        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(3L));
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(3L)).presences();
 
         assertThat(created).hasSize(1);
         assertThat(created.get(0).username()).isEqualTo("siti");
@@ -300,7 +339,7 @@ class PresenceServiceTest {
         when(presenceRepository.findLastPingAtByUserIds(eq(BIZ), any()))
                 .thenReturn(List.<Object[]>of(new Object[]{2L, LocalDateTime.now().minusMinutes(10)}));
 
-        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(null));
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(null)).presences();
 
         // Budi is skipped, but he doesn't block Siti
         assertThat(created).hasSize(1);
@@ -336,7 +375,7 @@ class PresenceServiceTest {
         // Skipping everyone would be a silent no-op — say so instead
         assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Semua anggota tim baru saja di-ping");
+                .hasMessageContaining("Tidak ada anggota tim yang dapat di-ping");
 
         verify(presenceRepository, never()).save(any());
     }
@@ -349,10 +388,61 @@ class PresenceServiceTest {
         when(presenceRepository.findLastPingAtByUserIds(eq(BIZ), any()))
                 .thenReturn(List.<Object[]>of(new Object[]{2L, LocalDateTime.now().minusHours(1).minusSeconds(1)}));
 
-        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(2L));
+        List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(2L)).presences();
 
         assertThat(created).hasSize(1);
         verify(pushNotificationService).sendUrgentToUser(eq("budi"), anyMap());
+    }
+
+    @Test
+    void aMemberWithNoDeviceIsSkippedAndReportedOnATeamPing() {
+        User other = user(3L, "siti", "Siti", BusinessRole.MEMBER);
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member, other));
+        // Only Siti has a device registered for push
+        when(sessionRepository.findUsernamesWithPushToken(any())).thenReturn(List.of("siti"));
+
+        PingResultResponseDto result = service.ping("boss", new PresencePingRequestDto(null));
+
+        // Budi gets no PING row at all — recording one would burn his hour-long cooldown
+        // on a message that could never reach him
+        assertThat(result.pinged()).isEqualTo(1);
+        assertThat(result.totalMembers()).isEqualTo(2);
+        assertThat(result.presences()).singleElement()
+                .satisfies(p -> assertThat(p.username()).isEqualTo("siti"));
+        assertThat(result.skipped()).singleElement().satisfies(s -> {
+            assertThat(s.username()).isEqualTo("budi");
+            assertThat(s.reason()).isEqualTo("NO_DEVICE");
+        });
+        verify(presenceRepository, times(1)).save(any(Presence.class));
+        verify(pushNotificationService, never()).sendUrgentToUser(eq("budi"), anyMap());
+    }
+
+    @Test
+    void aTargetedPingToAMemberWithNoDeviceIsRejected() {
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member));
+        when(sessionRepository.findUsernamesWithPushToken(any())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(2L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("belum memiliki perangkat");
+
+        verify(presenceRepository, never()).save(any());
+        verifyNoInteractions(pushNotificationService);
+    }
+
+    @Test
+    void thePingResultCountsTheWholeTeam() {
+        User other = user(3L, "siti", "Siti", BusinessRole.MEMBER);
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member, other));
+
+        PingResultResponseDto result = service.ping("boss", new PresencePingRequestDto(null));
+
+        assertThat(result.pinged()).isEqualTo(2);
+        assertThat(result.totalMembers()).isEqualTo(2);
+        assertThat(result.skipped()).isEmpty();
     }
 
     @Test
@@ -412,6 +502,20 @@ class PresenceServiceTest {
     }
 
     @Test
+    void yesterdaysPingCanNoLongerBeResponded() {
+        Presence stale = ping(203L, 2L);
+        stale.setClockDatetime(LocalDateTime.now().minusDays(1));
+        when(presenceRepository.findByIdAndBusinessId(203L, BIZ)).thenReturn(Optional.of(stale));
+
+        // "Where are you right now?" answered a day late says nothing
+        assertThatThrownBy(() -> service.respond("budi", 203L, reply()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("kedaluwarsa");
+
+        verify(presenceRepository, never()).markResponded(any(), any(), any(), any(), any());
+    }
+
+    @Test
     void onlyAPingCanBeResponded() {
         Presence clockIn = ping(202L, 2L);
         clockIn.setType(PresenceType.CLOCK_IN);
@@ -444,26 +548,28 @@ class PresenceServiceTest {
 
     @Test
     void superAdminListsTheWholeBusinessFilteredByMonthYear() {
-        when(presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
+        when(presenceRepository.findByBusinessIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
                 eq(BIZ), any(), any(), any())).thenReturn(Page.empty());
 
         service.list("boss", null, 2026, 7, PageRequest.of(0, 50));
 
         // July 2026 → the whole month, inclusive
-        verify(presenceRepository).findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
-                eq(BIZ), eq(LocalDate.of(2026, 7, 1)), eq(LocalDate.of(2026, 7, 31)), any());
+        verify(presenceRepository).findByBusinessIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
+                eq(BIZ), eq(LocalDate.of(2026, 7, 1).atStartOfDay()),
+                eq(LocalDate.of(2026, 7, 31).atTime(java.time.LocalTime.MAX)), any());
     }
 
     @Test
     void monthWithoutYearMeansThatMonthOfTheCurrentYear() {
-        when(presenceRepository.findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
+        when(presenceRepository.findByBusinessIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
                 eq(BIZ), any(), any(), any())).thenReturn(Page.empty());
 
         service.list("boss", null, null, 7, PageRequest.of(0, 50));
 
         int thisYear = LocalDate.now().getYear();
-        verify(presenceRepository).findByBusinessIdAndPresenceDateBetweenOrderByClockDatetimeDescIdDesc(
-                eq(BIZ), eq(LocalDate.of(thisYear, 7, 1)), eq(LocalDate.of(thisYear, 7, 31)), any());
+        verify(presenceRepository).findByBusinessIdAndClockDatetimeBetweenOrderByClockDatetimeDescIdDesc(
+                eq(BIZ), eq(LocalDate.of(thisYear, 7, 1).atStartOfDay()),
+                eq(LocalDate.of(thisYear, 7, 31).atTime(java.time.LocalTime.MAX)), any());
     }
 
     @Test
@@ -500,7 +606,6 @@ class PresenceServiceTest {
         p.setName("Budi");
         p.setType(PresenceType.PING);
         p.setClockDatetime(LocalDateTime.now());
-        p.setPresenceDate(LocalDate.now());
         return p;
     }
 

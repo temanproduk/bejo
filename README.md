@@ -1130,7 +1130,9 @@ Staff attendance for the business: members clock in and out with their location,
 
 **Who may do what:** only a **member** clocks in/out (a super admin gets `403` — they don't take attendance); only the **super admin** sends pings; a member responds only to **their own** ping. On the history the super admin sees the whole business, a member only their own entries.
 
-**Once per day:** a member may clock in **at most once** and clock out **at most once** per calendar day. A repeat is rejected with `400` (`"Kamu sudah absen masuk hari ini"`); the next day resets. Clocking out on the same day as clocking in is of course fine — the limit is one of *each* type. Pings are not limited: the super admin may ping the same member several times a day.
+**Once per day:** a member may clock in **at most once** and clock out **at most once** per calendar day. A repeat is rejected with `400` (`"Kamu sudah absen masuk hari ini"`); the next day resets. Clocking out on the same day as clocking in is of course fine — the limit is one of *each* type.
+
+**A clock-out needs that day's clock-in:** you can't leave a shift you never started (`400` — `"Kamu belum absen masuk hari ini"`). It's keyed on the clock-out's own calendar day, so **a shift never spans midnight** — a clock-out at 01:00 belongs to the new day and needs a clock-in on it.
 
 #### `POST /api/presences/clock-in` — Clock in (member)
 
@@ -1182,20 +1184,41 @@ Same body and response shape, with `type: "CLOCK_OUT"`. The super admin's push t
 
 The body (and `userId` in it) is optional: **omit it to ping the whole team**, or set it to ping just that one member. "The whole team" means the business's **members** — a ping never goes to the super admin's own devices.
 
-Records one `PING` entry per targeted member and pushes each of them:
+Records one `PING` entry per targeted member and pushes **all of that member's devices**:
 
 > **Ping Absen Bejoo!**
 > Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?
 
 The ping carries **no note** — the `note` on a PING entry is reserved for the member's reply (see [respond](#post-apipresencesidrespond--acknowledge-a-ping-member)).
 
+**A ping only goes to members that can receive it.** A member with no registered device is left out entirely: writing a PING for them would start their hour-long cooldown for a message nothing could ever deliver.
+
+The response says **how many of the team were actually reached**, so a partial ping never looks like a full one (the app composes whatever sentence it wants from these numbers):
+
+```json
+{
+  "status": 1,
+  "data": {
+    "pinged": 2,
+    "totalMembers": 4,
+    "skipped": [
+      { "userId": 5, "username": "siti", "name": "Siti", "reason": "COOLDOWN" },
+      { "userId": 6, "username": "andi", "name": "Andi", "reason": "NO_DEVICE" }
+    ],
+    "presences": [ { "id": 13, "userId": 4, "username": "budi", "type": "PING", "responseDatetime": null } ]
+  }
+}
+```
+
+`reason` is `NO_DEVICE` (no device registered for push) or `COOLDOWN` (pinged within the last hour).
+
 **Cooldown: a member can only be pinged once an hour.** It's a spot-check, not a nag.
 
 | | Behaviour |
 |---|---|
-| **Targeted** ping to a member pinged < 1h ago | `400` — `"Budi baru saja di-ping. Coba lagi dalam 50 menit"`. You asked for that person; you're told it didn't happen. |
-| **Team-wide** ping | Members pinged < 1h ago are **skipped**; everyone else is pinged, and the response's `count`/`data` shows exactly who was. One recently-pinged person can't block the whole team. |
-| **Team-wide**, everyone cooling down | `400` — nobody is left to reach, and a silent no-op would be worse. |
+| **Targeted** ping to a member pinged < 1h ago (or with no device) | `400` — `"Budi baru saja di-ping. Coba lagi dalam 50 menit"`. You asked for that person; you're told it didn't happen. |
+| **Team-wide** ping | Members pinged < 1h ago (or with no device) are **skipped**; everyone else is pinged, and `pinged`/`skipped` shows exactly who. One recently-pinged person can't block the whole team. |
+| **Team-wide**, nobody eligible | `400` — nobody is left to reach, and a silent no-op would be worse. |
 
 `400` if `userId` isn't an active member of the caller's own business (an unknown id, another business's staff, or the super admin's own id) — and nothing is sent. `400` if the business has no members yet (team-wide ping); `403` for a non–super-admin.
 
@@ -1225,7 +1248,11 @@ The member taps the ping in the app and replies **with their location**:
 
 Stamps `responseDatetime`, the coordinates, and the `note` on the entry, and returns it. **A PING is created with no location and no note — this is the only thing that writes them.** The super admin who sent the ping sets neither; they read the member's reply in the [history](#get-apipresences--attendance-history), next to the response time.
 
-`403` if the ping belongs to someone else, `400` if the entry isn't a `PING` or was already responded to (a ping can only be acknowledged once), `404` if it isn't in the caller's business.
+**Same day only.** A ping expires at the end of the day it was sent — "where are you right now?" answered a day late tells the super admin nothing (`400` — `"Ping ini sudah kedaluwarsa — hanya dapat direspons di hari yang sama"`).
+
+**Once only.** The member may have the app on several devices and can answer from any of them, but only the **first** reply is accepted; a second gets `400` (`"Ping ini sudah direspons"`).
+
+`403` if the ping belongs to someone else, `400` if the location is missing / the entry isn't a `PING` / it expired / it was already answered, `404` if it isn't in the caller's business.
 
 #### `GET /api/presences` — Attendance history
 

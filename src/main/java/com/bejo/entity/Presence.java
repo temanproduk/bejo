@@ -13,9 +13,10 @@ import java.time.LocalDateTime;
  * rename or soft-delete.
  *
  * <p>{@code clockDatetime} is the moment the entry is about (client-supplied for a
- * clock-in/out, the send time for a ping) and {@code presenceDate} is its WIB calendar
- * day — the month/year filter reads that column. {@code responseDatetime} is only set on
- * a PING, when the member taps to acknowledge it.
+ * clock-in/out, the send time for a ping). Its calendar day is <b>derived</b>, never stored
+ * — the month/year filter ranges over {@code clockDatetime}, and the once-per-day clock rule
+ * is a unique index on {@code CAST(clock_datetime AS DATE)}. {@code responseDatetime} is only
+ * set on a PING, when the member taps to acknowledge it.
  */
 @Entity
 @Table(name = "presences")
@@ -45,10 +46,6 @@ public class Presence {
     @Column(name = "clock_datetime", nullable = false)
     private LocalDateTime clockDatetime;
 
-    // Calendar day of clockDatetime — the month-year filter ranges over this
-    @Column(name = "presence_date", nullable = false)
-    private LocalDate presenceDate;
-
     // Where the member clocked in/out. Null on a PING (the super admin sends no location).
     private Double latitude;
 
@@ -66,7 +63,12 @@ public class Presence {
     @PrePersist
     void prePersist() {
         if (createdAt == null) createdAt = LocalDateTime.now();
-        if (presenceDate == null && clockDatetime != null) presenceDate = clockDatetime.toLocalDate();
+    }
+
+    /** The calendar day this entry falls on — derived, never stored (it's just the date part). */
+    @Transient
+    public LocalDate getPresenceDate() {
+        return clockDatetime != null ? clockDatetime.toLocalDate() : null;
     }
 
     public Long getId() { return id; }
@@ -82,8 +84,6 @@ public class Presence {
     public void setType(String type) { this.type = type; }
     public LocalDateTime getClockDatetime() { return clockDatetime; }
     public void setClockDatetime(LocalDateTime clockDatetime) { this.clockDatetime = clockDatetime; }
-    public LocalDate getPresenceDate() { return presenceDate; }
-    public void setPresenceDate(LocalDate presenceDate) { this.presenceDate = presenceDate; }
     public Double getLatitude() { return latitude; }
     public void setLatitude(Double latitude) { this.latitude = latitude; }
     public Double getLongitude() { return longitude; }
