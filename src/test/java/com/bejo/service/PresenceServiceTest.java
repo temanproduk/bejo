@@ -426,7 +426,7 @@ class PresenceServiceTest {
 
         assertThatThrownBy(() -> service.ping("boss", new PresencePingRequestDto(2L)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("belum memiliki perangkat");
+                .hasMessageContaining("belum ada sesi login yang aktif");
 
         verify(presenceRepository, never()).save(any());
         verifyNoInteractions(pushNotificationService);
