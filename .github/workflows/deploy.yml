@@ -82,6 +82,11 @@ jobs:
           [ -n "${{ vars.REQUEST_LOG_BODY_ON_ERROR }}" ]  && ENV_VARS="$ENV_VARS@REQUEST_LOG_BODY_ON_ERROR=${{ vars.REQUEST_LOG_BODY_ON_ERROR }}"
           [ -n "${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}" ] && ENV_VARS="$ENV_VARS@REQUEST_LOG_MAX_BODY_LENGTH=${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}"
 
+          # Cloud Run request timeout (seconds). Default 60; override with the CLOUD_RUN_TIMEOUT
+          # GitHub Actions variable (max 3600 for HTTP/1).
+          RUN_TIMEOUT="${{ vars.CLOUD_RUN_TIMEOUT }}"
+          RUN_TIMEOUT="${RUN_TIMEOUT:-60}"
+
           gcloud run deploy "${{ env.GCP_SERVICE_NAME }}" \
             --image="${{ steps.image.outputs.image }}" \
             --region="${{ env.GCP_REGION }}" \
@@ -99,6 +104,7 @@ jobs:
             --memory=512Mi \
             --cpu=1 \
             --concurrency=80 \
+            --timeout="$RUN_TIMEOUT" \
             --cpu-throttling \
             --cpu-boost \
             --allow-unauthenticated \

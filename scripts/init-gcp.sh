@@ -245,6 +245,7 @@ gcloud run deploy "$GCP_SERVICE_NAME" \
   --max-instances="${CLOUD_RUN_MAX_INSTANCES:-2}" \
   --memory="${CLOUD_RUN_MEMORY:-512Mi}" \
   --cpu="${CLOUD_RUN_CPU:-1}" \
+  --timeout="${CLOUD_RUN_TIMEOUT:-60}" \
   --cpu-boost \
   --allow-unauthenticated \
   --quiet
