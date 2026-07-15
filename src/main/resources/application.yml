@@ -74,8 +74,8 @@ app:
     credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
     credentials-base64: ${FIREBASE_CREDENTIALS_BASE64:}
   business:
-    # Max users per business, INCLUDING the super admin (default 5)
-    max-users: ${BUSINESS_MAX_USERS:5}
+    # Max users per business, INCLUDING the super admin (default 10)
+    max-users: ${BUSINESS_MAX_USERS:10}
     # Allowed business sizes + industries (comma-separated), validated at registration.
     # Configurable so the option lists can change without a code change. The default-*
     # value is applied when the client omits the field; it must be one of the list values.

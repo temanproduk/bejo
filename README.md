@@ -1545,7 +1545,7 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
 | `JWT_SECRET` | yes | Base64-encoded signing key, min 256 bits — `openssl rand -base64 32` |
 | `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `604800000` (7 days); `0` disables expiry |
-| `BUSINESS_MAX_USERS` | no | Max users per business, **including** the super admin. Default `5` |
+| `BUSINESS_MAX_USERS` | no | Max users per business, **including** the super admin. Default `10` |
 | `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` | no | Allowed business sizes + default (comma-separated). Default `Mikro,Kecil,Menengah,Besar,Non-Profit` / `Mikro` |
 | `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | no | Allowed industries + default (comma-separated). Default is the 11-industry list / `Makanan & Minuman` |
 | `CALLBACK_DEFAULT_USERNAME` | no | Seed user PoC QRIS callbacks attribute to. Defaults to `SEED_USERNAME` |

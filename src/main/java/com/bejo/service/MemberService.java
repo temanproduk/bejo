@@ -32,7 +32,7 @@ public class MemberService {
     private static final Logger log = LoggerFactory.getLogger(MemberService.class);
 
     // Max users a business may have, INCLUDING the super admin (configurable)
-    @Value("${app.business.max-users:5}")
+    @Value("${app.business.max-users:10}")
     private int maxUsersPerBusiness;
 
     private final UserRepository userRepository;
