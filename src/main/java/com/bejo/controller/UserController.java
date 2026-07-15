@@ -48,7 +48,7 @@ public class UserController {
             @Valid @RequestBody UpdateProfileRequestDto request,
             Authentication authentication) {
         userService.updateProfile(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Profile updated successfully", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Profil berhasil diperbarui", null));
     }
 
     @PatchMapping("/me/bank")
@@ -56,13 +56,13 @@ public class UserController {
             @Valid @RequestBody UpdateBankRequestDto request,
             Authentication authentication) {
         userService.updateBank(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Informasi rekening berhasil diperbarui", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Rekening berhasil diperbarui", null));
     }
 
     @PostMapping("/me/bank/reset")
     public ResponseEntity<ApiResponseDto<BankResponseDto>> resetBank(Authentication authentication) {
         BankResponseDto data = userService.resetBank(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("Informasi rekening berhasil direset ke data awal", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Rekening dikembalikan ke awal", data));
     }
 
     @PatchMapping("/me/business")
@@ -70,13 +70,13 @@ public class UserController {
             @Valid @RequestBody UpdateBusinessRequestDto request,
             Authentication authentication) {
         userService.updateBusiness(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Informasi bisnis berhasil diperbarui", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Info bisnis berhasil diperbarui", null));
     }
 
     @PostMapping("/me/business/reset")
     public ResponseEntity<ApiResponseDto<BusinessResponseDto>> resetBusiness(Authentication authentication) {
         BusinessResponseDto data = userService.resetBusiness(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("Informasi bisnis berhasil direset ke data awal", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Info bisnis dikembalikan ke awal", data));
     }
 
     @PatchMapping("/me/password")
@@ -84,6 +84,6 @@ public class UserController {
             @Valid @RequestBody ChangePasswordRequestDto request,
             Authentication authentication) {
         userService.changePassword(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Password changed successfully", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Kata sandi berhasil diubah", null));
     }
 }

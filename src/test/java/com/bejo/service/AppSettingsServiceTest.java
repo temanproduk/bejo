@@ -155,7 +155,7 @@ class AppSettingsServiceTest {
         assertThatThrownBy(() -> service.updateKeywords("alice",
                 new UpdateKeywordsRequestDto(null, null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Tidak ada field");
+                .hasMessageContaining("Tidak ada data");
         verify(repository, never()).save(any());
     }
 

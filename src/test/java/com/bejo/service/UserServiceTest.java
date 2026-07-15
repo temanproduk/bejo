@@ -320,7 +320,7 @@ class UserServiceTest {
 
         assertThatThrownBy(() -> userService.updateProfilePicture("alice", "@@ not base64 @@"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("base64");
+                .hasMessageContaining("tidak valid");
         verify(businessRepository, never()).save(any());
     }
 

@@ -70,7 +70,7 @@ public class PresenceController {
             @Valid @RequestBody PresenceRespondRequestDto request,
             Authentication authentication) {
         PresenceResponseDto data = presenceService.respond(authentication.getName(), id, request);
-        return ResponseEntity.ok(ApiResponseDto.success("Ping direspons", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Ping berhasil dijawab", data));
     }
 
     // Super admin sees the whole business (optionally one member via userId); a member only

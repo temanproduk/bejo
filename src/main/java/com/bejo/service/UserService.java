@@ -266,10 +266,10 @@ public class UserService {
         try {
             decoded = Base64.getDecoder().decode(base64);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException(field + " bukan format base64 yang valid");
+            throw new IllegalArgumentException("Format gambar tidak valid");
         }
         if (decoded.length > MAX_PICTURE_BYTES) {
-            throw new IllegalArgumentException(field + " terlalu besar (maksimal 1MB)");
+            throw new IllegalArgumentException("Ukuran gambar maksimal 1MB");
         }
     }
 }

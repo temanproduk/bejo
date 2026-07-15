@@ -30,7 +30,7 @@ public class NotificationController {
             @Valid @RequestBody SendNotificationRequestDto request,
             Authentication authentication) throws FirebaseMessagingException {
         notificationService.send(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Test notification sent", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Notifikasi uji terkirim", null));
     }
 
     // Test/utility: broadcast an FCM push to ALL of the caller's devices (no deviceId).
@@ -40,6 +40,6 @@ public class NotificationController {
             @Valid @RequestBody BroadcastNotificationRequestDto request,
             Authentication authentication) {
         int sent = notificationService.broadcastToUser(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Notification sent to " + sent + " device(s)", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Notifikasi terkirim ke " + sent + " perangkat", null));
     }
 }

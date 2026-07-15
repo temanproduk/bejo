@@ -63,7 +63,7 @@ public class ProductCategoryService {
     public void delete(String username, Long id) {
         Long businessId = businessContext.requireBusinessId(username);
         ProductCategory category = categoryRepository.findByIdAndBusinessId(id, businessId)
-                .orElseThrow(() -> new ResourceNotFoundException("Category not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Kategori tidak ditemukan: " + id));
         int cleared = productRepository.clearCategory(businessId, id);
         categoryRepository.delete(category);
         log.info("[CATEGORY] Deleted id={} for businessId={} (uncategorized {} products)", id, businessId, cleared);

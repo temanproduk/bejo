@@ -25,7 +25,7 @@ public class AppSettingsController {
     @GetMapping
     public ResponseEntity<ApiResponseDto<AppSettingsResponseDto>> getSettings(Authentication authentication) {
         AppSettingsResponseDto data = appSettingsService.getSettings(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("App settings retrieved", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Pengaturan berhasil dimuat", data));
     }
 
     @PutMapping("/monitored-apps")
@@ -33,7 +33,7 @@ public class AppSettingsController {
             @Valid @RequestBody UpdateMonitoredAppsRequestDto request,
             Authentication authentication) {
         AppSettingsResponseDto data = appSettingsService.updateMonitoredApps(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Daftar aplikasi dipantau berhasil disimpan", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Aplikasi terpantau disimpan", data));
     }
 
     @PutMapping("/keywords")
@@ -41,7 +41,7 @@ public class AppSettingsController {
             @Valid @RequestBody UpdateKeywordsRequestDto request,
             Authentication authentication) {
         AppSettingsResponseDto data = appSettingsService.updateKeywords(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Kata kunci notifikasi berhasil disimpan", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Kata kunci notifikasi disimpan", data));
     }
 
     @PutMapping("/qris-with-profile-picture")
@@ -49,7 +49,7 @@ public class AppSettingsController {
             @Valid @RequestBody UpdateQrisWithProfilePictureRequestDto request,
             Authentication authentication) {
         AppSettingsResponseDto data = appSettingsService.updateQrisWithProfilePicture(authentication.getName(), request.enabled());
-        return ResponseEntity.ok(ApiResponseDto.success("Pengaturan QRIS pada foto profil berhasil disimpan", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Pengaturan QRIS disimpan", data));
     }
 
     @PutMapping("/inventory")
@@ -57,6 +57,6 @@ public class AppSettingsController {
             @Valid @RequestBody UpdateInventoryEnabledRequestDto request,
             Authentication authentication) {
         AppSettingsResponseDto data = appSettingsService.updateInventoryEnabled(authentication.getName(), request.enabled());
-        return ResponseEntity.ok(ApiResponseDto.success("Pengaturan manajemen inventaris berhasil disimpan", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Pengaturan inventaris disimpan", data));
     }
 }

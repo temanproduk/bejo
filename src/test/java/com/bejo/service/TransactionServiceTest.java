@@ -115,7 +115,7 @@ class TransactionServiceTest {
 
         assertThatThrownBy(() -> transactionService.create("alice", "key-1", request("PARSED", null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("acquirer");
+                .hasMessageContaining("pembayaran");
     }
 
     @Test
@@ -346,7 +346,7 @@ class TransactionServiceTest {
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", empty))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Tidak ada field");
+                .hasMessageContaining("Tidak ada data");
         verify(transactionRepository, never()).save(any());
     }
 
@@ -363,7 +363,7 @@ class TransactionServiceTest {
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("MANAGED")
+                .hasMessageContaining("tidak dapat diubah")
                 .hasMessageContaining("tidak dapat diubah");
         verify(transactionRepository, never()).save(any());
     }
@@ -379,7 +379,7 @@ class TransactionServiceTest {
 
         assertThatThrownBy(() -> transactionService.update("alice", "TXN-1", req))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("acquirer");
+                .hasMessageContaining("pembayaran");
         verify(transactionRepository, never()).save(any());
     }
 
@@ -593,7 +593,7 @@ class TransactionServiceTest {
         var result = transactionService.bulkCreate("alice", request);
 
         assertThat(result.failed()).isEqualTo(1);
-        assertThat(result.results().getFirst().error()).contains("acquirer");
+        assertThat(result.results().getFirst().error()).contains("pembayaran");
         verify(transactionRepository, never()).save(any());
     }
 

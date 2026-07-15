@@ -117,7 +117,7 @@ class ProductServiceTest {
 
         assertThatThrownBy(() -> service.create("alice", req))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("base64");
+                .hasMessageContaining("tidak valid");
         verify(productRepository, never()).save(any());
     }
 
@@ -158,7 +158,7 @@ class ProductServiceTest {
 
         assertThatThrownBy(() -> service.update("alice", 1L, empty))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Tidak ada field");
+                .hasMessageContaining("Tidak ada data");
         verify(productRepository, never()).save(any());
     }
 

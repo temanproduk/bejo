@@ -128,7 +128,7 @@ class MemberServiceTest {
         assertThatThrownBy(() -> service.update("admin", 9L,
                 new com.bejo.dto.request.UpdateMemberRequestDto(null, null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Tidak ada field");
+                .hasMessageContaining("Tidak ada data");
         verify(userRepository, never()).save(any());
     }
 

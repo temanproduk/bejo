@@ -34,20 +34,20 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiResponseDto<Void>> handleNoRoute(NoResourceFoundException ex, HttpServletRequest req) {
         log.warn("[404] {} — no matching route", at(req));
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponseDto.error("Route not found"));
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponseDto.error("Alamat tidak ditemukan"));
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiResponseDto<Void>> handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex, HttpServletRequest req) {
         log.warn("[405] {} — method not allowed", at(req));
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
-                .body(ApiResponseDto.error("Method not allowed: " + ex.getMethod()));
+                .body(ApiResponseDto.error("Metode tidak diizinkan: " + ex.getMethod()));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponseDto<Void>> handleUnreadable(HttpMessageNotReadableException ex, HttpServletRequest req) {
         log.warn("[400] {} — unreadable body: {}", at(req), ex.getMessage());
-        return ResponseEntity.badRequest().body(ApiResponseDto.error("Request body tidak valid atau tidak ditemukan"));
+        return ResponseEntity.badRequest().body(ApiResponseDto.error("Data yang dikirim tidak valid"));
     }
 
     @ExceptionHandler(MissingRequestHeaderException.class)
@@ -103,7 +103,7 @@ public class GlobalExceptionHandler {
             }
             if ("uq_idempotency_key".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
-                        .body(ApiResponseDto.error("Permintaan dengan Idempotency-Key ini sedang diproses, coba lagi sebentar"));
+                        .body(ApiResponseDto.error("Permintaan sedang diproses, coba lagi"));
             }
             if ("uq_product_sku".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
@@ -155,12 +155,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponseDto<Void>> handleFcm(FirebaseMessagingException ex) {
         log.error("FCM error [{}]: {}", ex.getMessagingErrorCode(), ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                .body(ApiResponseDto.error("Failed to send notification: " + ex.getMessage()));
+                .body(ApiResponseDto.error("Gagal mengirim notifikasi"));
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponseDto<Void>> handleGeneral(Exception ex) {
         log.error("Unhandled exception", ex);
-        return ResponseEntity.internalServerError().body(ApiResponseDto.error("Internal server error"));
+        return ResponseEntity.internalServerError().body(ApiResponseDto.error("Terjadi kesalahan, coba lagi nanti"));
     }
 }

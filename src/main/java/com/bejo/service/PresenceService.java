@@ -101,12 +101,12 @@ public class PresenceService {
     private PresenceResponseDto clock(String username, PresenceClockRequestDto request, String type) {
         User user = businessContext.requireUser(username);
         if (user.isSuperAdmin()) {
-            throw new ForbiddenException("Super admin tidak melakukan absen");
+            throw new ForbiddenException("Super admin tidak perlu absen");
         }
         // The client sends the time, so a clock far in the future means a wrong device clock
         // (or a forged entry) — a day of slack absorbs any legitimate timezone/skew drift.
         if (request.clockDatetime().isAfter(LocalDateTime.now().plusDays(1))) {
-            throw new IllegalArgumentException("clockDatetime tidak boleh di masa depan");
+            throw new IllegalArgumentException("Waktu absen tidak boleh di masa depan");
         }
         // One clock-in and one clock-out per member per calendar day. Two simultaneous taps
         // could both pass this check, so the DB's uq_presence_clock_daily index has the last
@@ -178,7 +178,7 @@ public class PresenceService {
         List<User> allMembers = userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(
                 caller.getBusinessId(), BusinessRole.MEMBER);
         if (allMembers.isEmpty()) {
-            throw new IllegalArgumentException("Belum ada anggota tim yang dapat dikirimi ping");
+            throw new IllegalArgumentException("Belum ada anggota tim untuk di-ping");
         }
 
         Long targetUserId = request != null ? request.userId() : null;
@@ -265,8 +265,8 @@ public class PresenceService {
         }
         if (eligible.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Tidak ada anggota tim yang dapat di-ping saat ini (tidak ada perangkat terdaftar "
-                            + "atau semuanya baru saja di-ping)");
+                    "Tidak ada anggota tim yang dapat di-ping saat ini"
+                            + "");
         }
         return eligible;
     }
@@ -290,7 +290,7 @@ public class PresenceService {
             throw new ForbiddenException("Ping ini bukan milik Anda");
         }
         if (!PresenceType.PING.equals(presence.getType())) {
-            throw new IllegalArgumentException("Hanya ping yang dapat direspons");
+            throw new IllegalArgumentException("Hanya ping yang bisa dijawab");
         }
         // A ping keeps for a day, then it's stale. A rolling 24h window (not "the same
         // calendar date") is what the member actually experiences — a ping sent at 23:00
@@ -298,7 +298,7 @@ public class PresenceService {
         LocalDateTime respondedAt = LocalDateTime.now();
         if (respondedAt.isAfter(presence.getClockDatetime().plus(PING_RESPONSE_WINDOW))) {
             throw new IllegalArgumentException(
-                    "Ping ini sudah kedaluwarsa — hanya dapat direspons dalam 24 jam");
+                    "Ping sudah kedaluwarsa (maksimal 24 jam)");
         }
 
         // Conditional update, not a read-then-write: two simultaneous taps (the member has the
@@ -306,7 +306,7 @@ public class PresenceService {
         // updates a row here — the other is told it was already answered.
         if (presenceRepository.markResponded(presenceId, respondedAt, request.note(),
                 request.latitude(), request.longitude()) == 0) {
-            throw new IllegalArgumentException("Ping ini sudah direspons");
+            throw new IllegalArgumentException("Ping ini sudah dijawab");
         }
         presence.setResponseDatetime(respondedAt);
         presence.setNote(request.note());
@@ -370,10 +370,10 @@ public class PresenceService {
         if (year == null && month == null) return null;
         int y = year != null ? year : LocalDate.now().getYear();
         if (y < 2000 || y > 2100) {
-            throw new IllegalArgumentException("year harus antara 2000 dan 2100");
+            throw new IllegalArgumentException("Tahun tidak valid");
         }
         if (month != null && (month < 1 || month > 12)) {
-            throw new IllegalArgumentException("month harus antara 1 dan 12");
+            throw new IllegalArgumentException("Bulan harus antara 1 dan 12");
         }
         LocalDate firstDay = month == null ? LocalDate.of(y, 1, 1) : YearMonth.of(y, month).atDay(1);
         LocalDate lastDay = month == null ? LocalDate.of(y, 12, 31) : YearMonth.of(y, month).atEndOfMonth();

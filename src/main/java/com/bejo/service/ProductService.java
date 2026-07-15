@@ -98,29 +98,29 @@ public class ProductService {
         Long businessId = businessContext.requireBusinessId(username);
         log.info("[PRODUCT] Get id={} for businessId={}", id, businessId);
         Product p = productRepository.findByIdAndBusinessId(id, businessId)
-                .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan: " + id));
         return toDto(p, categoryName(businessId, p.getCategoryId()), true);
     }
 
     @Transactional
     public ProductResponseDto update(String username, Long id, UpdateProductRequestDto request) {
         if (request.isEmpty()) {
-            throw new IllegalArgumentException("Tidak ada field yang diubah");
+            throw new IllegalArgumentException("Tidak ada data yang diubah");
         }
         Long businessId = businessContext.requireBusinessId(username);
         Product p = productRepository.findByIdAndBusinessId(id, businessId)
-                .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan: " + id));
 
         if (request.sku() != null) {
             String sku = request.sku().trim();
-            if (sku.isBlank()) throw new IllegalArgumentException("sku tidak boleh kosong");
+            if (sku.isBlank()) throw new IllegalArgumentException("SKU wajib diisi");
             if (!sku.equals(p.getSku()) && productRepository.existsByBusinessIdAndSku(businessId, sku)) {
                 throw new IllegalArgumentException("SKU sudah digunakan: " + sku);
             }
             p.setSku(sku);
         }
         if (request.name() != null) {
-            if (request.name().isBlank()) throw new IllegalArgumentException("name tidak boleh kosong");
+            if (request.name().isBlank()) throw new IllegalArgumentException("Nama produk wajib diisi");
             p.setName(request.name().trim());
         }
         if (request.shortDescription() != null) p.setShortDescription(request.shortDescription());
@@ -191,7 +191,7 @@ public class ProductService {
     public void delete(String username, Long id) {
         Long businessId = businessContext.requireBusinessId(username);
         Product p = productRepository.findByIdAndBusinessId(id, businessId)
-                .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan: " + id));
         productRepository.delete(p);
         log.info("[PRODUCT] Deleted id={} for businessId={}", id, businessId);
     }
@@ -221,10 +221,10 @@ public class ProductService {
         try {
             decoded = Base64.getDecoder().decode(base64Image);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("photo bukan format base64 yang valid");
+            throw new IllegalArgumentException("Format foto tidak valid");
         }
         if (decoded.length > MAX_PHOTO_BYTES) {
-            throw new IllegalArgumentException("photo terlalu besar (maksimal 500KB)");
+            throw new IllegalArgumentException("Ukuran foto maksimal 500KB");
         }
     }
 

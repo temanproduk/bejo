@@ -65,13 +65,13 @@ public class AuthService {
         User user = userRepository.findByUsernameAndDeletedAtIsNull(request.username())
                 .orElseThrow(() -> {
                     loginFailureCounter.increment();
-                    return new IllegalArgumentException("Invalid credentials");
+                    return new IllegalArgumentException("Nama pengguna atau kata sandi salah");
                 });
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             loginFailureCounter.increment();
             log.warn("[LOGIN] Bad password for username={}", request.username());
-            throw new IllegalArgumentException("Invalid credentials");
+            throw new IllegalArgumentException("Nama pengguna atau kata sandi salah");
         }
 
         Business business = businessRepository.findById(user.getBusinessId())

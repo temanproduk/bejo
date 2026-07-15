@@ -487,7 +487,7 @@ class PresenceServiceTest {
         // Already responded — the update matches no row, so the second tap is rejected
         assertThatThrownBy(() -> service.respond("budi", 200L, reply()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("sudah direspons");
+                .hasMessageContaining("sudah dijawab");
     }
 
     @Test
@@ -589,7 +589,7 @@ class PresenceServiceTest {
     void invalidMonthIsRejected() {
         assertThatThrownBy(() -> service.list("boss", null, 2026, 13, PageRequest.of(0, 50)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("month");
+                .hasMessageContaining("Bulan");
 
         verifyNoInteractions(presenceRepository);
     }

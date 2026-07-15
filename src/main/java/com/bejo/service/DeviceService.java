@@ -27,7 +27,7 @@ public class DeviceService {
 
         int updated = sessionRepository.updatePushToken(username, deviceId, pushToken, LocalDateTime.now());
         if (updated < 1) {
-            throw new ResourceNotFoundException("Device ID not found: " + deviceId);
+            throw new ResourceNotFoundException("Perangkat tidak ditemukan: " + deviceId);
         }
 
         log.info("[TOKEN] Updated push token for deviceId={}", deviceId);

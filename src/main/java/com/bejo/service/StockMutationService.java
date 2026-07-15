@@ -141,7 +141,7 @@ public class StockMutationService {
         Long businessId = businessContext.requireBusinessId(username);
         log.info("[PURCHASE] Get stock mutation id={} for businessId={}", id, businessId);
         StockMutation purchase = stockMutationRepository.findByIdAndBusinessId(id, businessId)
-                .orElseThrow(() -> new ResourceNotFoundException("Stock mutation not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Data stok tidak ditemukan: " + id));
         return toDto(purchase, stockMutationItemRepository.findByMutationIdOrderByIdAsc(id));
     }
 

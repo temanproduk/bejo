@@ -63,7 +63,7 @@ public class MemberService {
         User caller = requireSuperAdmin(callerUsername);
         // Cap the number of users per business (super admin counts toward the limit)
         if (userRepository.countByBusinessIdAndDeletedAtIsNull(caller.getBusinessId()) >= maxUsersPerBusiness) {
-            throw new IllegalArgumentException("Jumlah pengguna bisnis sudah mencapai batas maksimal (" + maxUsersPerBusiness + ")");
+            throw new IllegalArgumentException("Jumlah pengguna sudah mencapai batas maksimal (" + maxUsersPerBusiness + ")");
         }
         if (userRepository.existsByUsernameAndDeletedAtIsNull(request.username())) {
             throw new IllegalArgumentException("Username sudah digunakan");
@@ -87,7 +87,7 @@ public class MemberService {
     @Transactional
     public MemberResponseDto update(String callerUsername, Long memberId, UpdateMemberRequestDto request) {
         if (request.isEmpty()) {
-            throw new IllegalArgumentException("Tidak ada field yang diubah");
+            throw new IllegalArgumentException("Tidak ada data yang diubah");
         }
         User caller = requireSuperAdmin(callerUsername);
         User member = requireMember(caller.getBusinessId(), memberId);

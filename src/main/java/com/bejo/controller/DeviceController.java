@@ -25,6 +25,6 @@ public class DeviceController {
             @Valid @RequestBody UpdateTokenRequestDto request,
             Authentication authentication) {
         UpdateTokenResponseDto data = deviceService.updateFcmToken(authentication.getName(), deviceId, request.pushToken());
-        return ResponseEntity.ok(ApiResponseDto.success("Push Token data is updated", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Token notifikasi diperbarui", data));
     }
 }

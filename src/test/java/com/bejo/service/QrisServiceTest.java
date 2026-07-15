@@ -120,7 +120,7 @@ class QrisServiceTest {
         // Validation runs before any repository lookup, so no stubbing is needed
         assertThatThrownBy(() -> qrisService.uploadQris("alice", "not base64 !!!"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("base64");
+                .hasMessageContaining("tidak valid");
     }
 
     @Test

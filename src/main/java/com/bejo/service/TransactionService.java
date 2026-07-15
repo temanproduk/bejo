@@ -315,7 +315,7 @@ public class TransactionService {
     private Transaction buildTransaction(Long businessId, String idempotencyKey, AddTransactionRequestDto request) {
         boolean isParsed = TransactionType.PARSED.equals(request.type());
         if (isParsed && (request.acquirer() == null || request.acquirer().isBlank())) {
-            throw new IllegalArgumentException("acquirer wajib diisi untuk type PARSED");
+            throw new IllegalArgumentException("Metode pembayaran wajib diisi");
         }
         String acquirer = isParsed ? request.acquirer() : Acquirer.CASH;
         String transactionId = "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
@@ -340,7 +340,7 @@ public class TransactionService {
     @Transactional
     public TransactionResponseDto update(String username, String transactionId, UpdateTransactionRequestDto request) {
         if (request.isEmpty()) {
-            throw new IllegalArgumentException("Tidak ada field yang diubah");
+            throw new IllegalArgumentException("Tidak ada data yang diubah");
         }
         Long businessId = businessContext.requireBusinessId(username);
 
@@ -350,11 +350,11 @@ public class TransactionService {
         // MANAGED rows are pushed by the Bejo server and are the payment record
         // of truth — only MANUAL/PARSED entries are user-editable
         if (!TransactionType.MANUAL.equals(t.getType()) && !TransactionType.PARSED.equals(t.getType())) {
-            throw new IllegalArgumentException("Transaksi bertipe " + t.getType() + " tidak dapat diubah");
+            throw new IllegalArgumentException("Transaksi ini tidak dapat diubah");
         }
 
         if (request.acquirer() != null && request.acquirer().isBlank()) {
-            throw new IllegalArgumentException("acquirer tidak boleh kosong");
+            throw new IllegalArgumentException("Metode pembayaran wajib diisi");
         }
 
         if (request.transactionDate() != null) t.setTransactionDate(request.transactionDate());

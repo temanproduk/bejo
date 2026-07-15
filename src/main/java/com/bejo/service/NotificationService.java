@@ -48,10 +48,10 @@ public class NotificationService {
 
         String pushToken = sessionRepository.findByUsernameAndDeviceId(username, request.deviceId())
                 .map(Session::getPushToken)
-                .orElseThrow(() -> new ResourceNotFoundException("Device not found: " + request.deviceId()));
+                .orElseThrow(() -> new ResourceNotFoundException("Perangkat tidak ditemukan: " + request.deviceId()));
 
         if (pushToken == null || pushToken.isBlank()) {
-            throw new ResourceNotFoundException("No FCM token registered for device: " + request.deviceId());
+            throw new ResourceNotFoundException("Perangkat belum terdaftar notifikasi: " + request.deviceId());
         }
 
         Map<String, String> data = buildData(request.title(), request.body(), request.data(), merchantName(username));

@@ -99,7 +99,7 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> authService.login(new LoginRequestDto("ghost", "pw", "dev-1", null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Invalid credentials");
+                .hasMessage("Nama pengguna atau kata sandi salah");
 
         assertThat(meterRegistry.counter("login.attempts", "result", "failure").count()).isEqualTo(1.0);
     }
@@ -111,7 +111,7 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> authService.login(new LoginRequestDto("alice", "wrong", "dev-1", null)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Invalid credentials");
+                .hasMessage("Nama pengguna atau kata sandi salah");
 
         assertThat(meterRegistry.counter("login.attempts", "result", "failure").count()).isEqualTo(1.0);
     }

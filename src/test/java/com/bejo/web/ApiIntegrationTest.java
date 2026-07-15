@@ -175,7 +175,7 @@ class ApiIntegrationTest {
                                 "deviceId", "dev-1"))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(0))
-                .andExpect(jsonPath("$.message").value("Invalid credentials"));
+                .andExpect(jsonPath("$.message").value("Nama pengguna atau kata sandi salah"));
     }
 
     @Test
@@ -495,7 +495,7 @@ class ApiIntegrationTest {
                                 "transactionDate", "2026-07-01T10:30:00",
                                 "amount", 10000))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("acquirer wajib diisi untuk type PARSED"));
+                .andExpect(jsonPath("$.message").value("Metode pembayaran wajib diisi"));
     }
 
     @Test
@@ -717,7 +717,7 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("amount", 1))))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("Transaksi bertipe MANAGED tidak dapat diubah"));
+                .andExpect(jsonPath("$.message").value("Transaksi ini tidak dapat diubah"));
 
         // Delete is still allowed for MANAGED
         mockMvc.perform(delete("/api/transactions/TXN-MANAGED-1")
@@ -2291,7 +2291,7 @@ class ApiIntegrationTest {
                                 "latitude", -6.2, "longitude", 106.8))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(
-                        "Ping ini sudah kedaluwarsa — hanya dapat direspons dalam 24 jam"));
+                        "Ping sudah kedaluwarsa (maksimal 24 jam)"));
     }
 
     @Test

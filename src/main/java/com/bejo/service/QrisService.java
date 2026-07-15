@@ -91,7 +91,7 @@ public class QrisService {
         try {
             Base64.getDecoder().decode(value);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("qrisImage bukan format base64 yang valid");
+            throw new IllegalArgumentException("Format gambar QRIS tidak valid");
         }
     }
 }

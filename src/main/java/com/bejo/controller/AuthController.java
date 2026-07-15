@@ -27,7 +27,7 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<ApiResponseDto<LoginResponseDto>> login(@Valid @RequestBody LoginRequestDto request) {
         LoginResponseDto data = authService.login(request);
-        return ResponseEntity.ok(ApiResponseDto.success("session data is created", data));
+        return ResponseEntity.ok(ApiResponseDto.success("Berhasil masuk", data));
     }
 
     // Optional body { "deviceId": "..." } — when present, the device's FCM token is
@@ -44,6 +44,6 @@ public class AuthController {
         }
         String deviceId = body != null ? body.deviceId() : null;
         authService.logout(authHeader.substring(7), authentication.getName(), deviceId);
-        return ResponseEntity.ok(ApiResponseDto.success("Logged out successfully", null));
+        return ResponseEntity.ok(ApiResponseDto.success("Berhasil keluar", null));
     }
 }

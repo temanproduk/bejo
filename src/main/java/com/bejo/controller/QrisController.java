@@ -30,12 +30,12 @@ public class QrisController {
             @Valid @RequestBody UploadQrisRequestDto request,
             Authentication authentication) {
         qrisService.uploadQris(authentication.getName(), request.qrisImage());
-        return ResponseEntity.ok(ApiResponseDto.success("QRIS berhasil diupload", null));
+        return ResponseEntity.ok(ApiResponseDto.success("QRIS berhasil diunggah", null));
     }
 
     @PostMapping("/reset")
     public ResponseEntity<ApiResponseDto<Void>> resetQris(Authentication authentication) {
         qrisService.resetQris(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("QRIS berhasil direset ke versi generated", null));
+        return ResponseEntity.ok(ApiResponseDto.success("QRIS dikembalikan ke bawaan", null));
     }
 }

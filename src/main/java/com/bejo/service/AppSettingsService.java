@@ -67,7 +67,7 @@ public class AppSettingsService {
     @Transactional
     public AppSettingsResponseDto updateKeywords(String username, UpdateKeywordsRequestDto request) {
         if (request.isEmpty()) {
-            throw new IllegalArgumentException("Tidak ada field yang diubah");
+            throw new IllegalArgumentException("Tidak ada data yang diubah");
         }
 
         BusinessAppSettings settings = loadOrCreate(username);
