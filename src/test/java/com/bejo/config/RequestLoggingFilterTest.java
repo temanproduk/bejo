@@ -141,12 +141,14 @@ class RequestLoggingFilterTest {
     }
 
     @Test
-    void callbackSuccessDoesNotDump() throws Exception {
+    void callbackSuccessAlsoDumps() throws Exception {
+        // The callback dump now fires on EVERY callback (temporary, to study the provider payload),
+        // not just errors — a 200 still logs [CALLBACK-REQ] (at INFO).
         MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{}");
 
         filter.doFilter(req, new MockHttpServletResponse(), chainReturning(200));
 
-        assertThat(callbackLogs()).isEmpty();
+        assertThat(callbackLogs()).anyMatch(l -> l.contains("[CALLBACK-REQ]") && l.contains("status=200"));
     }
 
     @Test

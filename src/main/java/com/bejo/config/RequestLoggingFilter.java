@@ -85,11 +85,15 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             log.info("{} {}{} {} {}ms",
                     request.getMethod(), uri, query != null ? "?" + query : "", status, duration);
 
-            if (isCallback && status >= 400) {
-                // Full request dump for the callback: every header + the whole body
-                log.warn("[CALLBACK-REQ] {} {} status={} headers=[{}] body={}",
+            if (isCallback) {
+                // Full request dump for EVERY callback (headers + whole body), not just errors —
+                // we're actively studying the provider's real payload (terminal id, references,
+                // merchant fields) to build terminal-based routing. Credential headers are masked.
+                // Success is logged at INFO, an error at WARN.
+                String dump = String.format("[CALLBACK-REQ] %s %s status=%d headers=[%s] body=%s",
                         request.getMethod(), uri, status,
                         headers(request), callbackBody((CachedBodyHttpServletRequest) req));
+                if (status >= 400) log.warn(dump); else log.info(dump);
             } else if (req instanceof ContentCachingRequestWrapper wrapper && status >= 400) {
                 String body = extractBody(wrapper);
                 if (!body.isBlank()) {
