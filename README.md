@@ -25,11 +25,11 @@ Bejo closes that gap.
 
 ## Businesses & users
 
-A **business** (merchant) owns everything — [bank & profile](#user-profile), [QRIS](#qris), [products & inventory](#products--categories), [transactions](#transactions), [app settings](#app-settings), and a shared business picture. **Many users can belong to one business**, with a flat [role model](#account-types):
+A **business** (merchant) owns everything — [bank & profile](#user-profile), [QRIS](#qris), [products & inventory](#products--categories), [transactions](#transactions), [app settings](#account-settings), and a shared business picture. **Many users can belong to one business**, with a flat [role model](#account-types):
 
 | Role | Who | Can |
 |---|---|---|
-| **SUPER_ADMIN** | The user who registered the business (its creator) | Everything — plus [manage the business's other users](#business-members) and change business-wide settings ([app config](#app-settings), [picture & QRIS](#qris)). Immutable & undeletable. |
+| **SUPER_ADMIN** | The user who registered the business (its creator) | Everything — plus [manage the business's other users](#business-members) and change business-wide settings ([app config](#account-settings), [picture & QRIS](#qris)). Immutable & undeletable. |
 | **MEMBER** | Staff added by the super admin | Everything except managing users and changing business-wide settings (they can still read them). |
 
 Registration ([`POST /api/users/register`](#users)) creates a new business + its super admin; the super admin adds staff via the [member APIs](#business-members), and deleting a member frees their username for reuse. Every request authenticates with a [JWT + shared API token](#authentication).
@@ -81,7 +81,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [Products & categories](#products--categories)
   - [Stock mutations](#stock-mutations)
   - [Employee presence](#employee-presence)
-  - [App settings](#app-settings)
+  - [Account settings](#account-settings)
   - [QRIS](#qris)
   - [QRIS callback](#qris-callback)
   - [Voice ads](#voice-ads)
@@ -300,7 +300,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "bankNumber": "1234567890",
     "bankAccountName": "Alice",
     "profilePicture": null,
-    "appSettings": { "monitoredApps": {}, "includeKeywords": [], "excludeKeywords": [], "blacklistEnabled": true, "whitelistEnabled": false, "qrisWithProfilePicture": false, "inventoryEnabled": false, "receiveAds": false },
+    "accountSettings": { "monitoredApps": {}, "includeKeywords": [], "excludeKeywords": [], "blacklistEnabled": true, "whitelistEnabled": false, "qrisWithProfilePicture": false, "inventoryEnabled": false, "receiveAds": false, "teamManagementEnabled": false },
     "token": "eyJhbGciOiJIUzI1NiJ9...",
     "tokenType": "Bearer",
     "expiresIn": 604800
@@ -308,7 +308,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
 }
 ```
 
-`appSettings` and the business `profilePicture` are **bundled** so the client can render its home screen in one round trip; the individual endpoints ([app settings](#app-settings), [business picture](#user-profile)) and `GET /api/users/me` still return them on their own. `profilePicture` is `null` when unset (omitted from the envelope's non-null fields). `id` is the user's own id (use it to identify yourself in the [members](#business-members) list). **`size`, `industry`, and `storePhoto` are immutable (set once at registration) and appear only here — not on `/me` — so cache them from this login response.**
+`accountSettings` and the business `profilePicture` are **bundled** so the client can render its home screen in one round trip; the individual endpoints ([app settings](#account-settings), [business picture](#user-profile)) and `GET /api/users/me` still return them on their own. `profilePicture` is `null` when unset (omitted from the envelope's non-null fields). `id` is the user's own id (use it to identify yourself in the [members](#business-members) list). **`size`, `industry`, and `storePhoto` are immutable (set once at registration) and appear only here — not on `/me` — so cache them from this login response.**
 
 **Errors:** `400 Invalid credentials`, `400 username is required`, `400 deviceId is required` (field validation)
 
@@ -814,9 +814,9 @@ All endpoints below require JWT.
 
 #### `GET /api/users/me` — Get own account bundle
 
-Returns the caller's own account: `id`, profile, `businessRole`, and the shared business/bank/`profilePicture`/`appSettings` — the **same shape as the login `data` minus the token fields**, so the client can refresh its full state without re-authenticating. `id` also lets the client identify itself in the [members](#business-members) list.
+Returns the caller's own account: `id`, profile, `businessRole`, and the shared business/bank/`profilePicture`/`accountSettings` — the **same shape as the login `data` minus the token fields**, so the client can refresh its full state without re-authenticating. `id` also lets the client identify itself in the [members](#business-members) list.
 
-**Success — HTTP 200:** `{ "status": 1, "data": { "id": 1, "username": "alice", "businessRole": "SUPER_ADMIN", ...business/bank/profilePicture/appSettings... } }`
+**Success — HTTP 200:** `{ "status": 1, "data": { "id": 1, "username": "alice", "businessRole": "SUPER_ADMIN", ...business/bank/profilePicture/accountSettings... } }`
 
 ---
 
@@ -1280,20 +1280,20 @@ Omit both `year` and `month` for the full history. Each entry carries its `type`
 
 ---
 
-### App settings
+### Account settings
 
 Per-**business** settings synced from the app (shared by all of the business's users): the **monitored apps** (which apps' notifications to watch), the **notification keywords** (blacklist/whitelist filters), and app **config toggles**. All endpoints require JWT. **Reading is open to any member; every change (the four `PUT`s) is super-admin-only — a plain member gets `403`.** Settings are created on first save; a business that has never synced gets sensible defaults.
 
-#### `GET /api/app-settings` — Get app settings
+#### `GET /api/account-settings` — Get account settings
 
-Returns the business's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`, all three config toggles `false`. Empty lists mean the client should fall back to its own bundled defaults.
+Returns the account's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`, all config toggles `false`. Empty lists mean the client should fall back to its own bundled defaults.
 
 **Success — HTTP 200**
 
 ```json
 {
   "status": 1,
-  "message": "App settings retrieved",
+  "message": "Pengaturan berhasil dimuat",
   "data": {
     "monitoredApps": { "id.dana": "dana", "com.gojek.app": "gopay" },
     "includeKeywords": ["uang masuk", "pembayaran diterima"],
@@ -1302,7 +1302,8 @@ Returns the business's settings. When nothing has been synced yet, returns defau
     "whitelistEnabled": false,
     "qrisWithProfilePicture": false,
     "inventoryEnabled": false,
-    "receiveAds": false
+    "receiveAds": false,
+    "teamManagementEnabled": false
   }
 }
 ```
@@ -1311,11 +1312,14 @@ Returns the business's settings. When nothing has been synced yet, returns defau
 |---|---|---|
 | `qrisWithProfilePicture` | `false` | Whether the QRIS image should be composed onto the profile picture |
 | `inventoryEnabled` | `false` | Whether inventory management is enabled |
-| `receiveAds` | `false` | Whether the business opted in to receive [voice ads](#voice-ads) |
+| `receiveAds` | `false` | Whether the account opted in to receive [voice ads](#voice-ads) |
+| `teamManagementEnabled` | `false` | Whether team management (employee accounts + presence) is active — **effective**: the stored flag OR the account already has >1 active user |
+
+> **Team-management gate:** while `teamManagementEnabled` is off, the team-feature writes are rejected with **`403 Fitur manajemen tim belum diaktifkan`** — [member](#business-members) add/update/delete (listing is not gated) and [presence](#employee-presence) clock-in/out, ping, and respond. A fresh solo account must enable `teamManagement` (via the toggle above) before adding its first employee.
 
 ---
 
-#### `PUT /api/app-settings/monitored-apps` — Save monitored apps
+#### `PUT /api/account-settings/monitored-apps` — Save monitored apps
 
 Replaces the monitored-apps map (`packageName` → `issuer`). Sending `{}` clears the list. Package names must match `[A-Za-z0-9_.]+`; issuers are trimmed and lowercased. Returns the full updated settings.
 
@@ -1336,7 +1340,7 @@ Replaces the monitored-apps map (`packageName` → `issuer`). Sending `{}` clear
 
 ---
 
-#### `PUT /api/app-settings/keywords` — Save notification keywords
+#### `PUT /api/account-settings/keywords` — Save notification keywords
 
 Updates the keyword filters. **Partial update:** a `null` field is left unchanged; an empty list (`[]`) clears that list. Keywords are trimmed, lowercased, and deduplicated. Returns the full updated settings.
 
@@ -1360,31 +1364,28 @@ Updates the keyword filters. **Partial update:** a `null` field is left unchange
 
 ---
 
-#### `PUT /api/app-settings/qris-with-profile-picture` — Toggle QRIS on profile picture
+#### `PUT /api/account-settings/toggle` — Flip a boolean setting
 
-**Request body:** `{ "enabled": true }` (required boolean). Returns the full updated settings.
+One generic endpoint for all the on/off settings (replaces the former per-setting `PUT`s). **Super admin only** (a member gets `403`). Returns the full updated settings.
 
-**Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan QRIS pada foto profil berhasil disimpan", "data": { ...full settings... } }` · **Errors:** `400 enabled wajib diisi`
+**Request body**
 
----
+```json
+{ "setting": "receiveAds", "enabled": true }
+```
 
-#### `PUT /api/app-settings/inventory` — Toggle inventory management
+| `setting` | Meaning |
+|---|---|
+| `qrisWithProfilePicture` | Compose the QRIS image onto the profile picture |
+| `inventory` | Enable inventory management |
+| `receiveAds` | Opt in to receive [voice ads](#voice-ads) (default off) |
+| `teamManagement` | Activate team management (employee accounts + presence) — bundled into login/`/me` as `teamManagementEnabled`; **effective**: also reads true when the account already has >1 active user |
 
-**Request body:** `{ "enabled": true }` (required boolean). Returns the full updated settings.
+**Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan disimpan", "data": { ...full settings... } }`
 
-**Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan manajemen inventaris berhasil disimpan", "data": { ...full settings... } }` · **Errors:** `400 enabled wajib diisi`
+**Errors:** `400 setting wajib diisi`, `400 enabled wajib diisi`, `400 Pengaturan tidak dikenal: <setting>`
 
----
-
-#### `PUT /api/app-settings/receive-ads` — Toggle receiving voice ads
-
-Whether the business wants to receive [voice ads](#voice-ads). **Super admin only** (a member gets `403`); default `false` (opt-in). Bundled into the login and `/me` app-settings so the client knows the preference without a separate call.
-
-**Request body:** `{ "enabled": true }` (required boolean). Returns the full updated settings.
-
-**Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan iklan disimpan", "data": { ...full settings... } }` · **Errors:** `400 enabled wajib diisi`
-
-**Errors:** `400 Tidak ada field yang diubah` (all fields null), `400 <field>: kata kunci terlalu panjang: <kw>`, `400 <field>: terlalu banyak kata kunci (maksimal 1000)`
+For the keyword endpoint: `400 Tidak ada data yang diubah` (all fields null), `400 <field>: kata kunci terlalu panjang: <kw>`, `400 <field>: terlalu banyak kata kunci (maksimal 1000)`
 
 ---
 

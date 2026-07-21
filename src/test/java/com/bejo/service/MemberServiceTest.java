@@ -20,6 +20,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,13 +33,15 @@ class MemberServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private SessionRepository sessionRepository;
     @Mock private BusinessContext businessContext;
+    @Mock private AccountSettingsService accountSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
 
     private MemberService service;
 
     @BeforeEach
     void setUp() {
-        service = new MemberService(userRepository, sessionRepository, businessContext, passwordEncoder);
+        service = new MemberService(userRepository, sessionRepository, businessContext,
+                accountSettingsService, passwordEncoder);
         ReflectionTestUtils.setField(service, "maxUsersPerBusiness", 5);
     }
 
@@ -53,6 +56,18 @@ class MemberServiceTest {
     private AddMemberRequestDto addReq(String username) {
         return new AddMemberRequestDto(username, "password1", "New Member",
                 username + "@example.com", "+628123456789");
+    }
+
+    @Test
+    void memberMutationsBlockedWhenTeamManagementDisabled() {
+        when(businessContext.requireUser("admin")).thenReturn(user("admin", BusinessRole.SUPER_ADMIN));
+        doThrow(new ForbiddenException("Fitur manajemen tim belum diaktifkan"))
+                .when(accountSettingsService).requireTeamManagementEnabled(BIZ);
+
+        assertThatThrownBy(() -> service.add("admin", addReq("newbie")))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("manajemen tim");
+        verify(userRepository, never()).save(any());
     }
 
     @Test

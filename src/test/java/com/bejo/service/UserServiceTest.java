@@ -40,7 +40,7 @@ class UserServiceTest {
     @Mock private BusinessRepository businessRepository;
     @Mock private BusinessBankRepository businessBankRepository;
     @Mock private BusinessContext businessContext;
-    @Mock private AppSettingsService appSettingsService;
+    @Mock private AccountSettingsService accountSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
 
     // Real (not mocked): a simple config-backed value object
@@ -53,7 +53,7 @@ class UserServiceTest {
     @BeforeEach
     void setUp() {
         userService = new UserService(userRepository, businessRepository, businessBankRepository,
-                businessContext, appSettingsService, BUSINESS_OPTIONS, passwordEncoder);
+                businessContext, accountSettingsService, BUSINESS_OPTIONS, passwordEncoder);
         lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads / business+bank edits
         lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // picture mutations (super admin)
     }
@@ -118,9 +118,9 @@ class UserServiceTest {
         when(businessContext.requireUser("alice")).thenReturn(user);
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
         when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
-        when(appSettingsService.getSettings("alice")).thenReturn(
-                new com.bejo.dto.response.AppSettingsResponseDto(
-                        java.util.Map.of(), java.util.List.of(), java.util.List.of(), true, false, false, false, false));
+        when(accountSettingsService.getSettings("alice")).thenReturn(
+                new com.bejo.dto.response.AccountSettingsResponseDto(
+                        java.util.Map.of(), java.util.List.of(), java.util.List.of(), true, false, false, false, false, false));
 
         var me = userService.getMe("alice");
 
@@ -129,7 +129,7 @@ class UserServiceTest {
         assertThat(me.businessName()).isEqualTo("Warung Alice");
         assertThat(me.bankName()).isEqualTo("BCA");
         assertThat(me.profilePicture()).isEqualTo("aW1n");
-        assertThat(me.appSettings()).isNotNull();
+        assertThat(me.accountSettings()).isNotNull();
     }
 
     @Test

@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS token_blacklist (
     expires_at TIMESTAMP   NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS business_app_settings (
+CREATE TABLE IF NOT EXISTS account_settings (
     id                        BIGSERIAL   PRIMARY KEY,
     business_id               BIGINT      NOT NULL,
     monitored_apps            TEXT,
@@ -137,9 +137,10 @@ CREATE TABLE IF NOT EXISTS business_app_settings (
     qris_with_profile_picture BOOLEAN     NOT NULL DEFAULT FALSE,
     inventory_enabled         BOOLEAN     NOT NULL DEFAULT FALSE,
     receive_ads               BOOLEAN     NOT NULL DEFAULT FALSE,   -- opt-in to voice ads (super-admin-set)
+    team_management_enabled   BOOLEAN     NOT NULL DEFAULT FALSE,   -- activate employees + presence (super-admin-set)
     updated_at                TIMESTAMP,
-    CONSTRAINT uq_app_settings_business UNIQUE (business_id),
-    CONSTRAINT fk_app_settings_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT uq_account_settings_business UNIQUE (business_id),
+    CONSTRAINT fk_account_settings_business FOREIGN KEY (business_id) REFERENCES businesses (id)
 );
 
 -- ── Products, categories & inventory (per business) ───────────────────────────

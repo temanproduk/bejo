@@ -26,5 +26,5 @@ public record MeResponseDto(
         String bankNumber,
         String bankAccountName,
         String profilePicture,
-        AppSettingsResponseDto appSettings
+        AccountSettingsResponseDto accountSettings
 ) {}

@@ -2,9 +2,10 @@ package com.bejo.service;
 
 import com.bejo.dto.request.UpdateKeywordsRequestDto;
 import com.bejo.dto.request.UpdateMonitoredAppsRequestDto;
-import com.bejo.dto.response.AppSettingsResponseDto;
-import com.bejo.entity.BusinessAppSettings;
-import com.bejo.repository.BusinessAppSettingsRepository;
+import com.bejo.dto.response.AccountSettingsResponseDto;
+import com.bejo.entity.AccountSettings;
+import com.bejo.repository.AccountSettingsRepository;
+import com.bejo.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,24 +27,26 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class AppSettingsServiceTest {
+class AccountSettingsServiceTest {
 
     private static final Long BIZ = 1L;
 
-    @Mock private BusinessAppSettingsRepository repository;
+    @Mock private AccountSettingsRepository repository;
+    @Mock private UserRepository userRepository;
     @Mock private BusinessContext businessContext;
 
-    private AppSettingsService service;
+    private AccountSettingsService service;
 
     @BeforeEach
     void setUp() {
-        service = new AppSettingsService(repository, businessContext);
+        service = new AccountSettingsService(repository, userRepository, businessContext);
         lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads
         lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // mutations (super admin)
+        lenient().when(userRepository.countByBusinessIdAndDeletedAtIsNull(BIZ)).thenReturn(1L); // solo by default
     }
 
-    private BusinessAppSettings existing() {
-        BusinessAppSettings s = new BusinessAppSettings();
+    private AccountSettings existing() {
+        AccountSettings s = new AccountSettings();
         s.setBusinessId(BIZ);
         s.setMonitoredApps(new LinkedHashMap<>(Map.of("id.dana", "dana")));
         s.setIncludeKeywords(List.of("uang masuk"));
@@ -57,7 +60,7 @@ class AppSettingsServiceTest {
     void getReturnsDefaultsWhenNoRow() {
         when(repository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
 
-        AppSettingsResponseDto data = service.getSettings("alice");
+        AccountSettingsResponseDto data = service.getSettings("alice");
 
         assertThat(data.monitoredApps()).isEmpty();
         assertThat(data.includeKeywords()).isEmpty();
@@ -66,13 +69,32 @@ class AppSettingsServiceTest {
         assertThat(data.whitelistEnabled()).isFalse();
         assertThat(data.qrisWithProfilePicture()).isFalse();
         assertThat(data.inventoryEnabled()).isFalse();
+        assertThat(data.teamManagementEnabled()).isFalse();   // solo account, flag off
+    }
+
+    @Test
+    void teamManagementIsEffectiveWhenAccountHasMultipleUsers() {
+        when(repository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
+        // Existing team (>1 active user) → effectively enabled even though the flag is off
+        when(userRepository.countByBusinessIdAndDeletedAtIsNull(BIZ)).thenReturn(2L);
+
+        assertThat(service.getSettings("alice").teamManagementEnabled()).isTrue();
+        assertThat(service.isTeamManagementEnabled(BIZ)).isTrue();
+    }
+
+    @Test
+    void toggleRejectsUnknownSetting() {
+        assertThatThrownBy(() -> service.toggle("alice", "bogus", true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tidak dikenal");
+        verify(repository, never()).save(any());
     }
 
     @Test
     void getReturnsStoredSettings() {
         when(repository.findByBusinessId(BIZ)).thenReturn(Optional.of(existing()));
 
-        AppSettingsResponseDto data = service.getSettings("alice");
+        AccountSettingsResponseDto data = service.getSettings("alice");
 
         assertThat(data.monitoredApps()).containsEntry("id.dana", "dana");
         assertThat(data.includeKeywords()).containsExactly("uang masuk");
@@ -86,10 +108,10 @@ class AppSettingsServiceTest {
         apps.put("com.gojek.app", "  GoPay  ");   // trimmed + lowercased
         apps.put("id.dana", "dana");
 
-        AppSettingsResponseDto data = service.updateMonitoredApps("alice",
+        AccountSettingsResponseDto data = service.updateMonitoredApps("alice",
                 new UpdateMonitoredAppsRequestDto(apps));
 
-        ArgumentCaptor<BusinessAppSettings> captor = ArgumentCaptor.forClass(BusinessAppSettings.class);
+        ArgumentCaptor<AccountSettings> captor = ArgumentCaptor.forClass(AccountSettings.class);
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
         assertThat(captor.getValue().getMonitoredApps())
@@ -122,7 +144,7 @@ class AppSettingsServiceTest {
 
     @Test
     void updateKeywordsPartialUpdateLeavesOtherFields() {
-        BusinessAppSettings s = existing();
+        AccountSettings s = existing();
         when(repository.findByBusinessId(BIZ)).thenReturn(Optional.of(s));
 
         // Only excludeKeywords supplied — include list and toggles stay put
@@ -138,7 +160,7 @@ class AppSettingsServiceTest {
 
     @Test
     void updateKeywordsAppliesTogglesAndClearsWithEmptyList() {
-        BusinessAppSettings s = existing();
+        AccountSettings s = existing();
         when(repository.findByBusinessId(BIZ)).thenReturn(Optional.of(s));
 
         service.updateKeywords("alice", new UpdateKeywordsRequestDto(
@@ -166,7 +188,7 @@ class AppSettingsServiceTest {
         service.updateKeywords("alice", new UpdateKeywordsRequestDto(
                 List.of("uang masuk"), null, null, null));
 
-        ArgumentCaptor<BusinessAppSettings> captor = ArgumentCaptor.forClass(BusinessAppSettings.class);
+        ArgumentCaptor<AccountSettings> captor = ArgumentCaptor.forClass(AccountSettings.class);
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
         assertThat(captor.getValue().getIncludeKeywords()).containsExactly("uang masuk");
@@ -176,9 +198,9 @@ class AppSettingsServiceTest {
     void updateQrisWithProfilePictureSavesFlag() {
         when(repository.findByBusinessId(BIZ)).thenReturn(Optional.of(existing()));
 
-        AppSettingsResponseDto data = service.updateQrisWithProfilePicture("alice", true);
+        AccountSettingsResponseDto data = service.toggle("alice", "qrisWithProfilePicture", true);
 
-        ArgumentCaptor<BusinessAppSettings> captor = ArgumentCaptor.forClass(BusinessAppSettings.class);
+        ArgumentCaptor<AccountSettings> captor = ArgumentCaptor.forClass(AccountSettings.class);
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().isQrisWithProfilePicture()).isTrue();
         assertThat(data.qrisWithProfilePicture()).isTrue();
@@ -190,14 +212,14 @@ class AppSettingsServiceTest {
         when(businessContext.requireSuperAdminBusinessId("bob"))
                 .thenThrow(new com.bejo.exception.ForbiddenException("Hanya super admin yang dapat mengubah pengaturan bisnis"));
 
-        assertThatThrownBy(() -> service.updateInventoryEnabled("bob", true))
+        assertThatThrownBy(() -> service.toggle("bob", "inventory", true))
                 .isInstanceOf(com.bejo.exception.ForbiddenException.class);
-        assertThatThrownBy(() -> service.updateQrisWithProfilePicture("bob", true))
+        assertThatThrownBy(() -> service.toggle("bob", "qrisWithProfilePicture", true))
                 .isInstanceOf(com.bejo.exception.ForbiddenException.class);
         assertThatThrownBy(() -> service.updateMonitoredApps("bob",
                 new UpdateMonitoredAppsRequestDto(Map.of("id.dana", "dana"))))
                 .isInstanceOf(com.bejo.exception.ForbiddenException.class);
-        assertThatThrownBy(() -> service.updateReceiveAds("bob", true))
+        assertThatThrownBy(() -> service.toggle("bob", "receiveAds", true))
                 .isInstanceOf(com.bejo.exception.ForbiddenException.class);
         verify(repository, never()).save(any());
     }
@@ -206,9 +228,9 @@ class AppSettingsServiceTest {
     void updateInventoryEnabledCreatesRowWhenAbsent() {
         when(repository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
 
-        AppSettingsResponseDto data = service.updateInventoryEnabled("alice", true);
+        AccountSettingsResponseDto data = service.toggle("alice", "inventory", true);
 
-        ArgumentCaptor<BusinessAppSettings> captor = ArgumentCaptor.forClass(BusinessAppSettings.class);
+        ArgumentCaptor<AccountSettings> captor = ArgumentCaptor.forClass(AccountSettings.class);
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
         assertThat(captor.getValue().isInventoryEnabled()).isTrue();
@@ -221,9 +243,9 @@ class AppSettingsServiceTest {
         when(repository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
         assertThat(service.getSettings("alice").receiveAds()).isFalse();
 
-        AppSettingsResponseDto data = service.updateReceiveAds("alice", true);
+        AccountSettingsResponseDto data = service.toggle("alice", "receiveAds", true);
 
-        ArgumentCaptor<BusinessAppSettings> captor = ArgumentCaptor.forClass(BusinessAppSettings.class);
+        ArgumentCaptor<AccountSettings> captor = ArgumentCaptor.forClass(AccountSettings.class);
         verify(repository).save(captor.capture());
         assertThat(captor.getValue().isReceiveAds()).isTrue();
         assertThat(data.receiveAds()).isTrue();

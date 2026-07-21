@@ -17,8 +17,8 @@ import java.util.Map;
  * plus the app config toggles. One row per business.
  */
 @Entity
-@Table(name = "business_app_settings")
-public class BusinessAppSettings {
+@Table(name = "account_settings")
+public class AccountSettings {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -57,6 +57,10 @@ public class BusinessAppSettings {
     @Column(name = "receive_ads", nullable = false)
     private boolean receiveAds = false;
 
+    // Whether team management (employee accounts + presence) is activated (super-admin-set; default off)
+    @Column(name = "team_management_enabled", nullable = false)
+    private boolean teamManagementEnabled = false;
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
@@ -85,6 +89,8 @@ public class BusinessAppSettings {
     public void setInventoryEnabled(boolean inventoryEnabled) { this.inventoryEnabled = inventoryEnabled; }
     public boolean isReceiveAds() { return receiveAds; }
     public void setReceiveAds(boolean receiveAds) { this.receiveAds = receiveAds; }
+    public boolean isTeamManagementEnabled() { return teamManagementEnabled; }
+    public void setTeamManagementEnabled(boolean teamManagementEnabled) { this.teamManagementEnabled = teamManagementEnabled; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

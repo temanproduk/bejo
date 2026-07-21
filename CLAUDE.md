@@ -87,7 +87,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 |---|---|---|---|
 | `POST` | `/snap/v1.0/qr/qr-mpm-notify` | None | Inbound QRIS payment callback (SNAP QR MPM notify); records a MANAGED transaction, stores raw payload in `info` |
 | `POST` | `/api/users/register` | Public | Self-service registration; creates a **new business** + its first user (the `SUPER_ADMIN`) + bank (no QRIS row — QRIS is optional) |
-| `GET` | `/api/users/me` | JWT | The caller's own account bundle (`MeResponseDto`: id + profile + role + shared business/bank/picture/app-settings) — same shape as login minus the token, for refreshing state |
+| `GET` | `/api/users/me` | JWT | The caller's own account bundle (`MeResponseDto`: id + profile + role + shared business/bank/picture/account-settings) — same shape as login minus the token, for refreshing state |
 | `GET` | `/api/users/members` | JWT | List the users of the caller's business (any member) |
 | `POST` | `/api/users/members` | JWT (super admin) | Add a user to the caller's business as a `MEMBER` |
 | `PATCH` | `/api/users/members/{id}` | JWT (super admin) | Update a member (name/email/phone/password; a super admin can't be modified here) |
@@ -126,12 +126,10 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `POST` | `/api/stock-mutations` | JWT | Record a purchase (restock): raises stock of several products at once (a PURCHASE mutation) |
 | `GET` | `/api/stock-mutations` | JWT | Stock-change history — mutations (PURCHASE/ADJUSTMENT/UPDATE) with their line items; paginated (`page`/`size`) |
 | `GET` | `/api/stock-mutations/{id}` | JWT | Get one stock mutation with its line items |
-| `GET` | `/api/app-settings` | JWT | Get the user's app settings (monitored apps + notification keywords); returns defaults if never synced |
-| `PUT` | `/api/app-settings/monitored-apps` | JWT (super admin) | Replace the monitored-apps map (`packageName`→`issuer`) |
-| `PUT` | `/api/app-settings/keywords` | JWT (super admin) | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
-| `PUT` | `/api/app-settings/qris-with-profile-picture` | JWT (super admin) | Toggle composing the QRIS image onto the profile picture (`{enabled}`; default false) |
-| `PUT` | `/api/app-settings/inventory` | JWT (super admin) | Toggle inventory management (`{enabled}`; default false) |
-| `PUT` | `/api/app-settings/receive-ads` | JWT (super admin) | Toggle whether the business receives voice ads (`{enabled}`; default false / opt-in) |
+| `GET` | `/api/account-settings` | JWT | Get the account's settings (monitored apps + notification keywords + config toggles); returns defaults if never synced |
+| `PUT` | `/api/account-settings/monitored-apps` | JWT (super admin) | Replace the monitored-apps map (`packageName`→`issuer`) |
+| `PUT` | `/api/account-settings/keywords` | JWT (super admin) | Update notification keyword filters (include/exclude lists + blacklist/whitelist toggles; partial update) |
+| `PUT` | `/api/account-settings/toggle` | JWT (super admin) | Generic on/off for one boolean setting: `{setting, enabled}` where `setting` ∈ `qrisWithProfilePicture`\|`inventory`\|`receiveAds`\|`teamManagement` (unknown → 400) |
 | `POST` | `/api/presences/clock-in` | JWT (member) | Employee clock-in: `latitude`/`longitude`/`clockDatetime` required, `note` optional; pushes a notification to the super admin |
 | `POST` | `/api/presences/clock-out` | JWT (member) | Employee clock-out (same body); pushes a notification to the super admin |
 | `POST` | `/api/presences/pings` | JWT (super admin) | Spot-check: records + pushes one PING entry to **every** member (optional `note` = the push body) |
@@ -158,7 +156,7 @@ controller/   → thin HTTP layer; validation via @Valid
 service/      → business logic, metrics via Micrometer Counter
 repository/   → Spring Data JPA interfaces
 entity/       → JPA entities (Business, User, BusinessBank, BusinessQris,
-                BusinessAppSettings, Session, Transaction, TransactionItem, Presence,
+                AccountSettings, Session, Transaction, TransactionItem, Presence,
                 AdCampaign, AdDelivery, TokenBlacklist)
 dto/          → request records (@NotBlank validated) + response records.
                 Every DTO class name ends with `Dto` (e.g. LoginRequestDto,
@@ -184,7 +182,7 @@ Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by cons
 1. Look up the **active** `users` row by `username` (`findByUsernameAndDeletedAtIsNull`) — `Invalid credentials` (400) if not found or BCrypt mismatch (a soft-deleted user can't log in).
 2. Load the `businesses` + `business_banks` rows (by the user's `business_id`) for business + bank fields in the response.
 3. Upsert a row in `bejo_sessions` keyed on `(username, device_id)`; an existing FCM token is preserved when the login request has no `pushToken`.
-4. Return `id` + profile + `businessRole` + business + bank + **`size` + `industry` + `storePhoto` + `profilePicture` (business picture) + `appSettings`** + JWT (`expiresIn` seconds). The bundled picture/app-settings save the client round trips on the home screen; the individual endpoints (`/api/app-settings`, `/api/business/picture`, `GET /api/users/me`) still exist. `GET /api/users/me` returns the same bundle minus the token **and minus `size`/`industry`/`storePhoto`** — those are immutable (set once at registration), so the client caches them from the login response.
+4. Return `id` + profile + `businessRole` + business + bank + **`size` + `industry` + `storePhoto` + `profilePicture` (business picture) + `accountSettings`** + JWT (`expiresIn` seconds). The bundled picture/account-settings save the client round trips on the home screen; the individual endpoints (`/api/account-settings`, `/api/business/picture`, `GET /api/users/me`) still exist. `GET /api/users/me` returns the same bundle minus the token **and minus `size`/`industry`/`storePhoto`** — those are immutable (set once at registration), so the client caches them from the login response.
 
 ### Registration, businesses & members
 
@@ -248,17 +246,19 @@ Basic per-business SKU catalog with simple inventory, scoped by `business_id` (r
 - **ADJUSTMENT** and **UPDATE** mutations are written by `ProductService` after it applies the change: `adjustStock` (stock opname) records one ADJUSTMENT mutation; `update` records an UPDATE mutation only when the edit actually changed `stock`. Both call `StockMutationService.recordStockChange`.
 - `GET /api/stock-mutations` lists all mutations (newest first) **with their line items** (batched in one query, no N+1); `GET /api/stock-mutations/{id}` returns a single mutation with its items.
 
-### App settings
+### Account settings
 
-`AppSettingsController` → `AppSettingsService` manage a per-**business** `business_app_settings` row (one per `business_id`, created lazily on first update, shared by all the business's users) holding the settings synced from the mobile client:
+`AccountSettingsController` → `AccountSettingsService` manage a per-**business** `account_settings` row (one per `business_id`, created lazily on first update, shared by all the business's users) holding the settings synced from the mobile client:
 - **Monitored apps** — a `packageName → issuer` map (mirrors the Android `notifAppList` pref), stored as JSON via `StringMapJsonConverter`.
 - **Notification keywords** — `includeKeywords` (whitelist) + `excludeKeywords` (blacklist) string lists (JSON via `StringListJsonConverter`) plus `blacklistEnabled` (default true) / `whitelistEnabled` (default false) toggles.
 
-- **App config toggles** — `qrisWithProfilePicture` (compose the QRIS image onto the profile picture), `inventoryEnabled` (enable inventory management), and `receiveAds` (opt in to voice ads), all boolean columns defaulting false, each set via its own `PUT` (`{enabled}`). `receiveAds` is bundled into the login + `/me` app-settings so the client knows the business's ad preference (super-admin-set, default off).
+- **Config toggles** — `qrisWithProfilePicture` (compose the QRIS image onto the profile picture), `inventoryEnabled` (enable inventory management), `receiveAds` (opt in to voice ads), and `teamManagementEnabled` (activate employee accounts + presence), all boolean columns defaulting false, all set through **one generic endpoint** `PUT /api/account-settings/toggle` (`{setting, enabled}`; unknown setting → 400) rather than a `PUT` per flag. `receiveAds` + `teamManagementEnabled` are bundled into the login + `/me` `accountSettings` so the client knows the account's ad preference and team status (super-admin-set). **`teamManagementEnabled` is effective**: the response/gate read it as the stored flag **OR** the account already has >1 active user, so an existing team is never locked out (`AccountSettingsService.isTeamManagementEnabled`).
 
-**Authorization:** reading (`GET /api/app-settings`) is open to any member, but **all mutations are super-admin-only** — the five `PUT`s go through `AppSettingsService.loadOrCreate`, which calls `BusinessContext.requireSuperAdminBusinessId` (403 `ForbiddenException` for a plain member). The same gate protects the QRIS image (`POST /api/qris/upload` + `/reset`) and the business picture (`PUT`/`DELETE /api/business/picture`). Business info + bank edits are **not** gated (any member).
+**Team-management gate:** when it's off, all the team-feature writes are rejected with **403 `"Fitur manajemen tim belum diaktifkan"`** via `AccountSettingsService.requireTeamManagementEnabled(businessId)` — member **add/update/delete** (`MemberService.requireSuperAdmin`, the single choke point; `list` is not gated) and presence **clock-in/out, ping, respond** (`PresenceService`). So a fresh solo account must first enable `teamManagement` (via the toggle) before it can add its first employee. The presence-write gate is defensive — since the flag is effectively on whenever members exist, it's practically unreachable, but it keeps the rule uniform.
 
-`GET /api/app-settings` returns defaults (empty lists/map, blacklist on, whitelist off, all three toggles off) when no row exists yet — it never 404s. `PUT /api/app-settings/monitored-apps` replaces the whole map; `PUT /api/app-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
+**Authorization:** reading (`GET /api/account-settings`) is open to any member, but **all mutations are super-admin-only** — the three `PUT`s go through `AccountSettingsService.loadOrCreate`, which calls `BusinessContext.requireSuperAdminBusinessId` (403 `ForbiddenException` for a plain member). The same gate protects the QRIS image (`POST /api/qris/upload` + `/reset`) and the business picture (`PUT`/`DELETE /api/business/picture`). Business info + bank edits are **not** gated (any member).
+
+`GET /api/account-settings` returns defaults (empty lists/map, blacklist on, whitelist off, toggles off) when no row exists yet — it never 404s. `PUT /api/account-settings/monitored-apps` replaces the whole map; `PUT /api/account-settings/keywords` is a partial update (null field = unchanged, empty list = cleared). The service validates and normalizes input — package names match `[A-Za-z0-9_.]+`, issuers/keywords are trimmed + lowercased, keyword lists deduped, with size caps — throwing `IllegalArgumentException` (400) on bad input.
 
 ### Employee daily presence
 
@@ -315,7 +315,7 @@ Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup;
 Key tables:
 - `businesses` — the merchant; business name/address/nmid (+ `initial_*` for reset) + `size`/`industry` (NOT NULL, immutable, config-validated) + optional `store_photo` + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `nmid WHERE nmid IS NOT NULL` (callback routing)
 - `users` — credentials + profile (name/email/phone); `business_id` FK; `business_role` (`SUPER_ADMIN`/`MEMBER`); `account_type` (`MANAGED`/`SELF_SERVICE`); soft delete via `deleted_at` (username unique only among active users — partial index `uq_users_username_active`)
-- `business_banks` / `business_qris` / `business_app_settings` — one row per `business_id` (unique FK); app settings = monitored-apps map + keyword filters (JSON) + blacklist/whitelist + toggles (`qris_with_profile_picture`, `inventory_enabled`, `receive_ads`)
+- `business_banks` / `business_qris` / `account_settings` — one row per `business_id` (unique FK); app settings = monitored-apps map + keyword filters (JSON) + blacklist/whitelist + toggles (`qris_with_profile_picture`, `inventory_enabled`, `receive_ads`)
 - `bejo_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window (no FK — username uniqueness is partial)
 - `bejo_history` — transactions, scoped by `business_id`; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `info` (TEXT, e.g. raw callback JSON — the provider's `additionalInfo` payload is stored here under the shorter name)
 - `transaction_items` — optional line items of a sale; `history_id` FK → `bejo_history(id)`; snapshots `sku`/`name`/`quantity`/`unit_price`/`subtotal`; `product_id` is a plain reference (no FK)

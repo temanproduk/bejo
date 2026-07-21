@@ -46,7 +46,7 @@ public class UserService {
     private final BusinessRepository businessRepository;
     private final BusinessBankRepository businessBankRepository;
     private final BusinessContext businessContext;
-    private final AppSettingsService appSettingsService;
+    private final AccountSettingsService accountSettingsService;
     private final BusinessOptions businessOptions;
     private final PasswordEncoder passwordEncoder;
 
@@ -54,14 +54,14 @@ public class UserService {
                        BusinessRepository businessRepository,
                        BusinessBankRepository businessBankRepository,
                        BusinessContext businessContext,
-                       AppSettingsService appSettingsService,
+                       AccountSettingsService accountSettingsService,
                        BusinessOptions businessOptions,
                        PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.businessRepository = businessRepository;
         this.businessBankRepository = businessBankRepository;
         this.businessContext = businessContext;
-        this.appSettingsService = appSettingsService;
+        this.accountSettingsService = accountSettingsService;
         this.businessOptions = businessOptions;
         this.passwordEncoder = passwordEncoder;
     }
@@ -83,7 +83,7 @@ public class UserService {
                 user.getEmail(), user.isEmailVerified(), user.getPhone(), user.isPhoneVerified(),
                 user.getBusinessRole(), business.getName(), business.getAddress(), business.getNmid(),
                 bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName(),
-                business.getPicture(), appSettingsService.getSettings(username));
+                business.getPicture(), accountSettingsService.getSettings(username));
     }
 
     /**

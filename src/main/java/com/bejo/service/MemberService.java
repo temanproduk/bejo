@@ -38,15 +38,18 @@ public class MemberService {
     private final UserRepository userRepository;
     private final SessionRepository sessionRepository;
     private final BusinessContext businessContext;
+    private final AccountSettingsService accountSettingsService;
     private final PasswordEncoder passwordEncoder;
 
     public MemberService(UserRepository userRepository,
                          SessionRepository sessionRepository,
                          BusinessContext businessContext,
+                         AccountSettingsService accountSettingsService,
                          PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.businessContext = businessContext;
+        this.accountSettingsService = accountSettingsService;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -119,12 +122,15 @@ public class MemberService {
                 memberId, member.getUsername(), caller.getBusinessId(), callerUsername);
     }
 
-    // The caller must exist and be the business's super admin
+    // The caller must exist, be the business's super admin, and have team management enabled.
+    // This is the single choke point for add/update/delete (list uses requireBusinessId), so the
+    // team-management gate here covers every member mutation.
     private User requireSuperAdmin(String callerUsername) {
         User caller = businessContext.requireUser(callerUsername);
         if (!caller.isSuperAdmin()) {
             throw new ForbiddenException("Hanya super admin yang dapat mengelola pengguna");
         }
+        accountSettingsService.requireTeamManagementEnabled(caller.getBusinessId());
         return caller;
     }
 

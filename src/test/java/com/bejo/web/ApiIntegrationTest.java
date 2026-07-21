@@ -82,6 +82,23 @@ class ApiIntegrationTest {
         return login(username, "password1", "device-" + username);
     }
 
+    // Turns on team management (employees + presence) for the caller's business — a fresh solo
+    // account has it off, so the team endpoints 403 until this is called.
+    private void enableTeamManagement(String token) throws Exception {
+        mockMvc.perform(put("/api/account-settings/toggle")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON).content("{\"setting\":\"teamManagement\",\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teamManagementEnabled").value(true));
+    }
+
+    // Register a business super admin and turn on team management (so member/presence work).
+    private String registerAdminWithTeam(String username) throws Exception {
+        String token = registerAndLogin(username);
+        enableTeamManagement(token);
+        return token;
+    }
+
     // Posts a MANUAL transaction with an explicit date + amount; used by summary tests.
     private void addManualTxn(String token, String idempotencyKey, String transactionDate, int amount) throws Exception {
         mockMvc.perform(post("/api/transactions")
@@ -948,8 +965,36 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void teamManagementGatesMemberApisUntilEnabled() throws Exception {
+        String adminToken = registerAndLogin("teamgate_admin");   // fresh solo account → team OFF
+
+        // Adding a member is blocked while team management is off (403, gate message)
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("teamgate_member"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Fitur manajemen tim belum diaktifkan"));
+
+        // Reading the member list is NOT gated
+        mockMvc.perform(get("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+
+        // Enable team management → adding a member now works
+        enableTeamManagement(adminToken);
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("teamgate_member"))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void superAdminAddsMemberWhoSharesTheBusinessData() throws Exception {
-        String adminToken = registerAndLogin("biz_admin1");
+        String adminToken = registerAdminWithTeam("biz_admin1");
 
         // The registering user is the SUPER_ADMIN
         mockMvc.perform(post("/api/auth/login")
@@ -990,7 +1035,7 @@ class ApiIntegrationTest {
 
     @Test
     void memberCannotManageUsers() throws Exception {
-        String adminToken = registerAndLogin("biz_admin2");
+        String adminToken = registerAdminWithTeam("biz_admin2");
         mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)
@@ -1011,7 +1056,7 @@ class ApiIntegrationTest {
 
     @Test
     void deletingMemberReleasesUsernameAndSuperAdminCannotBeDeleted() throws Exception {
-        String adminToken = registerAndLogin("biz_admin3");
+        String adminToken = registerAdminWithTeam("biz_admin3");
 
         MvcResult added = mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -1119,7 +1164,7 @@ class ApiIntegrationTest {
 
     @Test
     void onlySuperAdminCanChangeBusinessSettingsPictureAndQris() throws Exception {
-        String adminToken = registerAndLogin("biz_admin6");
+        String adminToken = registerAdminWithTeam("biz_admin6");
         mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)
@@ -1129,7 +1174,7 @@ class ApiIntegrationTest {
         String memberToken = login("biz_member6", "password1", "dm6");
 
         // A member may READ everything
-        mockMvc.perform(get("/api/app-settings")
+        mockMvc.perform(get("/api/account-settings")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/business/picture")
@@ -1139,23 +1184,18 @@ class ApiIntegrationTest {
         // ...but every MUTATION to app config / picture / QRIS is 403 for a member
         String forbidden = "Hanya super admin yang dapat mengubah pengaturan bisnis";
 
-        mockMvc.perform(put("/api/app-settings/inventory")
+        mockMvc.perform(put("/api/account-settings/toggle")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
-                        .contentType(APPLICATION_JSON).content("{\"enabled\":true}"))
+                        .contentType(APPLICATION_JSON).content("{\"setting\":\"inventory\",\"enabled\":true}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value(forbidden));
 
-        mockMvc.perform(put("/api/app-settings/qris-with-profile-picture")
-                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
-                        .contentType(APPLICATION_JSON).content("{\"enabled\":true}"))
-                .andExpect(status().isForbidden());
-
-        mockMvc.perform(put("/api/app-settings/keywords")
+        mockMvc.perform(put("/api/account-settings/keywords")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
                         .contentType(APPLICATION_JSON).content("{\"excludeKeywords\":[\"promo\"]}"))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(put("/api/app-settings/monitored-apps")
+        mockMvc.perform(put("/api/account-settings/monitored-apps")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
                         .contentType(APPLICATION_JSON).content("{\"apps\":{\"id.dana\":\"dana\"}}"))
                 .andExpect(status().isForbidden());
@@ -1183,9 +1223,9 @@ class ApiIntegrationTest {
                 .andExpect(status().isForbidden());
 
         // The super admin can still do all of them
-        mockMvc.perform(put("/api/app-settings/inventory")
+        mockMvc.perform(put("/api/account-settings/toggle")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken)
-                        .contentType(APPLICATION_JSON).content("{\"enabled\":true}"))
+                        .contentType(APPLICATION_JSON).content("{\"setting\":\"inventory\",\"enabled\":true}"))
                 .andExpect(status().isOk());
         mockMvc.perform(put("/api/business/picture")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken)
@@ -1197,7 +1237,7 @@ class ApiIntegrationTest {
 
     @Test
     void superAdminUpdatesMember() throws Exception {
-        String adminToken = registerAndLogin("biz_admin4");
+        String adminToken = registerAdminWithTeam("biz_admin4");
         MvcResult added = mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)
@@ -1241,12 +1281,12 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"))
                 .andExpect(jsonPath("$.data.businessName").value("Warung me_user1"))
                 // app settings are bundled (defaults when never synced)
-                .andExpect(jsonPath("$.data.appSettings.blacklistEnabled").value(true))
-                .andExpect(jsonPath("$.data.appSettings.receiveAds").value(false));
+                .andExpect(jsonPath("$.data.accountSettings.blacklistEnabled").value(true))
+                .andExpect(jsonPath("$.data.accountSettings.receiveAds").value(false));
     }
 
     @Test
-    void loginBundlesAppSettingsAndIdAndPicture() throws Exception {
+    void loginBundlesAccountSettingsAndIdAndPicture() throws Exception {
         register("me_user2");
         MvcResult res = mockMvc.perform(post("/api/auth/login")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -1256,17 +1296,17 @@ class ApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").isNumber())
                 .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"))
-                .andExpect(jsonPath("$.data.appSettings.inventoryEnabled").value(false))
-                .andExpect(jsonPath("$.data.appSettings.receiveAds").value(false))
+                .andExpect(jsonPath("$.data.accountSettings.inventoryEnabled").value(false))
+                .andExpect(jsonPath("$.data.accountSettings.receiveAds").value(false))
                 // no business picture set yet → omitted (null, NON_NULL)
                 .andExpect(jsonPath("$.data.profilePicture").doesNotExist())
                 .andReturn();
-        assertThat(res.getResponse().getContentAsString()).contains("appSettings");
+        assertThat(res.getResponse().getContentAsString()).contains("accountSettings");
     }
 
     @Test
     void deletedMemberExistingTokenIsRejected() throws Exception {
-        String adminToken = registerAndLogin("biz_admin5");
+        String adminToken = registerAdminWithTeam("biz_admin5");
         MvcResult added = mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)
@@ -1853,11 +1893,11 @@ class ApiIntegrationTest {
     // ---------- app settings ----------
 
     @Test
-    void appSettingsDefaultsThenUpdate() throws Exception {
+    void accountSettingsDefaultsThenUpdate() throws Exception {
         String token = registerAndLogin("appset_user1");
 
         // Defaults when nothing has been synced yet
-        mockMvc.perform(get("/api/app-settings")
+        mockMvc.perform(get("/api/account-settings")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -1870,7 +1910,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.includeKeywords").isEmpty());
 
         // Save monitored apps (issuer is trimmed + lowercased)
-        mockMvc.perform(put("/api/app-settings/monitored-apps")
+        mockMvc.perform(put("/api/account-settings/monitored-apps")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1879,7 +1919,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.monitoredApps['id.dana']").value("dana"));
 
         // Save keywords + toggle (Promo/promo dedupe to one entry)
-        mockMvc.perform(put("/api/app-settings/keywords")
+        mockMvc.perform(put("/api/account-settings/keywords")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1890,7 +1930,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.whitelistEnabled").value(true));
 
         // GET reflects the saved state; untouched blacklist toggle stays at its default
-        mockMvc.perform(get("/api/app-settings")
+        mockMvc.perform(get("/api/account-settings")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data.monitoredApps['com.gojek.app']").value("gopay"))
@@ -1899,58 +1939,66 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void appSettingsConfigTogglesFlow() throws Exception {
+    void accountSettingsConfigTogglesFlow() throws Exception {
         String token = registerAndLogin("appset_cfg1");
 
-        // Enable "QRIS with profile picture"
-        mockMvc.perform(put("/api/app-settings/qris-with-profile-picture")
+        // Generic toggle: enable "QRIS with profile picture"
+        mockMvc.perform(put("/api/account-settings/toggle")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"enabled\":true}"))
+                        .content("{\"setting\":\"qrisWithProfilePicture\",\"enabled\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(true))
                 .andExpect(jsonPath("$.data.inventoryEnabled").value(false));
 
         // Enable inventory management
-        mockMvc.perform(put("/api/app-settings/inventory")
+        mockMvc.perform(put("/api/account-settings/toggle")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"enabled\":true}"))
+                        .content("{\"setting\":\"inventory\",\"enabled\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.inventoryEnabled").value(true));
 
         // Opt in to receive ads (default was false)
-        mockMvc.perform(put("/api/app-settings/receive-ads")
+        mockMvc.perform(put("/api/account-settings/toggle")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"enabled\":true}"))
+                        .content("{\"setting\":\"receiveAds\",\"enabled\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.receiveAds").value(true));
 
-        // GET reflects both flags
-        mockMvc.perform(get("/api/app-settings")
+        // GET reflects the flags
+        mockMvc.perform(get("/api/account-settings")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(true))
                 .andExpect(jsonPath("$.data.inventoryEnabled").value(true));
 
-        // Missing 'enabled' is rejected
-        mockMvc.perform(put("/api/app-settings/inventory")
+        // An unknown setting is rejected
+        mockMvc.perform(put("/api/account-settings/toggle")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content("{}"))
+                        .content("{\"setting\":\"bogus\",\"enabled\":true}"))
+                .andExpect(status().isBadRequest());
+
+        // Missing 'enabled' is rejected
+        mockMvc.perform(put("/api/account-settings/toggle")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"setting\":\"inventory\"}"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
-    void appSettingsRejectInvalidPackage() throws Exception {
+    void accountSettingsRejectInvalidPackage() throws Exception {
         String token = registerAndLogin("appset_user2");
 
-        mockMvc.perform(put("/api/app-settings/monitored-apps")
+        mockMvc.perform(put("/api/account-settings/monitored-apps")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1960,8 +2008,8 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void appSettingsRequireJwt() throws Exception {
-        mockMvc.perform(get("/api/app-settings")
+    void accountSettingsRequireJwt() throws Exception {
+        mockMvc.perform(get("/api/account-settings")
                         .header("X-API-TOKEN", API_TOKEN))
                 .andExpect(status().isUnauthorized());
     }
@@ -2170,6 +2218,7 @@ class ApiIntegrationTest {
     // Registers a business, adds one member to it, and returns {adminToken, memberToken, memberId}.
     private Map<String, String> businessWithMember(String adminUsername, String memberUsername) throws Exception {
         String adminToken = registerAndLogin(adminUsername);
+        enableTeamManagement(adminToken);   // team features are gated on this
         MvcResult result = mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)
@@ -2308,7 +2357,7 @@ class ApiIntegrationTest {
 
     @Test
     void superAdminCannotClockIn() throws Exception {
-        String adminToken = registerAndLogin("pres_admin2");
+        String adminToken = registerAdminWithTeam("pres_admin2");
 
         mockMvc.perform(post("/api/presences/clock-in")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -2761,7 +2810,7 @@ class ApiIntegrationTest {
 
         // An outsider can't even see the entry exists (a valid body, so this is the
         // ownership check answering, not validation)
-        String outsiderToken = registerAndLogin("pres_outsider9");
+        String outsiderToken = registerAdminWithTeam("pres_outsider9");
         mockMvc.perform(post("/api/presences/" + pingId + "/respond")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + outsiderToken)

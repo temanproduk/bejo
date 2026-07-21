@@ -1811,7 +1811,7 @@
       "description": "Employee daily presence (attendance). Members clock in/out with a GPS location (which pushes a notification to the super admin); the super admin pings the team for a spot-check and reviews the history by member and month."
     },
     {
-      "name": "App Settings",
+      "name": "Account Settings",
       "item": [
         {
           "name": "Get App Settings",
@@ -1828,13 +1828,13 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/app-settings",
+              "raw": "{{baseUrl}}/api/account-settings",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
-                "app-settings"
+                "account-settings"
               ]
             },
             "description": "Returns the user's app settings (monitored apps + notification keyword filters). When nothing has been synced yet, returns defaults: empty monitoredApps/keyword lists, blacklistEnabled=true, whitelistEnabled=false."
@@ -1868,13 +1868,13 @@
               }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/app-settings/monitored-apps",
+              "raw": "{{baseUrl}}/api/account-settings/monitored-apps",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
-                "app-settings",
+                "account-settings",
                 "monitored-apps"
               ]
             },
@@ -1909,13 +1909,13 @@
               }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/app-settings/keywords",
+              "raw": "{{baseUrl}}/api/account-settings/keywords",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
-                "app-settings",
+                "account-settings",
                 "keywords"
               ]
             },
@@ -1923,7 +1923,7 @@
           }
         },
         {
-          "name": "Toggle QRIS on Profile Picture",
+          "name": "Toggle Setting (super admin)",
           "request": {
             "method": "PUT",
             "header": [
@@ -1942,7 +1942,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"enabled\": true\n}",
+              "raw": "{\n  \"setting\": \"receiveAds\",\n  \"enabled\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1950,99 +1950,17 @@
               }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/app-settings/qris-with-profile-picture",
+              "raw": "{{baseUrl}}/api/account-settings/toggle",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "api",
-                "app-settings",
-                "qris-with-profile-picture"
+                "account-settings",
+                "toggle"
               ]
             },
-            "description": "Toggles whether the QRIS image is composed onto the profile picture (default false). Returns the full updated settings. NOTE: super admin only — a plain member gets 403."
-          }
-        },
-        {
-          "name": "Toggle Inventory Management",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "X-API-TOKEN",
-                "value": "{{apiToken}}"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"enabled\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/app-settings/inventory",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "app-settings",
-                "inventory"
-              ]
-            },
-            "description": "Toggles whether inventory management is enabled (default false). Returns the full updated settings. NOTE: super admin only — a plain member gets 403."
-          }
-        },
-        {
-          "name": "Toggle Receive Ads",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "X-API-TOKEN",
-                "value": "{{apiToken}}"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"enabled\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/app-settings/receive-ads",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "app-settings",
-                "receive-ads"
-              ]
-            },
-            "description": "Toggles whether the business wants to receive voice ads (default false / opt-in). Bundled into the login + /me app-settings. Returns the full updated settings. NOTE: super admin only — a plain member gets 403."
+            "description": "Generic on/off for one boolean setting. setting is one of: qrisWithProfilePicture | inventory | receiveAds | teamManagement (unknown -> 400). Super admin only (member -> 403). teamManagement activates employee accounts + presence and is surfaced on login/me as teamManagementEnabled."
           }
         }
       ]

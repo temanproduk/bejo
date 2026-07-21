@@ -77,17 +77,20 @@ public class PresenceService {
     private final SessionRepository sessionRepository;
     private final PushNotificationService pushNotificationService;
     private final BusinessContext businessContext;
+    private final AccountSettingsService accountSettingsService;
 
     public PresenceService(PresenceRepository presenceRepository,
                            UserRepository userRepository,
                            SessionRepository sessionRepository,
                            PushNotificationService pushNotificationService,
-                           BusinessContext businessContext) {
+                           BusinessContext businessContext,
+                           AccountSettingsService accountSettingsService) {
         this.presenceRepository = presenceRepository;
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.pushNotificationService = pushNotificationService;
         this.businessContext = businessContext;
+        this.accountSettingsService = accountSettingsService;
     }
 
     @Transactional
@@ -102,6 +105,7 @@ public class PresenceService {
 
     private PresenceResponseDto clock(String username, PresenceClockRequestDto request, String type) {
         User user = businessContext.requireUser(username);
+        accountSettingsService.requireTeamManagementEnabled(user.getBusinessId());
         if (user.isSuperAdmin()) {
             throw new ForbiddenException("Super admin tidak perlu absen");
         }
@@ -174,6 +178,7 @@ public class PresenceService {
     @Transactional
     public PingResultResponseDto ping(String callerUsername, PresencePingRequestDto request) {
         User caller = businessContext.requireUser(callerUsername);
+        accountSettingsService.requireTeamManagementEnabled(caller.getBusinessId());
         if (!caller.isSuperAdmin()) {
             throw new ForbiddenException("Hanya super admin yang dapat mengirim ping absen");
         }
@@ -286,6 +291,7 @@ public class PresenceService {
     @Transactional
     public PresenceResponseDto respond(String username, Long presenceId, PresenceRespondRequestDto request) {
         User user = businessContext.requireUser(username);
+        accountSettingsService.requireTeamManagementEnabled(user.getBusinessId());
         Presence presence = presenceRepository.findByIdAndBusinessId(presenceId, user.getBusinessId())
                 .orElseThrow(() -> new ResourceNotFoundException("Presence not found: " + presenceId));
         if (!presence.getUserId().equals(user.getId())) {

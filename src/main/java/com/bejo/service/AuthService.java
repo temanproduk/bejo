@@ -30,7 +30,7 @@ public class AuthService {
     private final BusinessRepository businessRepository;
     private final BusinessBankRepository businessBankRepository;
     private final SessionRepository sessionRepository;
-    private final AppSettingsService appSettingsService;
+    private final AccountSettingsService accountSettingsService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final TokenBlacklistService tokenBlacklistService;
@@ -41,7 +41,7 @@ public class AuthService {
                        BusinessRepository businessRepository,
                        BusinessBankRepository businessBankRepository,
                        SessionRepository sessionRepository,
-                       AppSettingsService appSettingsService,
+                       AccountSettingsService accountSettingsService,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
                        TokenBlacklistService tokenBlacklistService,
@@ -50,7 +50,7 @@ public class AuthService {
         this.businessRepository = businessRepository;
         this.businessBankRepository = businessBankRepository;
         this.sessionRepository = sessionRepository;
-        this.appSettingsService = appSettingsService;
+        this.accountSettingsService = accountSettingsService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.tokenBlacklistService = tokenBlacklistService;
@@ -82,7 +82,7 @@ public class AuthService {
         upsertSession(request);
 
         String token = jwtService.generateToken(request.username());
-        var appSettings = appSettingsService.getSettings(request.username());
+        var accountSettings = accountSettingsService.getSettings(request.username());
 
         loginSuccessCounter.increment();
         log.info("[LOGIN] Success for username={}", request.username());
@@ -106,7 +106,7 @@ public class AuthService {
                 bank.getBankNumber(),
                 bank.getBankAccountName(),
                 business.getPicture(),
-                appSettings,
+                accountSettings,
                 token, "Bearer",
                 jwtService.getExpiresInSeconds());
     }

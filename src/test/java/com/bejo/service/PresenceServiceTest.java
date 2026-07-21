@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -54,6 +55,7 @@ class PresenceServiceTest {
     @Mock private SessionRepository sessionRepository;
     @Mock private PushNotificationService pushNotificationService;
     @Mock private BusinessContext businessContext;
+    @Mock private AccountSettingsService accountSettingsService;
 
     private PresenceService service;
 
@@ -63,7 +65,7 @@ class PresenceServiceTest {
     @BeforeEach
     void setUp() {
         service = new PresenceService(presenceRepository, userRepository, sessionRepository,
-                pushNotificationService, businessContext);
+                pushNotificationService, businessContext, accountSettingsService);
 
         // By default every member has a device registered for push (the ping flow skips
         // members that have none) — the no-device tests override this. Null-safe because
@@ -605,6 +607,18 @@ class PresenceServiceTest {
         u.setBusinessId(BIZ);
         u.setBusinessRole(role);
         return u;
+    }
+
+    @Test
+    void presenceBlockedWhenTeamManagementDisabled() {
+        doThrow(new ForbiddenException("Fitur manajemen tim belum diaktifkan"))
+                .when(accountSettingsService).requireTeamManagementEnabled(BIZ);
+
+        assertThatThrownBy(() -> service.clockIn("budi",
+                new PresenceClockRequestDto(-6.2, 106.8, LocalDateTime.now(), null)))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("manajemen tim");
+        verifyNoInteractions(presenceRepository);
     }
 
     private PresenceRespondRequestDto reply() {

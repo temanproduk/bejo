@@ -2,7 +2,7 @@ package com.bejo.service;
 
 import com.bejo.constant.BusinessRole;
 import com.bejo.dto.request.LoginRequestDto;
-import com.bejo.dto.response.AppSettingsResponseDto;
+import com.bejo.dto.response.AccountSettingsResponseDto;
 import com.bejo.dto.response.LoginResponseDto;
 import com.bejo.entity.Business;
 import com.bejo.entity.BusinessBank;
@@ -44,7 +44,7 @@ class AuthServiceTest {
     @Mock private BusinessRepository businessRepository;
     @Mock private BusinessBankRepository businessBankRepository;
     @Mock private SessionRepository sessionRepository;
-    @Mock private AppSettingsService appSettingsService;
+    @Mock private AccountSettingsService accountSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtService jwtService;
     @Mock private TokenBlacklistService tokenBlacklistService;
@@ -56,9 +56,9 @@ class AuthServiceTest {
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
         authService = new AuthService(userRepository, businessRepository, businessBankRepository,
-                sessionRepository, appSettingsService, passwordEncoder, jwtService, tokenBlacklistService, meterRegistry);
-        lenient().when(appSettingsService.getSettings("alice")).thenReturn(
-                new AppSettingsResponseDto(Map.of(), List.of(), List.of(), true, false, false, false, false));
+                sessionRepository, accountSettingsService, passwordEncoder, jwtService, tokenBlacklistService, meterRegistry);
+        lenient().when(accountSettingsService.getSettings("alice")).thenReturn(
+                new AccountSettingsResponseDto(Map.of(), List.of(), List.of(), true, false, false, false, false, false));
     }
 
     private User user(String username) {
@@ -138,7 +138,7 @@ class AuthServiceTest {
         assertThat(data.size()).isEqualTo("Mikro");
         assertThat(data.industry()).isEqualTo("Makanan & Minuman");
         // Bundled app settings so the client can render its home screen without extra round trips
-        assertThat(data.appSettings()).isNotNull();
+        assertThat(data.accountSettings()).isNotNull();
         assertThat(meterRegistry.counter("login.attempts", "result", "success").count()).isEqualTo(1.0);
 
         ArgumentCaptor<Session> captor = ArgumentCaptor.forClass(Session.class);
