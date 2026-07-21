@@ -136,8 +136,10 @@ public class PushNotificationService {
                 sent++;
                 log.info("[PUSH] Sent to FCM deviceId={} messageId={}", s.getDeviceId(), messageId);
             } catch (FirebaseMessagingException e) {
-                log.error("[PUSH] FCM rejected message for deviceId={} errorCode={}: {}",
-                        s.getDeviceId(), e.getMessagingErrorCode(), e.getMessage(), e);
+                // Expected + handled (e.g. UNREGISTERED cleans the token below) — log the code +
+                // message, NOT the exception object, so the long FCM stack trace doesn't spam logs.
+                log.warn("[PUSH] FCM rejected message for deviceId={} errorCode={}: {}",
+                        s.getDeviceId(), e.getMessagingErrorCode(), e.getMessage());
                 // Auto-cleanup: drop a token FCM says is no longer registered
                 if (isTokenUnregistered(e.getMessagingErrorCode())) {
                     s.setPushToken(null);

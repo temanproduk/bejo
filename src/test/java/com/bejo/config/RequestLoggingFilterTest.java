@@ -38,6 +38,7 @@ class RequestLoggingFilterTest {
     @AfterEach
     void tearDown() {
         logbackLogger.detachAppender(appender);
+        logbackLogger.setLevel(null);   // reset so a DEBUG-level test doesn't leak into others
     }
 
     // Chain that consumes the body (so it gets cached) and sets a status
@@ -141,14 +142,26 @@ class RequestLoggingFilterTest {
     }
 
     @Test
-    void callbackSuccessAlsoDumps() throws Exception {
-        // The callback dump now fires on EVERY callback (temporary, to study the provider payload),
-        // not just errors — a 200 still logs [CALLBACK-REQ] (at INFO).
+    void callbackSuccessLogsBodyOnlyAtDebug() throws Exception {
+        // Success dumps just the body, and only at DEBUG (quiet in prod; bump the logger to inspect).
+        logbackLogger.setLevel(Level.DEBUG);
+        MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{\"foo\":\"bar\"}");
+
+        filter.doFilter(req, new MockHttpServletResponse(), chainReturning(200));
+
+        assertThat(callbackLogs())
+                .anyMatch(l -> l.startsWith("[CALLBACK-REQ] body=") && l.contains("\"foo\":\"bar\""));
+    }
+
+    @Test
+    void callbackSuccessIsQuietAtInfo() throws Exception {
+        // At INFO (prod default), a successful callback produces no [CALLBACK-REQ] dump.
+        logbackLogger.setLevel(Level.INFO);
         MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{}");
 
         filter.doFilter(req, new MockHttpServletResponse(), chainReturning(200));
 
-        assertThat(callbackLogs()).anyMatch(l -> l.contains("[CALLBACK-REQ]") && l.contains("status=200"));
+        assertThat(callbackLogs()).isEmpty();
     }
 
     @Test

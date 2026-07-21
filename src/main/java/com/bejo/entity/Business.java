@@ -27,6 +27,11 @@ public class Business {
     @Column(name = "nmid")
     private String nmid;
 
+    // QRIS merchant PAN — the inbound callback carries this (not the NMID), so it routes a
+    // payment callback to this business. Set optionally at registration.
+    @Column(name = "merchant_pan")
+    private String merchantPan;
+
     @Column(name = "initial_name")
     private String initialName;
 
@@ -67,6 +72,8 @@ public class Business {
     public void setAddress(String address) { this.address = address; }
     public String getNmid() { return nmid; }
     public void setNmid(String nmid) { this.nmid = nmid; }
+    public String getMerchantPan() { return merchantPan; }
+    public void setMerchantPan(String merchantPan) { this.merchantPan = merchantPan; }
     public String getInitialName() { return initialName; }
     public void setInitialName(String initialName) { this.initialName = initialName; }
     public String getInitialAddress() { return initialAddress; }

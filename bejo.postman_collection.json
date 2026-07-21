@@ -24,7 +24,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"nmid\": \"ID1026540778978\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\"\n}",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"nmid\": \"ID1026540778978\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\",\n  \"merchantPan\": \"9360082232606290012\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

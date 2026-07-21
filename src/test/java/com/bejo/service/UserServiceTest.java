@@ -60,7 +60,7 @@ class UserServiceTest {
 
     private RegisterRequestDto registerRequest() {
         return new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null);
+                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -138,7 +138,7 @@ class UserServiceTest {
         when(passwordEncoder.encode("password1")).thenReturn("$encoded");
         String photo = java.util.Base64.getEncoder().encodeToString("img".getBytes());
         var req = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, "Kecil", "Otomotif", photo);
+                "+628111111111", "Warung Alice", null, null, null, null, null, "Kecil", "Otomotif", photo, null);
 
         userService.register(req);
 
@@ -150,15 +150,29 @@ class UserServiceTest {
     }
 
     @Test
+    void registerStoresMerchantPanTrimmingBlankToNull() {
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
+        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
+        var req = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
+                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null, "9360082232606290012");
+
+        userService.register(req);
+
+        ArgumentCaptor<Business> captor = ArgumentCaptor.forClass(Business.class);
+        verify(businessRepository).save(captor.capture());
+        assertThat(captor.getValue().getMerchantPan()).isEqualTo("9360082232606290012");
+    }
+
+    @Test
     void registerRejectsInvalidSizeOrIndustry() {
         when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
         var badSize = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, "Raksasa", null, null);
+                "+628111111111", "Warung Alice", null, null, null, null, null, "Raksasa", null, null, null);
         assertThatThrownBy(() -> userService.register(badSize))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("size tidak valid");
 
         var badIndustry = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, null, "Antariksa", null);
+                "+628111111111", "Warung Alice", null, null, null, null, null, null, "Antariksa", null, null);
         assertThatThrownBy(() -> userService.register(badIndustry))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("industry tidak valid");
         verify(businessRepository, never()).save(any());

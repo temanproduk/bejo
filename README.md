@@ -714,6 +714,7 @@ Self-service registration. Creates a **new business** and its first user as the 
 | `businessName` | yes | Max 255 chars |
 | `businessAddress` | no | Free text |
 | `nmid` | no | Max 50 chars |
+| `merchantPan` | no | Max 50 chars — QRIS merchant PAN; the payment callback carries this (not the NMID), so it's how a callback routes to this business |
 | `bankName` | no | Max 100 chars |
 | `bankNumber` | no | Digits only, 6–20 digits |
 | `bankAccountName` | no | Max 100 chars |
@@ -1674,6 +1675,7 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `SEED_BUSINESS_NAME` | no | Default: `My Business` |
 | `SEED_BUSINESS_ADDRESS` | no | |
 | `SEED_NMID` | no | National Merchant ID for seed user |
+| `SEED_MERCHANT_PAN` | no | QRIS merchant PAN for the seed business (routes payment callbacks) |
 | `APP_REQUESTLOGGING_LOGBODYONERROR` | no | Log request bodies on 4xx/5xx (redacted, capped). Default `true`; set `false` to disable |
 | `APP_REQUESTLOGGING_MAXBODYLENGTH` | no | Max logged body length in chars. Default `2048` |
 
@@ -1719,7 +1721,7 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `CLOUD_SQL_DB_USER` | Database user |
 | `CLOUD_RUN_SA` | Cloud Run service account name |
 | `CUSTOM_DOMAIN` | `api.bejo.temanproduk.com` |
-| `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` | Seed user values |
+| `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` / `SEED_MERCHANT_PAN` | Seed user values |
 | `BUSINESS_MAX_USERS` / `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` / `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | *(optional)* Business option overrides — built-in defaults apply if unset |
 | `JWT_EXPIRATION_MS` / `CALLBACK_DEFAULT_USERNAME` / `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | *(optional)* Other overrides — defaults apply if unset |
 | `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds. Default `30` (max `3600`) |

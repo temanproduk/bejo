@@ -52,6 +52,9 @@ public class DataSeeder implements ApplicationRunner {
     @Value("${app.seed.nmid:}")
     private String seedNmid;
 
+    @Value("${app.seed.merchant-pan:}")
+    private String seedMerchantPan;
+
     private final UserRepository userRepository;
     private final BusinessRepository businessRepository;
     private final BusinessBankRepository businessBankRepository;
@@ -95,6 +98,7 @@ public class DataSeeder implements ApplicationRunner {
             business.setInitialAddress(addr);
             String nmid = seedNmid.isBlank() ? null : seedNmid;
             business.setNmid(nmid);
+            business.setMerchantPan(seedMerchantPan.isBlank() ? null : seedMerchantPan);
             business.setSize(businessOptions.resolveSize(null));          // configured default
             business.setIndustry(businessOptions.resolveIndustry(null));  // configured default
             business.setInitialNmid(nmid);

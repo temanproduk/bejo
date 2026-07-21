@@ -153,7 +153,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(FirebaseMessagingException.class)
     public ResponseEntity<ApiResponseDto<Void>> handleFcm(FirebaseMessagingException ex) {
-        log.error("FCM error [{}]: {}", ex.getMessagingErrorCode(), ex.getMessage(), ex);
+        // Code + message only — the FCM exception's stack trace is long and adds no signal.
+        log.warn("FCM error [{}]: {}", ex.getMessagingErrorCode(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(ApiResponseDto.error("Gagal mengirim notifikasi"));
     }

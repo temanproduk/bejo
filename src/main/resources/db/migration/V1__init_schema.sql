@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS businesses (
     name           VARCHAR(255)  NOT NULL,
     address        TEXT,
     nmid           VARCHAR(50),
+    merchant_pan   VARCHAR(50),                       -- QRIS merchant PAN; routes inbound callbacks (no NMID in the payload)
     initial_name   VARCHAR(255),
     initial_address TEXT,
     initial_nmid   VARCHAR(50),
@@ -22,8 +23,10 @@ CREATE TABLE IF NOT EXISTS businesses (
     picture        TEXT,                              -- shared business picture, base64, <= 1 MB decoded
     created_at     TIMESTAMP     NOT NULL DEFAULT NOW()
 );
--- NMID uniquely routes an inbound QRIS callback to a business (nulls allowed & non-unique)
+-- NMID / merchant PAN each uniquely route an inbound QRIS callback to a business (nulls allowed).
+-- The provider's callback carries merchantPan (not NMID), so merchant_pan is the routing key.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_business_nmid ON businesses (nmid) WHERE nmid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_business_merchant_pan ON businesses (merchant_pan) WHERE merchant_pan IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS users (
     id                 BIGSERIAL     PRIMARY KEY,

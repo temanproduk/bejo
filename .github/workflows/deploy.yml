@@ -75,6 +75,7 @@ jobs:
           ENV_VARS="$ENV_VARS@SEED_BUSINESS_NAME=${{ vars.SEED_BUSINESS_NAME }}"
           [ -n "${{ vars.SEED_BUSINESS_ADDRESS }}" ] && ENV_VARS="$ENV_VARS@SEED_BUSINESS_ADDRESS=${{ vars.SEED_BUSINESS_ADDRESS }}"
           [ -n "${{ vars.SEED_NMID }}" ]             && ENV_VARS="$ENV_VARS@SEED_NMID=${{ vars.SEED_NMID }}"
+          [ -n "${{ vars.SEED_MERCHANT_PAN }}" ]     && ENV_VARS="$ENV_VARS@SEED_MERCHANT_PAN=${{ vars.SEED_MERCHANT_PAN }}"
 
           # Optional overrides — all have built-in defaults (application.yml), so only add
           # them when the corresponding GitHub Actions variable is set. --set-env-vars

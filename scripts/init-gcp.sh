@@ -257,6 +257,7 @@ ENV_VARS+="@SEED_NAME=${SEED_NAME:-Admin User}"
 ENV_VARS+="@SEED_BUSINESS_NAME=${SEED_BUSINESS_NAME:-My Business}"
 [[ -n "${SEED_BUSINESS_ADDRESS:-}" ]] && ENV_VARS+="@SEED_BUSINESS_ADDRESS=$SEED_BUSINESS_ADDRESS"
 [[ -n "${SEED_NMID:-}" ]]            && ENV_VARS+="@SEED_NMID=$SEED_NMID"
+[[ -n "${SEED_MERCHANT_PAN:-}" ]]    && ENV_VARS+="@SEED_MERCHANT_PAN=$SEED_MERCHANT_PAN"
 
 # Optional overrides — all have built-in defaults (application.yml), so only set them
 # when present in .env.gcp. The ^@^ delimiter above lets values contain commas

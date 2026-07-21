@@ -63,8 +63,9 @@ public class NotificationService {
             String messageId = pushNotificationService.sendToToken(pushToken, payload);
             log.info("[NOTIFY-TEST] Push sent to FCM successfully deviceId={} messageId={}", request.deviceId(), messageId);
         } catch (FirebaseMessagingException e) {
-            log.error("[NOTIFY-TEST] Push to FCM FAILED deviceId={} errorCode={}: {}",
-                    request.deviceId(), e.getMessagingErrorCode(), e.getMessage(), e);
+            // Code + message only (no stack trace) — keeps the long FCM trace out of the logs.
+            log.warn("[NOTIFY-TEST] Push to FCM FAILED deviceId={} errorCode={}: {}",
+                    request.deviceId(), e.getMessagingErrorCode(), e.getMessage());
             // Auto-cleanup: drop the token if FCM says it's no longer registered
             if (PushNotificationService.isTokenUnregistered(e.getMessagingErrorCode())) {
                 sessionRepository.findByUsernameAndDeviceId(username, request.deviceId()).ifPresent(s -> {

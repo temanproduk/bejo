@@ -102,6 +102,7 @@ public class UserService {
         business.setName(request.businessName());
         business.setAddress(request.businessAddress());
         business.setNmid(request.nmid());
+        business.setMerchantPan(trimToNull(request.merchantPan()));
         business.setInitialName(request.businessName());
         business.setInitialAddress(request.businessAddress());
         business.setInitialNmid(request.nmid());
@@ -271,5 +272,12 @@ public class UserService {
         if (decoded.length > MAX_PICTURE_BYTES) {
             throw new IllegalArgumentException("Ukuran gambar maksimal 1MB");
         }
+    }
+
+    // Blank/whitespace -> null, so an empty merchantPan doesn't collide on the partial-unique index.
+    private static String trimToNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
     }
 }

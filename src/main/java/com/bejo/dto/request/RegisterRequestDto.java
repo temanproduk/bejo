@@ -58,5 +58,10 @@ public record RegisterRequestDto(
         String industry,
 
         // Optional store photo — base64, <= 1 MB decoded (same spec as the business picture)
-        String storePhoto
+        String storePhoto,
+
+        // QRIS merchant PAN — routes inbound payment callbacks to this business (the callback
+        // carries merchantPan, not the NMID). Optional; set at registration.
+        @Size(max = 50, message = "merchantPan maksimal 50 karakter")
+        String merchantPan
 ) {}
