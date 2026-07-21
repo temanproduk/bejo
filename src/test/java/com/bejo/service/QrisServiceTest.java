@@ -5,6 +5,7 @@ import com.bejo.entity.Business;
 import com.bejo.entity.BusinessQris;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.BusinessQrisRepository;
+import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.BusinessRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,13 +30,14 @@ class QrisServiceTest {
 
     @Mock private BusinessRepository businessRepository;
     @Mock private BusinessQrisRepository businessQrisRepository;
+    @Mock private UserQrisRepository userQrisRepository;
     @Mock private BusinessContext businessContext;
 
     private QrisService qrisService;
 
     @BeforeEach
     void setUp() {
-        qrisService = new QrisService(businessRepository, businessQrisRepository, businessContext);
+        qrisService = new QrisService(businessRepository, businessQrisRepository, userQrisRepository, businessContext);
         lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads
         lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // upload/reset (super admin)
     }

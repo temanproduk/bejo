@@ -17,8 +17,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
 
 /**
@@ -121,6 +121,24 @@ public class PushNotificationService {
         }
         return sendToSessions(sessionRepository.findByUsernameIn(usernames),
                 token -> message(token, payload), "businessId=" + businessId);
+    }
+
+    /**
+     * Best-effort broadcast to every device of a <b>specific set of users</b> — used by the payment
+     * callback, which computes its recipients (by QRIS terminal id) rather than ringing the whole
+     * business. Never throws. Returns the number of messages sent.
+     */
+    public int sendToUsernames(Collection<String> usernames, PushPayload payload) {
+        if (!isConfigured()) {
+            log.warn("[PUSH] Firebase not configured — skipping push for {} user(s)", usernames.size());
+            return 0;
+        }
+        if (usernames.isEmpty()) {
+            log.warn("[PUSH] No recipient users — nothing sent");
+            return 0;
+        }
+        return sendToSessions(sessionRepository.findByUsernameIn(usernames),
+                token -> message(token, payload), "usernames=" + usernames.size());
     }
 
     // Shared fan-out: send each session's token its own Message, auto-clearing dead ones. Never throws.

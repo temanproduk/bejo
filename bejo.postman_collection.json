@@ -2063,6 +2063,146 @@
             },
             "description": "Clears the uploaded QRIS image and reverts to the Bejo-generated one (type=MANAGED).\n\nNo request body needed. NOTE: super admin only — a plain member gets 403."
           }
+        },
+        {
+          "name": "Set User QRIS (super admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"terminalId\": \"A001\",\n  \"qrisImage\": \"cXJpcy10ZXJtaW5hbC1B\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/qris/users/{{memberUsername}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "qris",
+                "users",
+                "{{memberUsername}}"
+              ]
+            },
+            "description": "Assign a user their own QRIS + terminal id (payment callbacks route by terminal). Super admin only, and team management must be enabled (403 otherwise). terminalId unique per business (400 if duplicate); target must be an active user of the business."
+          }
+        },
+        {
+          "name": "List User QRIS (super admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/qris/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "qris",
+                "users"
+              ]
+            },
+            "description": "List the business's per-user QRIS assignments (images omitted)."
+          }
+        },
+        {
+          "name": "Get User QRIS (super admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/qris/users/{{memberUsername}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "qris",
+                "users",
+                "{{memberUsername}}"
+              ]
+            },
+            "description": "One user's QRIS assignment, with the image. 404 if not assigned."
+          }
+        },
+        {
+          "name": "Delete User QRIS (super admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/qris/users/{{memberUsername}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "qris",
+                "users",
+                "{{memberUsername}}"
+              ]
+            },
+            "description": "Remove a user's assignment — they revert to the shared business QRIS."
+          }
         }
       ]
     },

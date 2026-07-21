@@ -4,9 +4,11 @@ import com.bejo.constant.QrisType;
 import com.bejo.dto.response.QrisResponseDto;
 import com.bejo.entity.Business;
 import com.bejo.entity.BusinessQris;
+import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.BusinessQrisRepository;
 import com.bejo.repository.BusinessRepository;
+import com.bejo.repository.UserQrisRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -21,13 +23,16 @@ public class QrisService {
 
     private final BusinessRepository businessRepository;
     private final BusinessQrisRepository businessQrisRepository;
+    private final UserQrisRepository userQrisRepository;
     private final BusinessContext businessContext;
 
     public QrisService(BusinessRepository businessRepository,
                        BusinessQrisRepository businessQrisRepository,
+                       UserQrisRepository userQrisRepository,
                        BusinessContext businessContext) {
         this.businessRepository = businessRepository;
         this.businessQrisRepository = businessQrisRepository;
+        this.userQrisRepository = userQrisRepository;
         this.businessContext = businessContext;
     }
 
@@ -36,6 +41,16 @@ public class QrisService {
         Long businessId = businessContext.requireBusinessId(username);
         Business business = businessRepository.findById(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+
+        // If the main account assigned this user their own QRIS, serve that (their terminal's image);
+        // otherwise fall back to the shared business QRIS below.
+        UserQris own = userQrisRepository.findByBusinessIdAndUsername(businessId, username).orElse(null);
+        if (own != null) {
+            log.info("[QRIS] Serving per-user QRIS for username={} terminalId={}", username, own.getTerminalId());
+            return new QrisResponseDto(QrisType.UPLOADED, own.getQrisImage(),
+                    business.getName(), business.getAddress(), business.getNmid());
+        }
+
         BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 

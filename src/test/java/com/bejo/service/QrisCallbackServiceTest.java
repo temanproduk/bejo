@@ -1,13 +1,16 @@
 package com.bejo.service;
 
+import com.bejo.constant.BusinessRole;
 import com.bejo.dto.request.QrMpmNotifyRequestDto;
 import com.bejo.dto.response.QrMpmNotifyResponseDto;
 import com.bejo.entity.Business;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
+import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.TransactionRepository;
+import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -20,6 +23,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,6 +50,7 @@ class QrisCallbackServiceTest {
     @Mock private TransactionRepository transactionRepository;
     @Mock private UserRepository userRepository;
     @Mock private BusinessRepository businessRepository;
+    @Mock private UserQrisRepository userQrisRepository;
     @Mock private PushNotificationService pushNotificationService;
 
     private QrisCallbackService service;
@@ -52,8 +58,24 @@ class QrisCallbackServiceTest {
     @BeforeEach
     void setUp() {
         service = new QrisCallbackService(transactionRepository, userRepository, businessRepository,
-                pushNotificationService, new ObjectMapper(), new SimpleMeterRegistry());
+                userQrisRepository, pushNotificationService, new ObjectMapper(), new SimpleMeterRegistry());
         ReflectionTestUtils.setField(service, "defaultUsername", "admin");
+    }
+
+    private User user(String username, String role) {
+        User u = new User();
+        u.setUsername(username);
+        u.setBusinessId(BIZ);
+        u.setBusinessRole(role);
+        return u;
+    }
+
+    private UserQris userQris(String username, String terminalId) {
+        UserQris q = new UserQris();
+        q.setBusinessId(BIZ);
+        q.setUsername(username);
+        q.setTerminalId(terminalId);
+        return q;
     }
 
     private void seedUserExists() {
@@ -62,6 +84,7 @@ class QrisCallbackServiceTest {
         admin.setBusinessId(BIZ);
         Business business = new Business();
         business.setName("Seed Merchant");
+        ReflectionTestUtils.setField(business, "id", BIZ);
         lenient().when(userRepository.findByUsernameAndDeletedAtIsNull("admin")).thenReturn(Optional.of(admin));
         lenient().when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
     }
@@ -117,10 +140,36 @@ class QrisCallbackServiceTest {
     }
 
     @Test
-    void pushesToEveryDeviceInTheBusiness() {
+    void pushesToTheTerminalsRecipients() {
         seedUserExists();
         service.processNotify(request("00"), null);
-        verify(pushNotificationService).sendToBusiness(eq(BIZ), any());
+        verify(pushNotificationService).sendToUsernames(any(), any());
+    }
+
+    @Test
+    void routesByMerchantPanAndTerminalToMatchingUsers() {
+        // A business is found by the callback's merchant PAN (request()'s merchantPan)
+        Business biz = new Business();
+        biz.setName("Merchant");
+        ReflectionTestUtils.setField(biz, "id", BIZ);
+        when(businessRepository.findFirstByMerchantPan("9360082232504524231")).thenReturn(Optional.of(biz));
+
+        // owner (super admin) + two cashiers; request() carries terminalId "5164"
+        when(userRepository.findByBusinessIdAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ)).thenReturn(List.of(
+                user("owner", BusinessRole.SUPER_ADMIN),
+                user("kasir1", BusinessRole.MEMBER),
+                user("kasir2", BusinessRole.MEMBER)));
+        // kasir1's terminal matches, kasir2's doesn't; owner has no per-user QRIS
+        when(userQrisRepository.findByBusinessId(BIZ)).thenReturn(List.of(
+                userQris("kasir1", "5164"), userQris("kasir2", "9999")));
+
+        service.processNotify(request("00"), null);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(pushNotificationService).sendToUsernames(captor.capture(), any());
+        // owner always + kasir1 (terminal match); kasir2 excluded (different terminal)
+        assertThat(captor.getValue()).containsExactlyInAnyOrder("owner", "kasir1");
     }
 
     @Test

@@ -1392,11 +1392,11 @@ For the keyword endpoint: `400 Tidak ada data yang diubah` (all fields null), `4
 
 ### QRIS
 
-> Any member can read the QRIS (`GET /api/qris`), but **only the super admin can change the image** (`POST /api/qris/upload` and `/reset`) — a member gets `403`.
+> Any member can read the QRIS (`GET /api/qris`), but **only the super admin changes it** — the shared business image (`POST /api/qris/upload` and `/reset`) and each user's own QRIS (`/api/qris/users/*`); a member gets `403`.
 
-#### `GET /api/qris` — Get QRIS image
+#### `GET /api/qris` — Get the caller's effective QRIS
 
-Returns the QRIS image and business info. `type` indicates whether the image is Bejo-managed or user-uploaded.
+Returns the caller's **effective** QRIS: if the main account [assigned this user their own QRIS](#put-apiqrisusersusername--assign-a-user-their-own-qris-super-admin), that image (with its terminal); otherwise the shared business QRIS. `type` indicates whether the image is Bejo-managed or user-uploaded.
 
 **QRIS is optional.** A freshly registered merchant has no QRIS record at all, so `GET /api/qris` returns **`404 QRIS data not found`** until they upload one via `POST /api/qris/upload` (which creates the record on first upload). Once a record exists, `qrisImage` **may still be `null`** — e.g. after an upload is reset, the response is `type: MANAGED` with `qrisImage: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to upload their QRIS.
 
@@ -1442,6 +1442,20 @@ Clears the uploaded image and reverts to the initial/managed QRIS image (which m
 
 ---
 
+#### `PUT /api/qris/users/{username}` — Assign a user their own QRIS (super admin)
+
+The main account gives one user their own QRIS image + a **terminal id** (same merchant PAN, distinct terminal), so a payment callback routes by terminal. **Super admin only, and team management must be enabled** (`403` otherwise). `terminalId` is unique within the business (`400 Terminal ID sudah digunakan`); the target must be an active user of the caller's business (`400` otherwise).
+
+**Request body:** `{ "terminalId": "A001", "qrisImage": "<base64, ≤±5 MB>" }`
+
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "username": "...", "terminalId": "A001", "qrisImage": "...", "createdAt": "...", "updatedAt": "..." } }`
+
+#### `GET /api/qris/users` · `GET /api/qris/users/{username}` · `DELETE /api/qris/users/{username}` (super admin)
+
+List all per-user assignments (images omitted), fetch one (with image), or remove one (the user reverts to the shared business QRIS). `404 QRIS pengguna tidak ditemukan` if not assigned.
+
+---
+
 ### QRIS callback
 
 #### `POST /snap/v1.0/qr/qr-mpm-notify`
@@ -1450,7 +1464,11 @@ Inbound QRIS payment notification (SNAP-like QR MPM notify) from the QRIS mercha
 
 This endpoint does **not** use the standard `{ status, message, data }` envelope — it returns the callback contract's own acknowledgment shape.
 
-> **⚠️ PoC mode (temporary).** The provider's callback is currently buggy and only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So right now the endpoint is **lenient**: all body fields and the `X-TIMESTAMP` header are optional, and it **cannot** route by NMID or dedupe by reference. Instead, **every callback records a new transaction against the seed user's business** (`app.callback.default-username` → its `business_id`) and pushes to **every device of every user in that business**. NMID routing + idempotency + `X-TIMESTAMP` parsing will be restored once the provider fixes the payload — currently the transaction date is always the server time (`now()`).
+**Routing.** The useful fields arrive under `additionalInfo`: `terminalId`, `merchantPan` (there is **no NMID**), `customerPan`, `transactionId`. The service:
+> - **finds the business by `merchantPan`** (`businesses.merchant_pan`), falling back to the configured default account (`app.callback.default-username`) if it matches nothing, and records the transaction there;
+> - **routes the push by `terminalId`**: the **super admin** always gets it, a user with **no** [per-user QRIS](#put-apiqrisusersusername--assign-a-user-their-own-qris-super-admin) always gets it (they use the shared business QRIS), and a user **with** their own QRIS gets it only when their terminal id matches the callback's. A callback with no `terminalId` rings the whole business.
+>
+> **⚠️ Still PoC:** `idempotencyKey` is null (no reference dedupe yet — each callback creates a new row), and `X-TIMESTAMP` is ignored so the transaction date is `now()`. These will be restored once the provider's references stabilize.
 
 **Headers**
 

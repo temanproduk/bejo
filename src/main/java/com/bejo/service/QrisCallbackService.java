@@ -8,11 +8,13 @@ import com.bejo.dto.response.QrMpmNotifyResponseDto;
 import com.bejo.entity.Business;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
+import com.bejo.entity.UserQris;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.push.PushPayload;
 import com.bejo.push.TransactionPushPayload;
 import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.TransactionRepository;
+import com.bejo.repository.UserQrisRepository;
 import com.bejo.repository.UserRepository;
 import com.bejo.util.AppTime;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -30,6 +32,11 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -40,23 +47,26 @@ public class QrisCallbackService {
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
     private final BusinessRepository businessRepository;
+    private final UserQrisRepository userQrisRepository;
     private final PushNotificationService pushNotificationService;
     private final ObjectMapper objectMapper;
     private final Counter callbackCounter;
 
-    // The seed/merchant account every callback is attributed to (default: seed user).
+    // Fallback account a callback is attributed to when its merchant PAN matches no business.
     @Value("${app.callback.default-username:admin}")
     private String defaultUsername;
 
     public QrisCallbackService(TransactionRepository transactionRepository,
                                UserRepository userRepository,
                                BusinessRepository businessRepository,
+                               UserQrisRepository userQrisRepository,
                                PushNotificationService pushNotificationService,
                                ObjectMapper objectMapper,
                                MeterRegistry meterRegistry) {
         this.transactionRepository = transactionRepository;
         this.userRepository = userRepository;
         this.businessRepository = businessRepository;
+        this.userQrisRepository = userQrisRepository;
         this.pushNotificationService = pushNotificationService;
         this.objectMapper = objectMapper;
         this.callbackCounter = Counter.builder("qris.callbacks.received").register(meterRegistry);
@@ -76,15 +86,12 @@ public class QrisCallbackService {
         log.info("[CALLBACK] status={} amount={}",
                 req.latestTransactionStatus(), req.amount() != null ? req.amount().value() : null);
 
-        User seedUser = userRepository.findByUsernameAndDeletedAtIsNull(defaultUsername)
-                .orElseThrow(() -> {
-                    log.error("[CALLBACK] Seed user '{}' not found — payment NOT recorded", defaultUsername);
-                    return new ResourceNotFoundException("Seed user '" + defaultUsername + "' not found");
-                });
-        Long businessId = seedUser.getBusinessId();
-        String businessName = businessRepository.findById(businessId).map(Business::getName).orElse(null);
-
         QrMpmNotifyRequestDto.AdditionalInfo info = req.additionalInfo();
+        // Route by merchant PAN (the callback carries no NMID); fall back to the default account.
+        Business business = resolveBusiness(info != null ? info.merchantPan() : null);
+        Long businessId = business.getId();
+        String businessName = business.getName();
+
         BigDecimal amount = parseAmount(req.amount() != null ? req.amount().value() : null);
         BigDecimal tip = info != null && info.tip() != null ? parseAmount(info.tip()) : BigDecimal.ZERO;
         String status = mapStatus(req.latestTransactionStatus());
@@ -115,15 +122,63 @@ public class QrisCallbackService {
         log.info("[CALLBACK] Recorded transactionId={} businessId={} amount={} status={}",
                 transactionId, businessId, t.getAmount(), status);
 
-        // Best-effort push to EVERY device of EVERY user in the business — must never fail the callback
+        // Best-effort push to the terminal's recipients — must never fail the callback.
         try {
-            pushNotificationService.sendToBusiness(businessId, buildPushData(t, businessName));
+            String terminalId = info != null ? info.terminalId() : null;
+            List<String> recipients = resolveRecipients(businessId, terminalId);
+            log.info("[CALLBACK] Routing push to {} recipient(s) for businessId={} terminalId={}",
+                    recipients.size(), businessId, terminalId);
+            pushNotificationService.sendToUsernames(recipients, buildPushData(t, businessName));
         } catch (RuntimeException e) {
             log.error("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
                     transactionId, e.getMessage(), e);
         }
 
         return response(t.getId(), req, amount, tip);
+    }
+
+    // The business a callback belongs to: matched by merchant PAN, else the configured default account.
+    private Business resolveBusiness(String merchantPan) {
+        if (merchantPan != null && !merchantPan.isBlank()) {
+            Optional<Business> byPan = businessRepository.findFirstByMerchantPan(merchantPan);
+            if (byPan.isPresent()) return byPan.get();
+            log.warn("[CALLBACK] No business for merchantPan={} — falling back to default account", merchantPan);
+        }
+        User fallback = userRepository.findByUsernameAndDeletedAtIsNull(defaultUsername)
+                .orElseThrow(() -> {
+                    log.error("[CALLBACK] Default account '{}' not found — payment NOT recorded", defaultUsername);
+                    return new ResourceNotFoundException("Default account '" + defaultUsername + "' not found");
+                });
+        return businessRepository.findById(fallback.getBusinessId())
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found for default account"));
+    }
+
+    /**
+     * Which users' devices get the payment push, by QRIS terminal:
+     * <ul>
+     *   <li>the <b>super admin</b> (main account) — always;</li>
+     *   <li>a member with <b>no</b> per-user QRIS — always (they use the shared business QRIS);</li>
+     *   <li>a member with a per-user QRIS — only when its terminal id matches the callback's.</li>
+     * </ul>
+     * If the callback carries no terminal id, everyone in the business is notified (can't route).
+     */
+    private List<String> resolveRecipients(Long businessId, String terminalId) {
+        List<User> users = userRepository.findByBusinessIdAndDeletedAtIsNullOrderByCreatedAtAsc(businessId);
+        if (terminalId == null || terminalId.isBlank()) {
+            return users.stream().map(User::getUsername).toList();
+        }
+        Map<String, String> userTerminal = new HashMap<>();
+        for (UserQris q : userQrisRepository.findByBusinessId(businessId)) {
+            userTerminal.put(q.getUsername(), q.getTerminalId());
+        }
+        List<String> recipients = new ArrayList<>();
+        for (User u : users) {
+            String ownTerminal = userTerminal.get(u.getUsername());
+            if (u.isSuperAdmin() || ownTerminal == null || ownTerminal.equals(terminalId)) {
+                recipients.add(u.getUsername());
+            }
+        }
+        return recipients;
     }
 
     private PushPayload buildPushData(Transaction t, String merchantName) {

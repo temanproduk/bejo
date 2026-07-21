@@ -105,9 +105,13 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `PUT` | `/api/devices/{deviceId}/fcm-token` | JWT | Update FCM push token (scoped to the authenticated user's session) |
 | `POST` | `/api/notifications/test` | JWT | **Test:** send an FCM push from the request payload to one device (no DB write) |
 | `POST` | `/api/notifications/user` | JWT | **Test/utility:** broadcast an FCM push to **all** the caller's devices (no `deviceId`; via `sendToUser`; no DB write) |
-| `GET` | `/api/qris` | JWT | QRIS image; `type` = `UPLOADED` (custom) or `MANAGED` (generated) |
-| `POST` | `/api/qris/upload` | JWT (super admin) | Upload base64 QRIS image (max ±5 MB) |
-| `POST` | `/api/qris/reset` | JWT (super admin) | Revert to the managed/generated image |
+| `GET` | `/api/qris` | JWT | The caller's **effective** QRIS: their own per-user QRIS if assigned, else the shared business QRIS. `type` = `UPLOADED` (custom) or `MANAGED` (generated) |
+| `POST` | `/api/qris/upload` | JWT (super admin) | Upload the **business** (shared) QRIS image (base64, max ±5 MB) |
+| `POST` | `/api/qris/reset` | JWT (super admin) | Revert the business QRIS to the managed/generated image |
+| `PUT` | `/api/qris/users/{username}` | JWT (super admin + team mgmt) | Assign a user their own QRIS + `terminalId` (`{terminalId, qrisImage}`); callbacks route by terminal |
+| `GET` | `/api/qris/users` | JWT (super admin) | List the business's per-user QRIS assignments (images omitted) |
+| `GET` | `/api/qris/users/{username}` | JWT (super admin) | One user's QRIS assignment (with image) |
+| `DELETE` | `/api/qris/users/{username}` | JWT (super admin) | Remove a user's assignment (they revert to the business QRIS) |
 | `PATCH` | `/api/users/me` | JWT | Update name, email, phone |
 | `PATCH` | `/api/users/me/password` | JWT | Change password (requires `oldPassword`) |
 | `GET`/`PUT`/`DELETE` | `/api/business/picture` | JWT (GET: any member · PUT/DELETE: super admin) | Get/set/remove the **business** picture (base64, ≤1 MB, shared by all members). Response field is `profilePicture` |
@@ -158,7 +162,7 @@ service/      → business logic, metrics via Micrometer Counter
 repository/   → Spring Data JPA interfaces
 entity/       → JPA entities (Business, User, BusinessBank, BusinessQris,
                 AccountSettings, Session, Transaction, TransactionItem, Presence,
-                AdCampaign, AdDelivery, TokenBlacklist)
+                AdCampaign, AdDelivery, UserQris, TokenBlacklist)
 dto/          → request records (@NotBlank validated) + response records.
                 Every DTO class name ends with `Dto` (e.g. LoginRequestDto,
                 TransactionDto); requests and responses are separate types.
@@ -220,7 +224,12 @@ A MANUAL/PARSED transaction may optionally carry `items` — a list of `(product
 
 `POST /snap/v1.0/qr/qr-mpm-notify` (`QrisCallbackController` → `QrisCallbackService`) receives SNAP-like QR MPM notifications from the QRIS merchant service (AstraPay), unauthenticated (server-to-server).
 
-**PoC mode (temporary):** the provider's callback is currently buggy — it only sends a valid amount + status (reference numbers, `merchantPan`, `transactionId` all null). So the DTO validation is lenient (all fields optional), `X-TIMESTAMP` is optional, and the service can't route by NMID or dedupe by reference. Instead, **every callback records a `MANAGED`/`AstraPay` transaction against the seed user's business** (`app.callback.default-username`, default `admin` → its `business_id`) with a generated `transactionId`, null `idempotencyKey` (no dedupe — each callback creates a new row), amount/status from the payload; saves the raw payload JSON to `bejo_history.info`; and sends a best-effort FCM push to **every device of every user in that business** (`PushNotificationService.sendToBusiness`). Returns the callback's own ack shape (`QrMpmNotifyResponse`). **Note:** `parseTimestamp` is currently commented out, so `transaction_date` is `now()` (the `X-TIMESTAMP` is ignored). **Restore NMID routing (`BusinessRepository.findFirstByNmid`) + reference-based idempotency + X-TIMESTAMP parsing once the provider fixes the payload.**
+The real payload puts the useful fields under `additionalInfo`: `terminalId`, `merchantPan` (there's **no NMID**), `customerPan`, `transactionId`. The service:
+
+1. **Routes to a business by `merchantPan`** (`BusinessRepository.findFirstByMerchantPan`, matched against `businesses.merchant_pan`); if it matches nothing it falls back to the configured default account (`app.callback.default-username`, default `admin` → its business). It records a `MANAGED`/`AstraPay` transaction against that business (generated `transactionId`, raw payload → `bejo_history.info`).
+2. **Routes the push by `terminalId`** (`resolveRecipients`): the **super admin** always gets it; a member with **no** per-user QRIS gets it (they use the shared business QRIS); a member **with** a `user_qris` gets it only when their `terminalId` matches the callback's. A callback with no `terminalId` goes to the whole business. The chosen recipients are pushed via `PushNotificationService.sendToUsernames`. Best-effort — a push failure never fails the callback.
+
+**Still PoC where noted:** `idempotencyKey` is null (no reference-based dedupe yet — each callback creates a new row), and `parseTimestamp` is commented out so `transaction_date` is `now()` (`X-TIMESTAMP` ignored). DTO validation stays lenient. **Restore reference-based idempotency + X-TIMESTAMP parsing later.**
 
 FCM sending lives in `PushNotificationService` (shared). **Every message is data-only** — no FCM `notification` block anywhere, so the app always gets `onMessageReceived` and renders the push itself; `data.type` (`PushType`) says which kind it is.
 
@@ -231,6 +240,8 @@ FCM sending lives in `PushNotificationService` (shared). **Every message is data
 ### QRIS model
 
 QRIS is optional: registration creates no `business_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
+
+**Per-user QRIS (`user_qris`, `QrisController`/`UserQrisService`):** the **main account** (super admin) can give any user in its business their own QRIS image + a **`terminalId`** (same merchant PAN, distinct terminal) — used so a payment callback routes by terminal (below). Managed via `PUT`/`GET`/`DELETE /api/qris/users/{username}` (setting is super-admin **and** team-management gated; reading/removing is super-admin only). One row per user; `terminalId` unique within the business (`uq_user_qris_terminal` → 400 `"Terminal ID sudah digunakan"`). **`GET /api/qris` returns the caller's effective QRIS** — their `user_qris` image if assigned, otherwise the shared `business_qris`. A user without a `user_qris` row falls back to the business QRIS and is notified for every callback of the merchant.
 
 ### Products & inventory
 
@@ -317,7 +328,8 @@ Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup;
 Key tables:
 - `businesses` — the merchant; business name/address/nmid/**merchant_pan** (+ `initial_*` for reset) + `size`/`industry` (NOT NULL, immutable, config-validated) + optional `store_photo` + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `nmid` and `merchant_pan` (each `WHERE … IS NOT NULL`). **`merchant_pan`** is the QRIS merchant PAN carried by the payment callback (no NMID in the payload) — it's how a callback routes to a business; set optionally at registration
 - `users` — credentials + profile (name/email/phone); `business_id` FK; `business_role` (`SUPER_ADMIN`/`MEMBER`); `account_type` (`MANAGED`/`SELF_SERVICE`); soft delete via `deleted_at` (username unique only among active users — partial index `uq_users_username_active`)
-- `business_banks` / `business_qris` / `account_settings` — one row per `business_id` (unique FK); app settings = monitored-apps map + keyword filters (JSON) + blacklist/whitelist + toggles (`qris_with_profile_picture`, `inventory_enabled`, `receive_ads`)
+- `business_banks` / `business_qris` / `account_settings` — one row per `business_id` (unique FK); account settings = monitored-apps map + keyword filters (JSON) + blacklist/whitelist + toggles (`qris_with_profile_picture`, `inventory_enabled`, `receive_ads`, `team_management_enabled`)
+- `user_qris` — per-user QRIS (main-account-set): `username` + `terminal_id` + `qris_image`, scoped by `business_id`; unique `(business_id, username)` and `(business_id, terminal_id)`; the payment callback routes its push by matching `terminal_id`
 - `bejo_sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window (no FK — username uniqueness is partial)
 - `bejo_history` — transactions, scoped by `business_id`; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; general-purpose `info` (TEXT, e.g. raw callback JSON — the provider's `additionalInfo` payload is stored here under the shorter name)
 - `transaction_items` — optional line items of a sale; `history_id` FK → `bejo_history(id)`; snapshots `sku`/`name`/`quantity`/`unit_price`/`subtotal`; `product_id` is a plain reference (no FK)

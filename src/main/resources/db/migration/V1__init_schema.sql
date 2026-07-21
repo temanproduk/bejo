@@ -72,6 +72,25 @@ CREATE TABLE IF NOT EXISTS business_qris (
     CONSTRAINT fk_qris_business FOREIGN KEY (business_id) REFERENCES businesses (id)
 );
 
+-- Per-user QRIS: the main account may give an individual user their OWN QRIS image with a
+-- terminal id (same merchant PAN, different terminal). A payment callback carries the terminal id,
+-- so a user with a row here is notified ONLY for callbacks matching their terminal; a user without
+-- a row falls back to the shared business_qris and is notified for every callback of the merchant.
+-- Set only by the super admin. One row per user; terminal id unique within the business.
+CREATE TABLE IF NOT EXISTS user_qris (
+    id           BIGSERIAL    PRIMARY KEY,
+    business_id  BIGINT       NOT NULL,
+    username     VARCHAR(50)  NOT NULL,   -- same width as users.username (no FK; history-safe)
+    terminal_id  VARCHAR(50)  NOT NULL,
+    qris_image   TEXT         NOT NULL,   -- base64
+    created_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMP,
+    CONSTRAINT uq_user_qris_user     UNIQUE (business_id, username),
+    CONSTRAINT uq_user_qris_terminal UNIQUE (business_id, terminal_id),
+    CONSTRAINT fk_user_qris_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_qris_business ON user_qris (business_id);
+
 CREATE TABLE IF NOT EXISTS bejo_sessions (
     id             BIGSERIAL    PRIMARY KEY,
     username       VARCHAR(50)  NOT NULL,             -- no FK: username uniqueness is partial (active only)
