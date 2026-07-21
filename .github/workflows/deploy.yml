@@ -62,6 +62,14 @@ jobs:
           ENV_VARS="$ENV_VARS@DB_USERNAME=${{ env.CLOUD_SQL_DB_USER }}"
           ENV_VARS="$ENV_VARS@SPRING_PROFILES_ACTIVE=prod"
           ENV_VARS="$ENV_VARS@TZ=Asia/Jakarta"
+
+          # Ad-campaign audio bucket. Defaults to <project>-ads to match init-gcp.sh;
+          # override with the ADS_GCS_BUCKET GitHub Actions variable.
+          ADS_BUCKET="${{ vars.ADS_GCS_BUCKET }}"
+          ENV_VARS="$ENV_VARS@ADS_GCS_BUCKET=${ADS_BUCKET:-${{ env.GCP_PROJECT_ID }}-ads}"
+          [ -n "${{ vars.ADS_SIGNED_URL_TTL_SECONDS }}" ] && ENV_VARS="$ENV_VARS@ADS_SIGNED_URL_TTL_SECONDS=${{ vars.ADS_SIGNED_URL_TTL_SECONDS }}"
+          [ -n "${{ vars.ADS_MAX_AUDIO_BYTES }}" ]        && ENV_VARS="$ENV_VARS@ADS_MAX_AUDIO_BYTES=${{ vars.ADS_MAX_AUDIO_BYTES }}"
+          [ -n "${{ vars.ADS_MAX_AUDIO_SECONDS }}" ]      && ENV_VARS="$ENV_VARS@ADS_MAX_AUDIO_SECONDS=${{ vars.ADS_MAX_AUDIO_SECONDS }}"
           ENV_VARS="$ENV_VARS@SEED_USERNAME=${{ vars.SEED_USERNAME }}"
           ENV_VARS="$ENV_VARS@SEED_NAME=${{ vars.SEED_NAME }}"
           ENV_VARS="$ENV_VARS@SEED_BUSINESS_NAME=${{ vars.SEED_BUSINESS_NAME }}"
@@ -82,10 +90,10 @@ jobs:
           [ -n "${{ vars.REQUEST_LOG_BODY_ON_ERROR }}" ]  && ENV_VARS="$ENV_VARS@REQUEST_LOG_BODY_ON_ERROR=${{ vars.REQUEST_LOG_BODY_ON_ERROR }}"
           [ -n "${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}" ] && ENV_VARS="$ENV_VARS@REQUEST_LOG_MAX_BODY_LENGTH=${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}"
 
-          # Cloud Run request timeout (seconds). Default 60; override with the CLOUD_RUN_TIMEOUT
+          # Cloud Run request timeout (seconds). Default 30; override with the CLOUD_RUN_TIMEOUT
           # GitHub Actions variable (max 3600 for HTTP/1).
           RUN_TIMEOUT="${{ vars.CLOUD_RUN_TIMEOUT }}"
-          RUN_TIMEOUT="${RUN_TIMEOUT:-60}"
+          RUN_TIMEOUT="${RUN_TIMEOUT:-30}"
 
           gcloud run deploy "${{ env.GCP_SERVICE_NAME }}" \
             --image="${{ steps.image.outputs.image }}" \
@@ -99,6 +107,7 @@ jobs:
             --set-secrets="API_TOKEN=bejo-api-token:latest" \
             --set-secrets="FIREBASE_CREDENTIALS_BASE64=bejo-firebase-credentials:latest" \
             --set-secrets="SEED_PASSWORD=bejo-seed-password:latest" \
+            --set-secrets="ADS_ADMIN_TOKEN=bejo-ads-admin-token:latest" \
             --min-instances=0 \
             --max-instances=2 \
             --memory=512Mi \

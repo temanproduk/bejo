@@ -75,6 +75,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/login", "/api/users/register").permitAll()
                         .requestMatchers("/snap/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
+                        // Ads admin surface is server-to-server: no JWT, guarded by the
+                        // X-ADS-ADMIN-TOKEN header in the controller. The device-facing reports
+                        // (/api/ads/deliveries/**) fall through to authenticated() below.
+                        .requestMatchers("/api/ads/campaigns/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class)

@@ -15,5 +15,7 @@ public record AppSettingsResponseDto(
         boolean blacklistEnabled,
         boolean whitelistEnabled,
         boolean qrisWithProfilePicture,
-        boolean inventoryEnabled
+        boolean inventoryEnabled,
+        // Whether the business opted in to receive voice ads (super-admin-set; default false)
+        boolean receiveAds
 ) {}

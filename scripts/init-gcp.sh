@@ -50,7 +50,9 @@ gcloud services enable \
   sqladmin.googleapis.com \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
-  cloudbuild.googleapis.com
+  cloudbuild.googleapis.com \
+  storage.googleapis.com \
+  iamcredentials.googleapis.com
 
 # ---------------------------------------------------------------
 # 2. Artifact Registry repository
@@ -132,6 +134,34 @@ for role in "roles/cloudsql.client" "roles/secretmanager.secretAccessor"; do
 done
 
 # ---------------------------------------------------------------
+# 4b. Cloud Storage bucket for ad-campaign audio
+# ---------------------------------------------------------------
+# Holds the ≤10s voice files pushed to devices. Locked down: uniform bucket-level
+# access + public-access-prevention, so objects are reachable only via short-lived
+# V4 signed URLs the app mints at push time. The Cloud Run SA needs objectAdmin on
+# the bucket (read/write) and serviceAccountTokenCreator ON ITSELF so it can sign
+# those URLs without a downloaded key (uses the IAM Credentials signBlob API).
+ADS_GCS_BUCKET="${ADS_GCS_BUCKET:-$GCP_PROJECT_ID-ads}"
+echo "==> Creating ads audio bucket gs://$ADS_GCS_BUCKET ..."
+gcloud storage buckets create "gs://$ADS_GCS_BUCKET" \
+  --project="$GCP_PROJECT_ID" \
+  --location="$GCP_REGION" \
+  --uniform-bucket-level-access \
+  --public-access-prevention \
+  --quiet 2>/dev/null || echo "    (already exists, skipping)"
+
+gcloud storage buckets add-iam-policy-binding "gs://$ADS_GCS_BUCKET" \
+  --member="serviceAccount:$CLOUD_RUN_SA_EMAIL" \
+  --role="roles/storage.objectAdmin" \
+  --quiet >/dev/null
+
+gcloud iam service-accounts add-iam-policy-binding "$CLOUD_RUN_SA_EMAIL" \
+  --member="serviceAccount:$CLOUD_RUN_SA_EMAIL" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="$GCP_PROJECT_ID" \
+  --quiet >/dev/null
+
+# ---------------------------------------------------------------
 # 5. Service account for GitHub Actions (CI/CD)
 # ---------------------------------------------------------------
 echo "==> Creating GitHub Actions service account..."
@@ -185,6 +215,14 @@ create_or_update_secret "bejo-api-token"            "$API_TOKEN"
 create_or_update_secret "bejo-firebase-credentials" "$FIREBASE_CREDENTIALS_BASE64"
 create_or_update_secret "bejo-seed-password"        "$SEED_PASSWORD"
 
+# Ads admin token is optional (Secret Manager rejects an empty payload) — only create it, and
+# mount it into Cloud Run below, when a value is provided in .env.gcp.
+ADS_SECRET_FLAG=()
+if [[ -n "${ADS_ADMIN_TOKEN:-}" ]]; then
+  create_or_update_secret "bejo-ads-admin-token"    "$ADS_ADMIN_TOKEN"
+  ADS_SECRET_FLAG=(--set-secrets="ADS_ADMIN_TOKEN=bejo-ads-admin-token:latest")
+fi
+
 # ---------------------------------------------------------------
 # 7. Build & push initial Docker image
 # ---------------------------------------------------------------
@@ -210,6 +248,10 @@ ENV_VARS="DB_URL=$DB_URL"
 ENV_VARS+="@DB_USERNAME=$CLOUD_SQL_DB_USER"
 ENV_VARS+="@SPRING_PROFILES_ACTIVE=prod"
 ENV_VARS+="@TZ=Asia/Jakarta"
+ENV_VARS+="@ADS_GCS_BUCKET=$ADS_GCS_BUCKET"
+[[ -n "${ADS_SIGNED_URL_TTL_SECONDS:-}" ]] && ENV_VARS+="@ADS_SIGNED_URL_TTL_SECONDS=$ADS_SIGNED_URL_TTL_SECONDS"
+[[ -n "${ADS_MAX_AUDIO_BYTES:-}" ]]        && ENV_VARS+="@ADS_MAX_AUDIO_BYTES=$ADS_MAX_AUDIO_BYTES"
+[[ -n "${ADS_MAX_AUDIO_SECONDS:-}" ]]      && ENV_VARS+="@ADS_MAX_AUDIO_SECONDS=$ADS_MAX_AUDIO_SECONDS"
 ENV_VARS+="@SEED_USERNAME=${SEED_USERNAME:-admin}"
 ENV_VARS+="@SEED_NAME=${SEED_NAME:-Admin User}"
 ENV_VARS+="@SEED_BUSINESS_NAME=${SEED_BUSINESS_NAME:-My Business}"
@@ -241,11 +283,12 @@ gcloud run deploy "$GCP_SERVICE_NAME" \
   --set-secrets="API_TOKEN=bejo-api-token:latest" \
   --set-secrets="FIREBASE_CREDENTIALS_BASE64=bejo-firebase-credentials:latest" \
   --set-secrets="SEED_PASSWORD=bejo-seed-password:latest" \
+  ${ADS_SECRET_FLAG[@]+"${ADS_SECRET_FLAG[@]}"} \
   --min-instances="${CLOUD_RUN_MIN_INSTANCES:-0}" \
   --max-instances="${CLOUD_RUN_MAX_INSTANCES:-2}" \
   --memory="${CLOUD_RUN_MEMORY:-512Mi}" \
   --cpu="${CLOUD_RUN_CPU:-1}" \
-  --timeout="${CLOUD_RUN_TIMEOUT:-60}" \
+  --timeout="${CLOUD_RUN_TIMEOUT:-30}" \
   --cpu-boost \
   --allow-unauthenticated \
   --quiet

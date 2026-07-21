@@ -120,7 +120,7 @@ class UserServiceTest {
         when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
         when(appSettingsService.getSettings("alice")).thenReturn(
                 new com.bejo.dto.response.AppSettingsResponseDto(
-                        java.util.Map.of(), java.util.List.of(), java.util.List.of(), true, false, false, false));
+                        java.util.Map.of(), java.util.List.of(), java.util.List.of(), true, false, false, false, false));
 
         var me = userService.getMe("alice");
 

@@ -58,7 +58,7 @@ class AuthServiceTest {
         authService = new AuthService(userRepository, businessRepository, businessBankRepository,
                 sessionRepository, appSettingsService, passwordEncoder, jwtService, tokenBlacklistService, meterRegistry);
         lenient().when(appSettingsService.getSettings("alice")).thenReturn(
-                new AppSettingsResponseDto(Map.of(), List.of(), List.of(), true, false, false, false));
+                new AppSettingsResponseDto(Map.of(), List.of(), List.of(), true, false, false, false, false));
     }
 
     private User user(String username) {

@@ -4,6 +4,7 @@ import com.bejo.dto.request.UpdateInventoryEnabledRequestDto;
 import com.bejo.dto.request.UpdateKeywordsRequestDto;
 import com.bejo.dto.request.UpdateMonitoredAppsRequestDto;
 import com.bejo.dto.request.UpdateQrisWithProfilePictureRequestDto;
+import com.bejo.dto.request.UpdateReceiveAdsRequestDto;
 import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.dto.response.AppSettingsResponseDto;
 import com.bejo.service.AppSettingsService;
@@ -58,5 +59,14 @@ public class AppSettingsController {
             Authentication authentication) {
         AppSettingsResponseDto data = appSettingsService.updateInventoryEnabled(authentication.getName(), request.enabled());
         return ResponseEntity.ok(ApiResponseDto.success("Pengaturan inventaris disimpan", data));
+    }
+
+    // Whether the business wants to receive voice ads (super admin only, via loadOrCreate).
+    @PutMapping("/receive-ads")
+    public ResponseEntity<ApiResponseDto<AppSettingsResponseDto>> updateReceiveAds(
+            @Valid @RequestBody UpdateReceiveAdsRequestDto request,
+            Authentication authentication) {
+        AppSettingsResponseDto data = appSettingsService.updateReceiveAds(authentication.getName(), request.enabled());
+        return ResponseEntity.ok(ApiResponseDto.success("Pengaturan iklan disimpan", data));
     }
 }

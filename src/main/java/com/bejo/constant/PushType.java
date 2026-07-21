@@ -11,12 +11,16 @@ package com.bejo.constant;
  *   <li>{@link #PRESENCE} — an attendance event; the payload carries {@code presenceType}
  *       ({@link PresenceType}: CLOCK_IN / CLOCK_OUT / PING), {@code presenceId},
  *       {@code userId}, {@code username}</li>
+ *   <li>{@link #ADS} — a voice-ad campaign event; the payload carries {@code adEvent}
+ *       ({@link AdEvent}: PREPARE / PLAY), {@code campaignId}, {@code deliveryId}, and for
+ *       PREPARE the download details ({@code audioUrl}, {@code sha256}, {@code sizeBytes})</li>
  * </ul>
  */
 public final class PushType {
 
     public static final String TRANSACTION = "TRANSACTION";
     public static final String PRESENCE = "PRESENCE";
+    public static final String ADS = "ADS";
 
     private PushType() {}
 }

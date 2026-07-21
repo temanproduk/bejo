@@ -91,8 +91,21 @@ app:
     # Log the request body on 4xx/5xx (secrets masked, capped). Toggle + cap here.
     log-body-on-error: ${REQUEST_LOG_BODY_ON_ERROR:true}
     max-body-length: ${REQUEST_LOG_MAX_BODY_LENGTH:2048}
+  ads:
+    # Cloud Storage bucket holding campaign audio (created + locked down by scripts/init-gcp.sh).
+    gcs-bucket: ${ADS_GCS_BUCKET:}
+    # Lifetime (seconds) of the signed download URL pushed to the device (default 24h; GCS max 7d).
+    signed-url-ttl-seconds: ${ADS_SIGNED_URL_TTL_SECONDS:86400}
+    # Max decoded audio size in bytes (default 2 MB) and duration in seconds (default 10).
+    # Both are checked before the file is uploaded to storage.
+    max-audio-bytes: ${ADS_MAX_AUDIO_BYTES:2097152}
+    max-audio-seconds: ${ADS_MAX_AUDIO_SECONDS:10}
+    # Dedicated secret gating the admin surface (X-ADS-ADMIN-TOKEN header). Blank = feature off.
+    admin-token: ${ADS_ADMIN_TOKEN:}
 
 logging:
   level:
     com.bejo: INFO
     org.hibernate.SQL: WARN
+    # jaudiotagger (audio duration check) is very chatty at INFO — quiet it
+    org.jaudiotagger: WARN

@@ -79,6 +79,20 @@
             <artifactId>firebase-admin</artifactId>
             <version>${firebase-admin.version}</version>
         </dependency>
+        <!-- Ad-campaign audio storage. Already on the classpath transitively via firebase-admin;
+             declared explicitly (and version-pinned to match) because we use it directly. -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-storage</artifactId>
+            <version>2.43.1</version>
+        </dependency>
+        <!-- Reads audio duration (header only) to enforce the ≤10s ad limit. Handles MP3, MP4/M4A,
+             OGG, WAV. LGPL — used unmodified as a library dependency. -->
+        <dependency>
+            <groupId>net.jthink</groupId>
+            <artifactId>jaudiotagger</artifactId>
+            <version>3.0.1</version>
+        </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>

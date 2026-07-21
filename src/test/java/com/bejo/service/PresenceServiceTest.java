@@ -9,6 +9,7 @@ import com.bejo.dto.request.PresenceRespondRequestDto;
 import com.bejo.dto.response.PingResultResponseDto;
 import com.bejo.dto.response.PresenceResponseDto;
 import com.bejo.entity.Presence;
+import com.bejo.push.PushPayload;
 import com.bejo.entity.User;
 import com.bejo.exception.ForbiddenException;
 import com.bejo.repository.PresenceRepository;
@@ -113,9 +114,9 @@ class PresenceServiceTest {
         assertThat(dto.type()).isEqualTo(PresenceType.CLOCK_IN);
 
         // The super admin's devices get a data-only push the app renders itself
-        ArgumentCaptor<Map<String, String>> data = captureData();
-        verify(pushNotificationService).sendUrgentToUser(eq("boss"), data.capture());
-        assertThat(data.getValue())
+        ArgumentCaptor<PushPayload> data = captureData();
+        verify(pushNotificationService).sendToUser(eq("boss"), data.capture());
+        assertThat(data.getValue().toData())
                 .containsEntry("type", PushType.PRESENCE)          // not a TRANSACTION push
                 .containsEntry("title", "budi telah absen masuk!")
                 .containsEntry("body", "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!")
@@ -136,9 +137,9 @@ class PresenceServiceTest {
         service.clockOut("budi", new PresenceClockRequestDto(-6.2, 106.8, LocalDateTime.now(), null));
 
         verify(presenceRepository).save(any(Presence.class));
-        ArgumentCaptor<Map<String, String>> data = captureData();
-        verify(pushNotificationService).sendUrgentToUser(eq("boss"), data.capture());
-        assertThat(data.getValue()).containsEntry("title", "budi telah absen keluar!");
+        ArgumentCaptor<PushPayload> data = captureData();
+        verify(pushNotificationService).sendToUser(eq("boss"), data.capture());
+        assertThat(data.getValue().toData()).containsEntry("title", "budi telah absen keluar!");
     }
 
     @Test
@@ -247,7 +248,7 @@ class PresenceServiceTest {
     void clockInIsRecordedEvenWhenThePushFails() {
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
                 .thenReturn(Optional.of(admin));
-        when(pushNotificationService.sendUrgentToUser(any(), anyMap()))
+        when(pushNotificationService.sendToUser(any(), any()))
                 .thenThrow(new RuntimeException("FCM down"));
 
         PresenceResponseDto dto = service.clockIn("budi",
@@ -274,17 +275,17 @@ class PresenceServiceTest {
             assertThat(dto.latitude()).isNull();   // the admin sends no location
         });
         verify(presenceRepository, times(2)).save(any(Presence.class));
-        ArgumentCaptor<Map<String, String>> data = captureData();
-        verify(pushNotificationService).sendUrgentToUser(eq("budi"), data.capture());
-        verify(pushNotificationService).sendUrgentToUser(eq("siti"), anyMap());
-        assertThat(data.getValue())
+        ArgumentCaptor<PushPayload> data = captureData();
+        verify(pushNotificationService).sendToUser(eq("budi"), data.capture());
+        verify(pushNotificationService).sendToUser(eq("siti"), any());
+        assertThat(data.getValue().toData())
                 .containsEntry("type", PushType.PRESENCE)
                 .containsEntry("presenceType", PresenceType.PING)
                 .containsEntry("title", "Ping Absen Bejoo!")
                 .containsEntry("body", "Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?");
 
         // The super admin sent it — their own devices must NOT be pinged
-        verify(pushNotificationService, never()).sendUrgentToUser(eq("boss"), anyMap());
+        verify(pushNotificationService, never()).sendToUser(eq("boss"), any());
     }
 
     @Test
@@ -299,8 +300,8 @@ class PresenceServiceTest {
         assertThat(created).hasSize(1);
         assertThat(created.get(0).username()).isEqualTo("siti");
         verify(presenceRepository, times(1)).save(any(Presence.class));
-        verify(pushNotificationService).sendUrgentToUser(eq("siti"), anyMap());
-        verify(pushNotificationService, never()).sendUrgentToUser(eq("budi"), anyMap());
+        verify(pushNotificationService).sendToUser(eq("siti"), any());
+        verify(pushNotificationService, never()).sendToUser(eq("budi"), any());
     }
 
     @Test
@@ -344,8 +345,8 @@ class PresenceServiceTest {
         // Budi is skipped, but he doesn't block Siti
         assertThat(created).hasSize(1);
         assertThat(created.get(0).username()).isEqualTo("siti");
-        verify(pushNotificationService).sendUrgentToUser(eq("siti"), anyMap());
-        verify(pushNotificationService, never()).sendUrgentToUser(eq("budi"), anyMap());
+        verify(pushNotificationService).sendToUser(eq("siti"), any());
+        verify(pushNotificationService, never()).sendToUser(eq("budi"), any());
     }
 
     @Test
@@ -391,7 +392,7 @@ class PresenceServiceTest {
         List<PresenceResponseDto> created = service.ping("boss", new PresencePingRequestDto(2L)).presences();
 
         assertThat(created).hasSize(1);
-        verify(pushNotificationService).sendUrgentToUser(eq("budi"), anyMap());
+        verify(pushNotificationService).sendToUser(eq("budi"), any());
     }
 
     @Test
@@ -415,7 +416,7 @@ class PresenceServiceTest {
             assertThat(s.reason()).isEqualTo("NO_DEVICE");
         });
         verify(presenceRepository, times(1)).save(any(Presence.class));
-        verify(pushNotificationService, never()).sendUrgentToUser(eq("budi"), anyMap());
+        verify(pushNotificationService, never()).sendToUser(eq("budi"), any());
     }
 
     @Test
@@ -623,8 +624,8 @@ class PresenceServiceTest {
     }
 
     @SuppressWarnings("unchecked")
-    private ArgumentCaptor<Map<String, String>> captureData() {
-        return ArgumentCaptor.forClass(Map.class);
+    private ArgumentCaptor<PushPayload> captureData() {
+        return ArgumentCaptor.forClass(PushPayload.class);
     }
 
     private static void setId(Object entity, Long id) {

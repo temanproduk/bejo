@@ -50,7 +50,7 @@ public class AppSettingsService {
                 .map(this::toResponse)
                 // No row yet — return defaults (blacklist ON, whitelist OFF, toggles OFF, empty lists)
                 .orElseGet(() -> new AppSettingsResponseDto(
-                        Map.of(), List.of(), List.of(), true, false, false, false));
+                        Map.of(), List.of(), List.of(), true, false, false, false, false));
     }
 
     @Transactional
@@ -106,6 +106,15 @@ public class AppSettingsService {
         settings.setInventoryEnabled(enabled);
         repository.save(settings);
         log.info("[APP-SETTINGS] inventoryEnabled={} for businessId={}", enabled, settings.getBusinessId());
+        return toResponse(settings);
+    }
+
+    @Transactional
+    public AppSettingsResponseDto updateReceiveAds(String username, boolean enabled) {
+        BusinessAppSettings settings = loadOrCreate(username);
+        settings.setReceiveAds(enabled);
+        repository.save(settings);
+        log.info("[APP-SETTINGS] receiveAds={} for businessId={}", enabled, settings.getBusinessId());
         return toResponse(settings);
     }
 
@@ -172,6 +181,7 @@ public class AppSettingsService {
                 s.isBlacklistEnabled(),
                 s.isWhitelistEnabled(),
                 s.isQrisWithProfilePicture(),
-                s.isInventoryEnabled());
+                s.isInventoryEnabled(),
+                s.isReceiveAds());
     }
 }

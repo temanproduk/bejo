@@ -22,3 +22,8 @@ app:
     password: ""
   callback:
     default-username: cb_seed
+  ads:
+    admin-token: test-ads-admin-token
+    signed-url-ttl-seconds: 86400
+    max-audio-bytes: 2097152
+    max-audio-seconds: 10

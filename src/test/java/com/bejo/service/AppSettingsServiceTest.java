@@ -197,6 +197,8 @@ class AppSettingsServiceTest {
         assertThatThrownBy(() -> service.updateMonitoredApps("bob",
                 new UpdateMonitoredAppsRequestDto(Map.of("id.dana", "dana"))))
                 .isInstanceOf(com.bejo.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> service.updateReceiveAds("bob", true))
+                .isInstanceOf(com.bejo.exception.ForbiddenException.class);
         verify(repository, never()).save(any());
     }
 
@@ -211,5 +213,19 @@ class AppSettingsServiceTest {
         assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
         assertThat(captor.getValue().isInventoryEnabled()).isTrue();
         assertThat(data.inventoryEnabled()).isTrue();
+    }
+
+    @Test
+    void updateReceiveAdsSavesFlagAndDefaultsFalse() {
+        // Default is false in the "never synced" response
+        when(repository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
+        assertThat(service.getSettings("alice").receiveAds()).isFalse();
+
+        AppSettingsResponseDto data = service.updateReceiveAds("alice", true);
+
+        ArgumentCaptor<BusinessAppSettings> captor = ArgumentCaptor.forClass(BusinessAppSettings.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().isReceiveAds()).isTrue();
+        assertThat(data.receiveAds()).isTrue();
     }
 }

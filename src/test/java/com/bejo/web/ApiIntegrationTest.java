@@ -1241,7 +1241,8 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"))
                 .andExpect(jsonPath("$.data.businessName").value("Warung me_user1"))
                 // app settings are bundled (defaults when never synced)
-                .andExpect(jsonPath("$.data.appSettings.blacklistEnabled").value(true));
+                .andExpect(jsonPath("$.data.appSettings.blacklistEnabled").value(true))
+                .andExpect(jsonPath("$.data.appSettings.receiveAds").value(false));
     }
 
     @Test
@@ -1256,6 +1257,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.id").isNumber())
                 .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"))
                 .andExpect(jsonPath("$.data.appSettings.inventoryEnabled").value(false))
+                .andExpect(jsonPath("$.data.appSettings.receiveAds").value(false))
                 // no business picture set yet → omitted (null, NON_NULL)
                 .andExpect(jsonPath("$.data.profilePicture").doesNotExist())
                 .andReturn();
@@ -1863,6 +1865,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.whitelistEnabled").value(false))
                 .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(false))
                 .andExpect(jsonPath("$.data.inventoryEnabled").value(false))
+                .andExpect(jsonPath("$.data.receiveAds").value(false))
                 .andExpect(jsonPath("$.data.monitoredApps").isEmpty())
                 .andExpect(jsonPath("$.data.includeKeywords").isEmpty());
 
@@ -1917,6 +1920,15 @@ class ApiIntegrationTest {
                         .content("{\"enabled\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.inventoryEnabled").value(true));
+
+        // Opt in to receive ads (default was false)
+        mockMvc.perform(put("/api/app-settings/receive-ads")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.receiveAds").value(true));
 
         // GET reflects both flags
         mockMvc.perform(get("/api/app-settings")

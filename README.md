@@ -84,6 +84,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [App settings](#app-settings)
   - [QRIS](#qris)
   - [QRIS callback](#qris-callback)
+  - [Voice ads](#voice-ads)
 - [Error reference](#error-reference)
 - [Observability](#observability)
 - [Configuration](#configuration)
@@ -299,7 +300,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "bankNumber": "1234567890",
     "bankAccountName": "Alice",
     "profilePicture": null,
-    "appSettings": { "monitoredApps": {}, "includeKeywords": [], "excludeKeywords": [], "blacklistEnabled": true, "whitelistEnabled": false, "qrisWithProfilePicture": false, "inventoryEnabled": false },
+    "appSettings": { "monitoredApps": {}, "includeKeywords": [], "excludeKeywords": [], "blacklistEnabled": true, "whitelistEnabled": false, "qrisWithProfilePicture": false, "inventoryEnabled": false, "receiveAds": false },
     "token": "eyJhbGciOiJIUzI1NiJ9...",
     "tokenType": "Bearer",
     "expiresIn": 604800
@@ -584,14 +585,22 @@ Since nothing is pre-rendered, **`data.type` is how the app tells the kinds apar
 |---|---|---|
 | `TRANSACTION` | A QRIS payment lands ([callback](#qris-callback)) — to **every device of every user** in the business | `transactionId`, `transactionDate`, `amount`, `status`, `issuerName`, `merchantName`, `merchantPan`, `customerPan` |
 | `PRESENCE` | An [attendance](#employee-presence) event — a clock-in/out to the **super admin**, a ping to the **member** | `presenceType` (`CLOCK_IN` / `CLOCK_OUT` / `PING`), `presenceId`, `userId`, `username`, `clockDatetime` |
+| `ADS` | A [voice-ad](#voice-ads) step — to the **one target device** | `adEvent` (`PREPARE` / `PLAY`), `campaignId`, `deliveryId`, `campaignName`; PREPARE also carries `audioUrl`, `sha256`, `sizeBytes`, `contentType` |
 
-Presence pushes additionally go out at **Android priority `high`**, so FCM delivers them at once and wakes the app even in Doze rather than batching them until the device next wakes.
+Presence and ads pushes additionally go out at **Android priority `high`**, so FCM delivers them at once and wakes the app even in Doze rather than batching them until the device next wakes.
 
 ```json
 // PRESENCE ping — the app can open the response dialog for presenceId 13
 { "type": "PRESENCE", "presenceType": "PING", "presenceId": "13",
   "title": "Ping Absen Bejoo!", "body": "Halo Mas/Mbak Bejo Sekalian. Masih pada Semangaat?",
   "userId": "4", "username": "budi", "clockDatetime": "2026-03-10T14:00" }
+```
+
+```json
+// ADS prepare — the app downloads audioUrl, verifies sha256+sizeBytes, then reports to deliveryId 7
+{ "type": "ADS", "adEvent": "PREPARE", "campaignId": "3", "deliveryId": "7",
+  "campaignName": "Promo Kopi", "audioUrl": "https://storage.googleapis.com/…(24h signed)",
+  "sha256": "9f86d081…", "sizeBytes": "84044", "contentType": "audio/mpeg" }
 ```
 
 **What the app can and can't do on arrival:** with the app in the **foreground** it can show a dialog immediately. **Backgrounded**, Android (10+) forbids starting an Activity from a push — the app cannot auto-open itself; the realistic behaviour is a high-importance heads-up notification the app posts itself, which opens the dialog when tapped. (A full-screen intent does auto-launch on a locked screen, but Android 14+ and Play policy restrict that permission to calling/alarm apps.)
@@ -1277,7 +1286,7 @@ Per-**business** settings synced from the app (shared by all of the business's u
 
 #### `GET /api/app-settings` — Get app settings
 
-Returns the business's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`, both config toggles `false`. Empty lists mean the client should fall back to its own bundled defaults.
+Returns the business's settings. When nothing has been synced yet, returns defaults: empty `monitoredApps`/keyword lists, `blacklistEnabled: true`, `whitelistEnabled: false`, all three config toggles `false`. Empty lists mean the client should fall back to its own bundled defaults.
 
 **Success — HTTP 200**
 
@@ -1292,7 +1301,8 @@ Returns the business's settings. When nothing has been synced yet, returns defau
     "blacklistEnabled": true,
     "whitelistEnabled": false,
     "qrisWithProfilePicture": false,
-    "inventoryEnabled": false
+    "inventoryEnabled": false,
+    "receiveAds": false
   }
 }
 ```
@@ -1301,6 +1311,7 @@ Returns the business's settings. When nothing has been synced yet, returns defau
 |---|---|---|
 | `qrisWithProfilePicture` | `false` | Whether the QRIS image should be composed onto the profile picture |
 | `inventoryEnabled` | `false` | Whether inventory management is enabled |
+| `receiveAds` | `false` | Whether the business opted in to receive [voice ads](#voice-ads) |
 
 ---
 
@@ -1362,6 +1373,16 @@ Updates the keyword filters. **Partial update:** a `null` field is left unchange
 **Request body:** `{ "enabled": true }` (required boolean). Returns the full updated settings.
 
 **Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan manajemen inventaris berhasil disimpan", "data": { ...full settings... } }` · **Errors:** `400 enabled wajib diisi`
+
+---
+
+#### `PUT /api/app-settings/receive-ads` — Toggle receiving voice ads
+
+Whether the business wants to receive [voice ads](#voice-ads). **Super admin only** (a member gets `403`); default `false` (opt-in). Bundled into the login and `/me` app-settings so the client knows the preference without a separate call.
+
+**Request body:** `{ "enabled": true }` (required boolean). Returns the full updated settings.
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan iklan disimpan", "data": { ...full settings... } }` · **Errors:** `400 enabled wajib diisi`
 
 **Errors:** `400 Tidak ada field yang diubah` (all fields null), `400 <field>: kata kunci terlalu panjang: <kw>`, `400 <field>: terlalu banyak kata kunci (maksimal 1000)`
 
@@ -1487,6 +1508,92 @@ All fields are optional in PoC mode; only `amount.value` (when present) and `lat
 
 ---
 
+### Voice ads
+
+Deliver a short (**≤10s, ≤2 MB**) voice ad from the server to **one device**, and track it through its lifecycle. A campaign is the brand's audio (stored in Cloud Storage); a *delivery* is one send to one device, carrying the state machine. Today a campaign has exactly one delivery (a device chosen explicitly); a future campaign engine will fan one campaign out to many devices by location — the API already reports per `deliveryId`, so that change is additive. This is the substrate for a later brand dashboard.
+
+**State machine:** `CREATED → PREPARING → READY → STARTING → PLAYED → FINISHED`, with `ERROR` from a bad download (`SCHEDULED` is reserved, unused). The admin side drives create/prepare/play; the device drives the rest by reporting.
+
+**Two audiences, two auth schemes:**
+
+- **Admin surface** (`/api/ads/campaigns/**`) is server-to-server — **no JWT**, gated by a dedicated `X-ADS-ADMIN-TOKEN` header (`app.ads.admin-token`; blank ⇒ feature off, all admin calls `403`), enforced by a filter before the body is validated. This is *not* the shared `X-API-TOKEN` (which is embedded in the app).
+- **Device reports** (`/api/ads/deliveries/**`) use the normal **JWT** — the service checks the caller is the delivery's target device (else `403`).
+
+The two pushes are **data-only, priority `high`, sent after commit** (see [push payloads](#push-payloads)); the audio download link is a 24h GCS signed URL.
+
+#### `POST /api/ads/campaigns` — Create campaign (admin)
+
+Headers: `X-API-TOKEN` + `X-ADS-ADMIN-TOKEN`.
+
+```json
+{
+  "name": "Promo Kopi",
+  "brand": "Kopi Bejo",
+  "audioBase64": "<base64 audio, ≤2 MB decoded, ≤10s>",
+  "contentType": "audio/mpeg",
+  "targetUsername": "budi",
+  "targetDeviceId": "device-1"
+}
+```
+
+The audio is validated **before** anything is uploaded: `400` if the `contentType` is outside the supported set (MP3/M4A/MP4/OGG/WAV), if it exceeds 2 MB or 10s (duration read from the header), or if it isn't readable audio. `targetUsername`/`targetDeviceId` must be an active user with a logged-in device **that has a registered FCM token** (else `400` — a push would go nowhere). The GCS upload happens last, after the rows are saved, so a failure never orphans an object. `201 Created` with the campaign (state `CREATED`); `data.deliveries[0].id` is the `deliveryId` the device reports against.
+
+```json
+{
+  "status": 1,
+  "message": "Kampanye berhasil dibuat",
+  "data": {
+    "id": 3, "name": "Promo Kopi", "brand": "Kopi Bejo",
+    "audioContentType": "audio/mpeg", "audioSha256": "9f86d081…", "audioSizeBytes": 84044,
+    "state": "CREATED", "createdAt": "2026-07-19T14:00:00",
+    "deliveries": [
+      { "id": 7, "campaignId": 3, "targetUsername": "budi", "targetDeviceId": "device-1",
+        "state": "CREATED", "createdAt": "2026-07-19T14:00:00" }
+    ]
+  }
+}
+```
+
+#### `POST /api/ads/campaigns/{id}/prepare` — Push download (admin)
+
+Moves the delivery to `PREPARING` and pushes a `PREPARE` (with a fresh 24h signed `audioUrl` + `sha256`/`sizeBytes`) to the target device. `200`. `400` if no delivery is in a preparable state.
+
+#### `POST /api/ads/campaigns/{id}/play` — Push play (admin)
+
+Requires the delivery to be `READY` (the app confirmed a good download). Moves it to `STARTING` and pushes a `PLAY`. `200`. `400` if not ready.
+
+#### `GET /api/ads/campaigns` · `GET /api/ads/campaigns/{id}` — Read (admin)
+
+List (paginated, newest first) or fetch one campaign with its delivery state.
+
+#### `POST /api/ads/deliveries/{id}/downloaded` — Report download (device)
+
+Headers: `X-API-TOKEN` + `Authorization: Bearer <JWT>`.
+
+```json
+{ "success": true, "sha256": "9f86d081…", "sizeBytes": 84044 }
+```
+
+The app reports what it downloaded. `success: true` with a `sha256` (hex, case-insensitive) + `sizeBytes` matching the campaign → state `READY`; a mismatch, or `success: false` (with an optional `"error"` note), → state `ERROR`. **Idempotent** — a duplicate report of an already-settled delivery is a no-op returning its current state. `200` with the delivery.
+
+#### `POST /api/ads/deliveries/{id}/played` — Report played (device)
+
+```json
+{ "playedAt": "2026-07-19T14:30:00", "latitude": -6.2088, "longitude": 106.8456 }
+```
+
+`playedAt` is WIB wall-clock (no timezone); more than a day in the future is rejected (`400`, bad device clock). `latitude`/`longitude` are optional but **both-or-neither** (a lone coordinate is `400`). With both → state `FINISHED`; without them (a background play) → state `PLAYED`, awaiting the location call below. If a played-with-location report arrives after the delivery is already `PLAYED`, the location is still saved (→ `FINISHED`) rather than dropped. `200`.
+
+#### `POST /api/ads/deliveries/{id}/location` — Report deferred location (device)
+
+```json
+{ "latitude": -6.2088, "longitude": 106.8456 }
+```
+
+The play location the `played` report couldn't include (the app only reads location in the foreground). Both required; state `PLAYED` → `FINISHED`. `200`.
+
+---
+
 ## Error reference
 
 Errors shared across all endpoints:
@@ -1555,6 +1662,11 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `DB_PASSWORD` | yes | PostgreSQL password |
 | `FIREBASE_CREDENTIALS_BASE64` | no* | Base64-encoded Firebase service account JSON |
 | `FIREBASE_CREDENTIALS_PATH` | no* | Path to Firebase service account JSON file |
+| `ADS_ADMIN_TOKEN` | no | Gates the [voice-ads](#voice-ads) admin surface (`X-ADS-ADMIN-TOKEN`). Blank ⇒ feature off |
+| `ADS_GCS_BUCKET` | no† | Cloud Storage bucket for ad audio. Needed only to use voice ads |
+| `ADS_SIGNED_URL_TTL_SECONDS` | no | Audio download-link lifetime. Default `86400` (24h; GCS max 7d) |
+| `ADS_MAX_AUDIO_BYTES` | no | Max decoded audio size. Default `2097152` (2 MB) |
+| `ADS_MAX_AUDIO_SECONDS` | no | Max audio duration. Default `10` |
 | `SEED_PASSWORD` | no | Seed user password — seeding skipped if blank |
 | `SEED_USERNAME` | no | Default: `admin` |
 | `SEED_NAME` | no | Default: `Admin` |
@@ -1565,6 +1677,8 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `APP_REQUESTLOGGING_MAXBODYLENGTH` | no | Max logged body length in chars. Default `2048` |
 
 \* One of the two Firebase options is required to use push notifications.
+
+† Voice ads need a Cloud Storage bucket + Application Default Credentials, so they work only on GCP (not local Compose). Leave `ADS_ADMIN_TOKEN` blank to keep the feature off.
 
 ### GCP deployment
 
@@ -1585,6 +1699,9 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `bejo-api-token` | `API_TOKEN` | `API_TOKEN` |
 | `bejo-firebase-credentials` | `FIREBASE_CREDENTIALS_BASE64` | `FIREBASE_CREDENTIALS_BASE64` |
 | `bejo-seed-password` | `SEED_PASSWORD` | `SEED_PASSWORD` |
+| `bejo-ads-admin-token` | `ADS_ADMIN_TOKEN` *(optional)* | `ADS_ADMIN_TOKEN` |
+
+`init-gcp.sh` also creates the **ad-audio bucket** `gs://<project>-ads` (uniform access + public-access-prevention; audio is reachable only via signed URLs) and grants the Cloud Run service account `objectAdmin` on it plus `serviceAccountTokenCreator` on itself (to V4-sign URLs without a key).
 
 > ⚠️ Don't store these as GitHub **variables** — a GitHub variable is plaintext and readable by anyone with repo access. (The API token, in particular, belongs only in `bejo-api-token`.)
 
@@ -1604,7 +1721,9 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` | Seed user values |
 | `BUSINESS_MAX_USERS` / `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` / `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | *(optional)* Business option overrides — built-in defaults apply if unset |
 | `JWT_EXPIRATION_MS` / `CALLBACK_DEFAULT_USERNAME` / `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | *(optional)* Other overrides — defaults apply if unset |
-| `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds. Default `60` (max `3600`) |
+| `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds. Default `30` (max `3600`) |
+| `ADS_GCS_BUCKET` | *(optional)* Ad-audio bucket. Defaults to `<project>-ads` |
+| `ADS_SIGNED_URL_TTL_SECONDS` / `ADS_MAX_AUDIO_BYTES` / `ADS_MAX_AUDIO_SECONDS` | *(optional)* Voice-ad limits — defaults `86400` / `2097152` / `10` |
 
 > These optional overrides must be set as GitHub Actions **variables** for CI deploys (`deploy.yml`) **and** in `.env.gcp` for the one-time `init-gcp.sh` run — `--set-env-vars` replaces the whole set on each deploy, so an override only in `.env.gcp` would be reset by the next CI deploy.
 

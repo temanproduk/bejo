@@ -2,6 +2,7 @@ package com.bejo.service;
 
 import com.bejo.constant.PushType;
 import com.bejo.entity.Session;
+import com.bejo.push.SimplePushPayload;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
 import com.google.firebase.FirebaseApp;
@@ -83,7 +84,12 @@ class PushNotificationServiceTest {
             apps.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));  // "configured"
             messaging.when(FirebaseMessaging::getInstance).thenReturn(fcm);
 
-            delivered = service().sendUrgentToUser("budi", data);
+            delivered = service().sendToUser("budi", new SimplePushPayload(
+                    PushType.PRESENCE,
+                    "budi telah absen masuk!",
+                    "Pastikan jadwal absen sesuai prosedur. Sukses terus ya!",
+                    Map.of("presenceType", "CLOCK_IN", "presenceId", "7"),
+                    true));   // urgent → HIGH priority
         }
 
         assertThat(delivered).isEqualTo(1);
@@ -117,7 +123,8 @@ class PushNotificationServiceTest {
             apps.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
             messaging.when(FirebaseMessaging::getInstance).thenReturn(fcm);
 
-            service().sendToUser("budi", Map.of("type", PushType.TRANSACTION, "title", "Pembayaran Diterima"));
+            service().sendToUser("budi", new SimplePushPayload(
+                    PushType.TRANSACTION, "Pembayaran Diterima", null, Map.of()));
         }
 
         // The app builds the payment notification itself — no notification block on the wire

@@ -13,6 +13,8 @@ import com.bejo.entity.Presence;
 import com.bejo.entity.User;
 import com.bejo.exception.ForbiddenException;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.push.PresencePushPayload;
+import com.bejo.push.PushPayload;
 import com.bejo.repository.PresenceRepository;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
@@ -402,22 +404,22 @@ public class PresenceService {
      * fail a request whose data is already committed. Outside a transaction (tests calling
      * the service directly) it just sends immediately.
      */
-    private void pushAfterCommit(String username, Map<String, String> data, String scope) {
+    private void pushAfterCommit(String username, PushPayload payload, String scope) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            sendQuietly(username, data, scope);
+            sendQuietly(username, payload, scope);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                sendQuietly(username, data, scope);
+                sendQuietly(username, payload, scope);
             }
         });
     }
 
-    private void sendQuietly(String username, Map<String, String> data, String scope) {
+    private void sendQuietly(String username, PushPayload payload, String scope) {
         try {
-            pushNotificationService.sendUrgentToUser(username, data);
+            pushNotificationService.sendToUser(username, payload);
         } catch (RuntimeException e) {
             log.error("[PRESENCE] Push failed for username={} {} (entry still recorded): {}",
                     username, scope, e.getMessage(), e);
@@ -430,17 +432,8 @@ public class PresenceService {
      * {@code title}/{@code body} are the text the app renders (FCM draws nothing itself), and
      * {@code presenceId} is the entry to open — for a PING, the one to respond to.
      */
-    private Map<String, String> pushData(Presence presence, String title, String body) {
-        Map<String, String> data = new HashMap<>();
-        data.put("type", PushType.PRESENCE);
-        data.put("title", title);
-        data.put("body", body);
-        data.put("presenceType", presence.getType());
-        data.put("presenceId", String.valueOf(presence.getId()));
-        data.put("userId", String.valueOf(presence.getUserId()));
-        data.put("username", presence.getUsername());
-        data.put("clockDatetime", String.valueOf(presence.getClockDatetime()));
-        return data;
+    private PushPayload pushData(Presence presence, String title, String body) {
+        return new PresencePushPayload(presence, title, body);
     }
 
     // The write paths always concern a live member, so they report userActive = true.

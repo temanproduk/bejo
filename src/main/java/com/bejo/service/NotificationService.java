@@ -6,6 +6,8 @@ import com.bejo.dto.request.SendNotificationRequestDto;
 import com.bejo.entity.Business;
 import com.bejo.entity.Session;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.push.PushPayload;
+import com.bejo.push.SimplePushPayload;
 import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.SessionRepository;
 import com.google.firebase.messaging.FirebaseMessagingException;
@@ -54,11 +56,11 @@ public class NotificationService {
             throw new ResourceNotFoundException("Perangkat belum terdaftar notifikasi: " + request.deviceId());
         }
 
-        Map<String, String> data = buildData(request.title(), request.body(), request.data(), merchantName(username));
+        PushPayload payload = buildPayload(request.title(), request.body(), request.data(), merchantName(username));
 
         log.info("[NOTIFY-TEST] Sending push to deviceId={} for username={}", request.deviceId(), username);
         try {
-            String messageId = pushNotificationService.sendToToken(pushToken, data);
+            String messageId = pushNotificationService.sendToToken(pushToken, payload);
             log.info("[NOTIFY-TEST] Push sent to FCM successfully deviceId={} messageId={}", request.deviceId(), messageId);
         } catch (FirebaseMessagingException e) {
             log.error("[NOTIFY-TEST] Push to FCM FAILED deviceId={} errorCode={}: {}",
@@ -84,9 +86,9 @@ public class NotificationService {
         if (!pushNotificationService.isConfigured()) {
             throw new IllegalStateException("Firebase is not configured — set FIREBASE_CREDENTIALS_BASE64 or FIREBASE_CREDENTIALS_PATH");
         }
-        Map<String, String> data = buildData(request.title(), request.body(), request.data(), merchantName(username));
+        PushPayload payload = buildPayload(request.title(), request.body(), request.data(), merchantName(username));
         log.info("[NOTIFY-USER] Broadcasting push to all devices of username={}", username);
-        return pushNotificationService.sendToUser(username, data);
+        return pushNotificationService.sendToUser(username, payload);
     }
 
     private String merchantName(String username) {
@@ -94,18 +96,17 @@ public class NotificationService {
         return businessRepository.findById(businessId).map(Business::getName).orElse(null);
     }
 
-    private Map<String, String> buildData(String title, String body, NotificationTransactionRequestDto txData, String merchantName) {
-        Map<String, String> data = new HashMap<>();
-        data.put("title", title);
-        data.put("body", body);
-        data.put("transactionId", txData.transactionId());
-        data.put("transactionDate", txData.transactionDate().toString());
-        data.put("amount", String.valueOf(txData.amount()));
-        data.put("issuerName", txData.issuerName());
-        if (merchantName != null) data.put("merchantName", merchantName);
-        if (txData.merchantPan() != null) data.put("merchantPan", txData.merchantPan());
-        if (txData.customerPan() != null) data.put("customerPan", txData.customerPan());
-        if (txData.rrn() != null) data.put("rrn", txData.rrn());
-        return data;
+    // A test push carrying transaction-shaped fields (no fixed PushType — it's a delivery probe).
+    private PushPayload buildPayload(String title, String body, NotificationTransactionRequestDto txData, String merchantName) {
+        Map<String, String> extra = new HashMap<>();
+        extra.put("transactionId", txData.transactionId());
+        extra.put("transactionDate", txData.transactionDate().toString());
+        extra.put("amount", String.valueOf(txData.amount()));
+        extra.put("issuerName", txData.issuerName());
+        if (merchantName != null) extra.put("merchantName", merchantName);
+        if (txData.merchantPan() != null) extra.put("merchantPan", txData.merchantPan());
+        if (txData.customerPan() != null) extra.put("customerPan", txData.customerPan());
+        if (txData.rrn() != null) extra.put("rrn", txData.rrn());
+        return new SimplePushPayload(null, title, body, extra);
     }
 }

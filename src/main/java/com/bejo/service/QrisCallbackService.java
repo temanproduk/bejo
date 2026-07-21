@@ -1,7 +1,6 @@
 package com.bejo.service;
 
 import com.bejo.constant.Acquirer;
-import com.bejo.constant.PushType;
 import com.bejo.constant.TransactionStatus;
 import com.bejo.constant.TransactionType;
 import com.bejo.dto.request.QrMpmNotifyRequestDto;
@@ -10,6 +9,8 @@ import com.bejo.entity.Business;
 import com.bejo.entity.Transaction;
 import com.bejo.entity.User;
 import com.bejo.exception.ResourceNotFoundException;
+import com.bejo.push.PushPayload;
+import com.bejo.push.TransactionPushPayload;
 import com.bejo.repository.BusinessRepository;
 import com.bejo.repository.TransactionRepository;
 import com.bejo.repository.UserRepository;
@@ -29,8 +30,6 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -127,21 +126,10 @@ public class QrisCallbackService {
         return response(t.getId(), req, amount, tip);
     }
 
-    private Map<String, String> buildPushData(Transaction t, String merchantName) {
-        Map<String, String> data = new HashMap<>();
-        // Tells the app this push is a payment, not an attendance event (PushType.PRESENCE)
-        data.put("type", PushType.TRANSACTION);
-        data.put("title", "Pembayaran Diterima");
-        data.put("body", "Pembayaran Rp" + t.getAmount() + " diterima");
-        data.put("transactionId", t.getTransactionId());
-        if (t.getTransactionDate() != null) data.put("transactionDate", t.getTransactionDate().toString());
-        data.put("amount", String.valueOf(t.getAmount()));
-        data.put("status", t.getStatus());
-        if (t.getSource() != null) data.put("issuerName", t.getSource());
-        if (merchantName != null) data.put("merchantName", merchantName);
-        if (t.getMerchantPan() != null) data.put("merchantPan", t.getMerchantPan());
-        if (t.getCustomerPan() != null) data.put("customerPan", t.getCustomerPan());
-        return data;
+    private PushPayload buildPushData(Transaction t, String merchantName) {
+        // A payment push (PushType.TRANSACTION), not an attendance event; the app renders it.
+        return new TransactionPushPayload(t, merchantName,
+                "Pembayaran Diterima", "Pembayaran Rp" + t.getAmount() + " diterima");
     }
 
     // Per the spec, response.status is the acknowledgment status (processing

@@ -53,6 +53,10 @@ public class BusinessAppSettings {
     @Column(name = "inventory_enabled", nullable = false)
     private boolean inventoryEnabled = false;
 
+    // Whether the business wants to receive voice ads (super-admin-set; default off / opt-in)
+    @Column(name = "receive_ads", nullable = false)
+    private boolean receiveAds = false;
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
@@ -79,6 +83,8 @@ public class BusinessAppSettings {
     public void setQrisWithProfilePicture(boolean qrisWithProfilePicture) { this.qrisWithProfilePicture = qrisWithProfilePicture; }
     public boolean isInventoryEnabled() { return inventoryEnabled; }
     public void setInventoryEnabled(boolean inventoryEnabled) { this.inventoryEnabled = inventoryEnabled; }
+    public boolean isReceiveAds() { return receiveAds; }
+    public void setReceiveAds(boolean receiveAds) { this.receiveAds = receiveAds; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }
