@@ -270,6 +270,7 @@ CREATE TABLE IF NOT EXISTS ad_campaigns (
 CREATE TABLE IF NOT EXISTS ad_deliveries (
     id                  BIGSERIAL     PRIMARY KEY,
     campaign_id         BIGINT        NOT NULL,
+    business_id         BIGINT        NOT NULL,   -- snapshot of the target's business (survives member removal); the merchant ad-history scope
     target_username     VARCHAR(50)   NOT NULL,   -- same width as users.username
     target_device_id    VARCHAR(255)  NOT NULL,
     state               VARCHAR(20)   NOT NULL DEFAULT 'CREATED',
@@ -303,3 +304,4 @@ CREATE INDEX IF NOT EXISTS idx_presences_business_clock  ON presences (business_
 CREATE INDEX IF NOT EXISTS idx_presences_user_clock      ON presences (business_id, user_id, clock_datetime DESC);
 CREATE INDEX IF NOT EXISTS idx_ad_deliveries_campaign    ON ad_deliveries (campaign_id);
 CREATE INDEX IF NOT EXISTS idx_ad_deliveries_target      ON ad_deliveries (target_username, state);
+CREATE INDEX IF NOT EXISTS idx_ad_deliveries_business     ON ad_deliveries (business_id, id DESC);

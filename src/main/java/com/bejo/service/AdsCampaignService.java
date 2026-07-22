@@ -7,6 +7,7 @@ import com.bejo.dto.request.AdPlayedReportRequestDto;
 import com.bejo.dto.request.CreateAdCampaignRequestDto;
 import com.bejo.dto.response.AdCampaignResponseDto;
 import com.bejo.dto.response.AdDeliveryResponseDto;
+import com.bejo.dto.response.AdHistoryResponseDto;
 import com.bejo.entity.AdCampaign;
 import com.bejo.entity.AdDelivery;
 import com.bejo.entity.Session;
@@ -84,6 +85,7 @@ public class AdsCampaignService {
     private final AdsAudioStorage audioStorage;
     private final AdsAudioInspector audioInspector;
     private final PushNotificationService pushNotificationService;
+    private final BusinessContext businessContext;
 
     public AdsCampaignService(AdCampaignRepository campaignRepository,
                               AdDeliveryRepository deliveryRepository,
@@ -91,7 +93,8 @@ public class AdsCampaignService {
                               SessionRepository sessionRepository,
                               AdsAudioStorage audioStorage,
                               AdsAudioInspector audioInspector,
-                              PushNotificationService pushNotificationService) {
+                              PushNotificationService pushNotificationService,
+                              BusinessContext businessContext) {
         this.campaignRepository = campaignRepository;
         this.deliveryRepository = deliveryRepository;
         this.userRepository = userRepository;
@@ -99,6 +102,7 @@ public class AdsCampaignService {
         this.audioStorage = audioStorage;
         this.audioInspector = audioInspector;
         this.pushNotificationService = pushNotificationService;
+        this.businessContext = businessContext;
     }
 
     // ── Admin: create ────────────────────────────────────────────────────────
@@ -129,10 +133,10 @@ public class AdsCampaignService {
 
         // Target must be an active user with a registered device that can actually receive a
         // push — fail the typo (and a device that never registered its FCM token) now, rather
-        // than pushing into the void at prepare/play time.
-        if (!userRepository.existsByUsernameAndDeletedAtIsNull(request.targetUsername())) {
-            throw new IllegalArgumentException("Target pengguna tidak ditemukan");
-        }
+        // than pushing into the void at prepare/play time. Resolve the target's business here so
+        // it can be snapshotted on the delivery (the merchant ad-history scope).
+        Long targetBusinessId = userRepository.findBusinessIdByUsername(request.targetUsername())
+                .orElseThrow(() -> new IllegalArgumentException("Target pengguna tidak ditemukan"));
         Session session = sessionRepository.findByUsernameAndDeviceId(request.targetUsername(), request.targetDeviceId())
                 .orElseThrow(() -> new IllegalArgumentException("Perangkat target tidak ditemukan"));
         if (session.getPushToken() == null || session.getPushToken().isBlank()) {
@@ -161,6 +165,7 @@ public class AdsCampaignService {
 
         AdDelivery delivery = new AdDelivery();
         delivery.setCampaignId(campaign.getId());
+        delivery.setBusinessId(targetBusinessId);
         delivery.setTargetUsername(request.targetUsername());
         delivery.setTargetDeviceId(request.targetDeviceId());
         delivery.setState(AdCampaignState.CREATED);
@@ -349,6 +354,26 @@ public class AdsCampaignService {
         return toDto(campaign, deliveryRepository.findByCampaignId(campaignId));
     }
 
+    // ── Merchant: ad history (super admin, business-wide) ─────────────────────
+    /**
+     * The ads delivered to this business's devices — the super admin's read-only history of every
+     * delivery to itself and its sub-accounts (all states), newest first, paginated. Scoped by the
+     * {@code business_id} snapshotted on each delivery, so a delivery to a member removed since
+     * still shows. Only the super admin may read it (a plain member → 403).
+     */
+    @Transactional(readOnly = true)
+    public Page<AdHistoryResponseDto> history(String username, Pageable pageable) {
+        Long businessId = businessContext.requireSuperAdminBusinessId(username);
+        Page<AdDelivery> page = deliveryRepository.findByBusinessIdOrderByIdDesc(businessId, pageable);
+        if (page.isEmpty()) return Page.empty(pageable);
+
+        // Batch the campaigns for this page in one query (no N+1), then flatten name/brand onto each row.
+        List<Long> campaignIds = page.getContent().stream().map(AdDelivery::getCampaignId).distinct().toList();
+        Map<Long, AdCampaign> campaigns = new HashMap<>();
+        for (AdCampaign c : campaignRepository.findAllById(campaignIds)) campaigns.put(c.getId(), c);
+        return page.map(d -> toHistoryDto(d, campaigns.get(d.getCampaignId())));
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private boolean integrityMatches(AdCampaign campaign, AdDownloadReportRequestDto request) {
@@ -447,6 +472,14 @@ public class AdsCampaignService {
         String state = deliveryDtos.size() == 1 ? deliveryDtos.get(0).state() : null;
         return new AdCampaignResponseDto(c.getId(), c.getName(), c.getBrand(), c.getAudioContentType(),
                 c.getAudioSha256(), c.getAudioSizeBytes(), state, c.getCreatedAt(), deliveryDtos);
+    }
+
+    private AdHistoryResponseDto toHistoryDto(AdDelivery d, AdCampaign c) {
+        return new AdHistoryResponseDto(d.getId(), d.getCampaignId(),
+                c != null ? c.getName() : null, c != null ? c.getBrand() : null,
+                d.getTargetUsername(), d.getState(), d.getErrorReason(),
+                d.getPlayedAt(), d.getFinishedAt(), d.getPlayLatitude(), d.getPlayLongitude(),
+                d.getCreatedAt());
     }
 
     private AdDeliveryResponseDto toDto(AdDelivery d) {

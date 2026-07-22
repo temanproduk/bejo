@@ -16,8 +16,12 @@ import com.bejo.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
@@ -41,6 +45,7 @@ class AdsCampaignServiceTest {
     private static final String DEVICE = "device-1";
     private static final Long DELIVERY_ID = 10L;
     private static final Long CAMPAIGN_ID = 5L;
+    private static final Long BIZ = 1L;
 
     @Mock private AdCampaignRepository campaignRepository;
     @Mock private AdDeliveryRepository deliveryRepository;
@@ -49,13 +54,14 @@ class AdsCampaignServiceTest {
     @Mock private AdsAudioStorage audioStorage;
     @Mock private AdsAudioInspector audioInspector;
     @Mock private PushNotificationService pushNotificationService;
+    @Mock private BusinessContext businessContext;
 
     private AdsCampaignService service;
 
     @BeforeEach
     void setUp() {
         service = new AdsCampaignService(campaignRepository, deliveryRepository, userRepository,
-                sessionRepository, audioStorage, audioInspector, pushNotificationService);
+                sessionRepository, audioStorage, audioInspector, pushNotificationService, businessContext);
         ReflectionTestUtils.setField(service, "signedUrlTtlSeconds", 3600L);
         ReflectionTestUtils.setField(service, "maxAudioBytes", 2_097_152L);
         ReflectionTestUtils.setField(service, "maxAudioSeconds", 10);
@@ -97,7 +103,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createUploadsAudioAndSavesCampaignAndDelivery() {
-        when(userRepository.existsByUsernameAndDeletedAtIsNull(USER)).thenReturn(true);
+        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.of(BIZ));
         when(sessionRepository.findByUsernameAndDeviceId(USER, DEVICE)).thenReturn(Optional.of(sessionWithToken()));
         when(audioInspector.durationSeconds(any(), eq("mp3"))).thenReturn(5);
 
@@ -107,7 +113,10 @@ class AdsCampaignServiceTest {
         assertThat(dto.audioSizeBytes()).isEqualTo(5L);
         verify(audioStorage).put(any(), any(), eq("audio/mpeg"));
         verify(campaignRepository).save(any(AdCampaign.class));
-        verify(deliveryRepository).save(any(AdDelivery.class));
+        // The delivery snapshots the target's business (the merchant ad-history scope)
+        ArgumentCaptor<AdDelivery> saved = ArgumentCaptor.forClass(AdDelivery.class);
+        verify(deliveryRepository).save(saved.capture());
+        assertThat(saved.getValue().getBusinessId()).isEqualTo(BIZ);
     }
 
     @Test
@@ -131,7 +140,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createRejectsUnknownTargetUser() {
-        when(userRepository.existsByUsernameAndDeletedAtIsNull(USER)).thenReturn(false);
+        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.create(createRequest("audio/mpeg", "x".getBytes())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Target pengguna");
@@ -140,7 +149,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createRejectsAudioLongerThanTheDurationCap() {
-        when(userRepository.existsByUsernameAndDeletedAtIsNull(USER)).thenReturn(true);
+        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.of(BIZ));
         when(sessionRepository.findByUsernameAndDeviceId(USER, DEVICE)).thenReturn(Optional.of(sessionWithToken()));
         when(audioInspector.durationSeconds(any(), eq("mp3"))).thenReturn(15);
 
@@ -152,7 +161,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createRejectsDeviceWithoutPushToken() {
-        when(userRepository.existsByUsernameAndDeletedAtIsNull(USER)).thenReturn(true);
+        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.of(BIZ));
         when(sessionRepository.findByUsernameAndDeviceId(USER, DEVICE)).thenReturn(Optional.of(new Session())); // no token
 
         assertThatThrownBy(() -> service.create(createRequest("audio/mpeg", "hello".getBytes())))
@@ -305,5 +314,41 @@ class AdsCampaignServiceTest {
                 new AdDownloadReportRequestDto(true, "abc", 5L, null)))
                 .isInstanceOf(ForbiddenException.class);
         verify(deliveryRepository, never()).markReady(anyLong(), any(), any(), any());
+    }
+
+    // ---------- history (merchant, super admin) ----------
+
+    @Test
+    void historyFlattensCampaignNameOntoEachBusinessDelivery() {
+        Pageable pageable = PageRequest.of(0, 50);
+        when(businessContext.requireSuperAdminBusinessId(USER)).thenReturn(BIZ);
+
+        AdDelivery played = delivery(AdCampaignState.PLAYED);
+        played.setPlayedAt(LocalDateTime.now());
+        when(deliveryRepository.findByBusinessIdOrderByIdDesc(BIZ, pageable))
+                .thenReturn(new PageImpl<>(List.of(played), pageable, 1));
+        AdCampaign campaign = campaign("sha", 100L);
+        campaign.setBrand("Kopi Nusantara");
+        when(campaignRepository.findAllById(List.of(CAMPAIGN_ID))).thenReturn(List.of(campaign));
+
+        var page = service.history(USER, pageable);
+
+        assertThat(page.getContent()).singleElement().satisfies(row -> {
+            assertThat(row.campaignName()).isEqualTo("Promo");
+            assertThat(row.brand()).isEqualTo("Kopi Nusantara");
+            assertThat(row.state()).isEqualTo(AdCampaignState.PLAYED);
+            assertThat(row.playedAt()).isNotNull();
+            assertThat(row.targetUsername()).isEqualTo(USER);
+        });
+    }
+
+    @Test
+    void historyIsRejectedForAPlainMember() {
+        when(businessContext.requireSuperAdminBusinessId(USER))
+                .thenThrow(new ForbiddenException("Hanya super admin"));
+
+        assertThatThrownBy(() -> service.history(USER, PageRequest.of(0, 50)))
+                .isInstanceOf(ForbiddenException.class);
+        verify(deliveryRepository, never()).findByBusinessIdOrderByIdDesc(any(), any());
     }
 }

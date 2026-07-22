@@ -23,6 +23,11 @@ public class AdDelivery {
     @Column(name = "campaign_id", nullable = false)
     private Long campaignId;
 
+    // Snapshot of the target's business at send time — the merchant ad-history scope. Snapshotted
+    // (not resolved from the username on read) so history survives the member being removed.
+    @Column(name = "business_id", nullable = false)
+    private Long businessId;
+
     @Column(name = "target_username", nullable = false, length = 50)
     private String targetUsername;
 
@@ -79,6 +84,8 @@ public class AdDelivery {
     public Long getId() { return id; }
     public Long getCampaignId() { return campaignId; }
     public void setCampaignId(Long campaignId) { this.campaignId = campaignId; }
+    public Long getBusinessId() { return businessId; }
+    public void setBusinessId(Long businessId) { this.businessId = businessId; }
     public String getTargetUsername() { return targetUsername; }
     public void setTargetUsername(String targetUsername) { this.targetUsername = targetUsername; }
     public String getTargetDeviceId() { return targetDeviceId; }

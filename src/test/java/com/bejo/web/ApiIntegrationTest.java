@@ -2866,6 +2866,41 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.count").value(0));
     }
 
+    // ---------- ads history (merchant) ----------
+
+    @Test
+    void adHistoryIsEmptyForAFreshSuperAdmin() throws Exception {
+        String token = registerAndLogin("ads_hist_admin1");
+
+        mockMvc.perform(get("/api/ads/history")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(1))
+                .andExpect(jsonPath("$.count").value(0))
+                .andExpect(jsonPath("$.total").value(0))
+                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void adHistoryIsRejectedForAPlainMember() throws Exception {
+        Map<String, String> biz = businessWithMember("ads_hist_admin2", "ads_hist_member2");
+
+        // Business-wide ad history is the super admin's — a member gets 403
+        mockMvc.perform(get("/api/ads/history")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("memberToken")))
+                .andExpect(status().isForbidden());
+
+        // …and the super admin can read it
+        mockMvc.perform(get("/api/ads/history")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + biz.get("adminToken")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(1));
+    }
+
     // ---------- error handling ----------
 
     @Test

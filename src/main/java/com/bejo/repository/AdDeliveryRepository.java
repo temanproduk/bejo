@@ -1,6 +1,8 @@
 package com.bejo.repository;
 
 import com.bejo.entity.AdDelivery;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -24,6 +26,14 @@ public interface AdDeliveryRepository extends JpaRepository<AdDelivery, Long> {
     List<AdDelivery> findByCampaignId(Long campaignId);
 
     List<AdDelivery> findByCampaignIdIn(Collection<Long> campaignIds);
+
+    /**
+     * The merchant's ad history: every delivery to the business's devices, newest first. Scoped by
+     * the {@code business_id} snapshotted on each row (so a delivery to a member removed since still
+     * shows), backed by {@code idx_ad_deliveries_business (business_id, id DESC)}. The descending id
+     * sort is stable across pages.
+     */
+    Page<AdDelivery> findByBusinessIdOrderByIdDesc(Long businessId, Pageable pageable);
 
     /** PREPARING → READY: the app reported a good download (size + hash matched). */
     @Modifying(clearAutomatically = true)

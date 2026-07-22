@@ -2495,6 +2495,48 @@
           }
         },
         {
+          "name": "Get Ad History (super admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ads/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "ads",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number, 1-based. Optional (default 1).",
+                  "disabled": true
+                },
+                {
+                  "key": "size",
+                  "value": "50",
+                  "description": "Page size. Optional (default 50, max 200).",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Merchant-facing ad history (normal JWT, super admin only) — every voice-ad delivery to this business's devices (this account + its sub-accounts), all states, newest first. Scoped by the business_id snapshotted on each delivery, so a delivery to a member removed since still appears. Each row flattens the campaign name/brand onto the delivery's status + played/finished time + play location.\n\nPaginated: optional page (default 1) + size (default 50, max 200)."
+          }
+        },
+        {
           "name": "Report Downloaded (device)",
           "request": {
             "method": "POST",
