@@ -1416,47 +1416,6 @@
             },
             "description": "Hard-deletes a product. Replace 1 with the product id."
           }
-        },
-        {
-          "name": "Bulk Stock Adjustment (opname)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-API-TOKEN",
-                "value": "{{apiToken}}"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"note\": \"opname sore\",\n  \"items\": [\n    { \"productId\": 1, \"stock\": 8 },\n    { \"productId\": 2, \"stock\": 12 }\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/products/stock-adjustments",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "products",
-                "stock-adjustments"
-              ]
-            },
-            "description": "Stock opname: sets several products' stock to their newly counted quantities at once. Each item's stock is the new absolute count. Optional note is stored on the resulting ADJUSTMENT stock mutation. Atomic — if any productId isn't the merchant's, the whole adjustment is rejected. Returns a variance report (previousStock/newStock/difference) per product."
-          }
         }
       ]
     },
@@ -1570,6 +1529,47 @@
               ]
             },
             "description": "Returns one stock mutation including its line items (previousStock/newStock/quantityChange). Replace 1 with the mutation id."
+          }
+        },
+        {
+          "name": "Bulk Stock Adjustment (opname)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"opname sore\",\n  \"items\": [\n    { \"productId\": 1, \"stock\": 8 },\n    { \"productId\": 2, \"stock\": 12 }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/stock-mutations/adjustments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "stock-mutations",
+                "adjustments"
+              ]
+            },
+            "description": "Stock opname: sets several products' stock to their newly counted quantities at once. Each item's stock is the new absolute count. Optional note is stored on the resulting ADJUSTMENT stock mutation. Atomic — if any productId isn't the merchant's, the whole adjustment is rejected. Returns a variance report (previousStock/newStock/difference) per product."
           }
         }
       ]
@@ -2134,7 +2134,7 @@
               }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/qris/users/{{memberUsername}}",
+              "raw": "{{baseUrl}}/api/qris/users/{{memberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2142,7 +2142,7 @@
                 "api",
                 "qris",
                 "users",
-                "{{memberUsername}}"
+                "{{memberId}}"
               ]
             },
             "description": "Assign a user their own QRIS + terminal id (payment callbacks route by terminal). Super admin only, and team management must be enabled (403 otherwise). terminalId unique per business (400 if duplicate); target must be an active user of the business."
@@ -2199,7 +2199,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/qris/users/{{memberUsername}}",
+              "raw": "{{baseUrl}}/api/qris/users/{{memberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2207,7 +2207,7 @@
                 "api",
                 "qris",
                 "users",
-                "{{memberUsername}}"
+                "{{memberId}}"
               ]
             },
             "description": "One user's QRIS assignment, with the image. 404 if not assigned."
@@ -2232,7 +2232,7 @@
               }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/qris/users/{{memberUsername}}",
+              "raw": "{{baseUrl}}/api/qris/users/{{memberId}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -2240,7 +2240,7 @@
                 "api",
                 "qris",
                 "users",
-                "{{memberUsername}}"
+                "{{memberId}}"
               ]
             },
             "description": "Remove a user's assignment — they revert to the shared business QRIS."

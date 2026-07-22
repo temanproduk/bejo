@@ -14,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Per-user QRIS management, driven <b>only by the business's main account</b> (super admin). The
@@ -46,10 +48,11 @@ public class UserQrisService {
 
     /** Assign (or update) one user's own QRIS + terminal id. Super admin + team management only. */
     @Transactional
-    public UserQrisResponseDto set(String callerUsername, String targetUsername, SetUserQrisRequestDto request) {
+    public UserQrisResponseDto set(String callerUsername, Long targetUserId, SetUserQrisRequestDto request) {
         Long businessId = businessContext.requireSuperAdminBusinessId(callerUsername);
         accountSettingsService.requireTeamManagementEnabled(businessId);
-        requireActiveUserInBusiness(businessId, targetUsername);
+        User target = requireActiveUserInBusiness(businessId, targetUserId);
+        String targetUsername = target.getUsername();
         validateBase64Image(request.qrisImage());
 
         String terminalId = request.terminalId().trim();
@@ -69,47 +72,50 @@ public class UserQrisService {
         qris.setTerminalId(terminalId);
         qris.setQrisImage(request.qrisImage());
         userQrisRepository.save(qris);
-        log.info("[USER-QRIS] Set QRIS for username={} terminalId={} in businessId={} by {}",
-                targetUsername, terminalId, businessId, callerUsername);
-        return toDto(qris, true);
+        log.info("[USER-QRIS] Set QRIS for userId={} username={} terminalId={} in businessId={} by {}",
+                targetUserId, targetUsername, terminalId, businessId, callerUsername);
+        return toDto(qris, target.getId(), true);
     }
 
     /** List the business's per-user QRIS assignments (images omitted). Super admin only. */
     @Transactional(readOnly = true)
     public List<UserQrisResponseDto> list(String callerUsername) {
         Long businessId = businessContext.requireSuperAdminBusinessId(callerUsername);
+        // Resolve username -> id for the business's active users (small set) so each row carries userId.
+        Map<String, Long> idByUsername = userRepository.findByBusinessIdAndDeletedAtIsNullOrderByCreatedAtAsc(businessId)
+                .stream().collect(Collectors.toMap(User::getUsername, User::getId));
         return userQrisRepository.findByBusinessId(businessId).stream()
-                .map(q -> toDto(q, false))
+                .map(q -> toDto(q, idByUsername.get(q.getUsername()), false))
                 .toList();
     }
 
     /** One user's QRIS assignment, with the image. Super admin only. */
     @Transactional(readOnly = true)
-    public UserQrisResponseDto get(String callerUsername, String targetUsername) {
+    public UserQrisResponseDto get(String callerUsername, Long targetUserId) {
         Long businessId = businessContext.requireSuperAdminBusinessId(callerUsername);
-        UserQris qris = userQrisRepository.findByBusinessIdAndUsername(businessId, targetUsername)
-                .orElseThrow(() -> new ResourceNotFoundException("QRIS pengguna tidak ditemukan: " + targetUsername));
-        return toDto(qris, true);
+        User target = requireActiveUserInBusiness(businessId, targetUserId);
+        UserQris qris = userQrisRepository.findByBusinessIdAndUsername(businessId, target.getUsername())
+                .orElseThrow(() -> new ResourceNotFoundException("QRIS pengguna tidak ditemukan: " + targetUserId));
+        return toDto(qris, target.getId(), true);
     }
 
     /** Remove a user's QRIS assignment — they revert to the shared business QRIS. Super admin only. */
     @Transactional
-    public void delete(String callerUsername, String targetUsername) {
+    public void delete(String callerUsername, Long targetUserId) {
         Long businessId = businessContext.requireSuperAdminBusinessId(callerUsername);
-        if (userQrisRepository.findByBusinessIdAndUsername(businessId, targetUsername).isEmpty()) {
-            throw new ResourceNotFoundException("QRIS pengguna tidak ditemukan: " + targetUsername);
+        User target = requireActiveUserInBusiness(businessId, targetUserId);
+        if (userQrisRepository.findByBusinessIdAndUsername(businessId, target.getUsername()).isEmpty()) {
+            throw new ResourceNotFoundException("QRIS pengguna tidak ditemukan: " + targetUserId);
         }
-        userQrisRepository.deleteByBusinessIdAndUsername(businessId, targetUsername);
-        log.info("[USER-QRIS] Removed QRIS for username={} in businessId={} by {}", targetUsername, businessId, callerUsername);
+        userQrisRepository.deleteByBusinessIdAndUsername(businessId, target.getUsername());
+        log.info("[USER-QRIS] Removed QRIS for userId={} username={} in businessId={} by {}",
+                targetUserId, target.getUsername(), businessId, callerUsername);
     }
 
-    // The target must be an active user of the caller's own business.
-    private void requireActiveUserInBusiness(Long businessId, String username) {
-        User user = userRepository.findByUsernameAndDeletedAtIsNull(username)
-                .orElseThrow(() -> new IllegalArgumentException("Pengguna tidak ditemukan: " + username));
-        if (!businessId.equals(user.getBusinessId())) {
-            throw new IllegalArgumentException("Pengguna tidak ditemukan: " + username);
-        }
+    // The target must be an active user of the caller's own business (keyed by user id, like members).
+    private User requireActiveUserInBusiness(Long businessId, Long userId) {
+        return userRepository.findByIdAndBusinessIdAndDeletedAtIsNull(userId, businessId)
+                .orElseThrow(() -> new IllegalArgumentException("Pengguna tidak ditemukan: " + userId));
     }
 
     private void validateBase64Image(String value) {
@@ -120,8 +126,8 @@ public class UserQrisService {
         }
     }
 
-    private UserQrisResponseDto toDto(UserQris q, boolean withImage) {
-        return new UserQrisResponseDto(q.getUsername(), q.getTerminalId(),
+    private UserQrisResponseDto toDto(UserQris q, Long userId, boolean withImage) {
+        return new UserQrisResponseDto(userId, q.getUsername(), q.getTerminalId(),
                 withImage ? q.getQrisImage() : null, q.getCreatedAt(), q.getUpdatedAt());
     }
 }

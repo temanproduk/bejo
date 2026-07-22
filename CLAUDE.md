@@ -109,10 +109,10 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `GET` | `/api/qris` | JWT | The caller's **effective** QRIS: their own per-user QRIS if assigned, else the shared business QRIS. `type` = `UPLOADED` (custom) or `MANAGED` (generated) |
 | `POST` | `/api/qris/upload` | JWT (super admin) | Upload the **business** (shared) QRIS image (base64, max ±5 MB) |
 | `POST` | `/api/qris/reset` | JWT (super admin) | Revert the business QRIS to the managed/generated image |
-| `PUT` | `/api/qris/users/{username}` | JWT (super admin + team mgmt) | Assign a user their own QRIS + `terminalId` (`{terminalId, qrisImage}`); callbacks route by terminal |
+| `PUT` | `/api/qris/users/{id}` | JWT (super admin + team mgmt) | Assign a user their own QRIS + `terminalId` (`{terminalId, qrisImage}`); callbacks route by terminal |
 | `GET` | `/api/qris/users` | JWT (super admin) | List the business's per-user QRIS assignments (images omitted) |
-| `GET` | `/api/qris/users/{username}` | JWT (super admin) | One user's QRIS assignment (with image) |
-| `DELETE` | `/api/qris/users/{username}` | JWT (super admin) | Remove a user's assignment (they revert to the business QRIS) |
+| `GET` | `/api/qris/users/{id}` | JWT (super admin) | One user's QRIS assignment (with image) |
+| `DELETE` | `/api/qris/users/{id}` | JWT (super admin) | Remove a user's assignment (they revert to the business QRIS) |
 | `PATCH` | `/api/users/me` | JWT | Update name, email, phone |
 | `PATCH` | `/api/users/me/password` | JWT | Change password (requires `oldPassword`) |
 | `GET`/`PUT`/`DELETE` | `/api/business/picture` | JWT (GET: any member · PUT/DELETE: super admin) | Get/set/remove the **business** picture (base64, ≤1 MB, shared by all members). Response field is `profilePicture` |
@@ -129,7 +129,7 @@ The JWT is returned by the login endpoint in `data.token`. `JwtAuthFilter` valid
 | `GET` | `/api/products/{id}` | JWT | Get one product (includes `photo`) |
 | `PATCH` | `/api/products/{id}` | JWT | Partial update (name, short description, price, cost, stock, category, photo) |
 | `DELETE` | `/api/products/{id}` | JWT | Delete a product (hard) |
-| `POST` | `/api/products/stock-adjustments` | JWT | Bulk stock adjustment (stock opname): set several products' stock to counted values; returns a variance report |
+| `POST` | `/api/stock-mutations/adjustments` | JWT | Bulk stock adjustment (stock opname): set several products' stock to counted values; returns a variance report |
 | `POST` | `/api/stock-mutations` | JWT | Record a purchase (restock): raises stock of several products at once (a PURCHASE mutation) |
 | `GET` | `/api/stock-mutations` | JWT | Stock-change history — mutations (PURCHASE/ADJUSTMENT/UPDATE) with their line items; paginated (`page`/`size`) |
 | `GET` | `/api/stock-mutations/{id}` | JWT | Get one stock mutation with its line items |
@@ -159,28 +159,34 @@ A Postman collection is at `bejo.postman_collection.json`, driven by **Postman e
 
 ## Architecture
 
+**Modular monolith** — code is organized package-**by-module** (`com.bejo.<module>`), not by layer, and the boundaries are enforced by `ArchitectureTest` (ArchUnit) on every build. Allowed dependency direction: `commerce, ads → core → notification, shared`.
+
 ```
-controller/   → thin HTTP layer; validation via @Valid
-service/      → business logic, metrics via Micrometer Counter
-repository/   → Spring Data JPA interfaces
-entity/       → JPA entities (Business, User, BusinessBank, BusinessQris,
-                AccountSettings, Session, Transaction, TransactionItem, Presence,
-                AdCampaign, AdDelivery, UserQris, TokenBlacklist)
-dto/          → request records (@NotBlank validated) + response records.
-                Every DTO class name ends with `Dto` (e.g. LoginRequestDto,
-                TransactionDto); requests and responses are separate types.
-push/         → polymorphic FCM payloads: PushPayload interface +
-                AbstractPushPayload base + Transaction/Presence/Ads/Simple impls
-config/       → ApiTokenFilter, JwtAuthFilter, AdsAdminTokenFilter, SecurityConfig,
-                FirebaseConfig, RequestLoggingFilter, DataSeeder
-constant/     → canonical domain values (no magic strings): AccountType,
-                TransactionType, TransactionStatus, QrisType, Acquirer
-converter/    → JPA AttributeConverters storing JSON in TEXT columns
-                (StringListJsonConverter, StringMapJsonConverter)
-exception/    → GlobalExceptionHandler + ResourceNotFoundException
+shared/        cross-cutting library, depends on NO module:
+                 util/ (AppTime, Pagination) · exception/ (GlobalExceptionHandler,
+                 ResourceNotFoundException, ForbiddenException) · persistence/ (JSON
+                 AttributeConverters) · web/ (ApiResponseDto)
+notification/  push delivery infrastructure, depends on NO module. Owns the FCM send
+                 (PushJobSender), the queue (PushDeliveryQueue/InMemoryPushDeliveryQueue),
+                 the fan-out (PushNotificationService), PushType, the payload hierarchy
+                 (PushPayload/AbstractPushPayload/SimplePushPayload), and the PORTS core
+                 implements: PushRecipientDirectory + StaleTokenHandler (Option B). Only
+                 this module touches com.google.firebase.messaging.
+core/          users, business, auth, presence, QRIS, sessions, account-settings. The
+                 foundation. Sub-packages web/service/domain/repository/dto, plus push/
+                 (PresencePushPayload) and notification/ (the port ADAPTERS:
+                 SessionPushRecipientDirectory, SessionStaleTokenHandler).
+commerce/      transactions, products, categories, stock, the QRIS payment callback.
+                 web/service/domain/repository/dto + push/ (TransactionPushPayload).
+ads/            voice-ad campaigns. web/service/domain/repository/dto + push/ (AdsPushPayload).
+config/        Spring bootstrap / composition root (may wire any module; nothing depends
+                 on it): ApiTokenFilter, JwtAuthFilter, SecurityConfig, FirebaseConfig,
+                 RequestLoggingFilter, DataSeeder.
 ```
 
-Domain "possible values" live in `constant/` as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `BusinessRole` (`SUPER_ADMIN`, `MEMBER`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults), `StockMutationType` (`PURCHASE`, `ADJUSTMENT`, `UPDATE`, `SALE`), `PresenceType` (`CLOCK_IN`, `CLOCK_OUT`, `PING`), `PushType` (`TRANSACTION`, `PRESENCE`, `ADS` — the `type` field in every push's data payload), `AdCampaignState` (`CREATED`, `PREPARING`, `READY`, `ERROR`, `SCHEDULED`, `STARTING`, `PLAYED`, `FINISHED`), `AdEvent` (`PREPARE`, `PLAY` — the ads push's `adEvent` discriminator).
+Inside each module: `web/` (thin HTTP, `@Valid`) · `service/` (logic, Micrometer counters) · `repository/` (Spring Data JPA) · `domain/` (JPA entities + the module's constant holders) · `dto/` (request records `@NotBlank`-validated + response records; every DTO class name ends with `Dto`, requests/responses separate) · `push/` (the module's own `PushPayload`). Adding a cross-module call means depending on the other module's public API, never reaching into its internals — the ArchUnit rules fail the build otherwise.
+
+Domain "possible values" live in each module's `domain/` package (and `PushType` in `notification/`) as `public static final String` holders — reference these instead of inline literals: `AccountType` (`MANAGED`, `SELF_SERVICE`), `BusinessRole` (`SUPER_ADMIN`, `MEMBER`), `TransactionType` (`MANUAL`, `PARSED`, `MANAGED`), `TransactionStatus` (`SUCCESS`, `PENDING`, `FAILED`, `REFUNDED`, `CANCELLED`, `EXPIRED`, `UNKNOWN`), `QrisType` (`UPLOADED`, `MANAGED`), `Acquirer` (`CASH`, `ASTRAPAY` defaults), `StockMutationType` (`PURCHASE`, `ADJUSTMENT`, `UPDATE`, `SALE`), `PresenceType` (`CLOCK_IN`, `CLOCK_OUT`, `PING`), `PushType` (`TRANSACTION`, `PRESENCE`, `ADS` — the `type` field in every push's data payload), `AdCampaignState` (`CREATED`, `PREPARING`, `READY`, `ERROR`, `SCHEDULED`, `STARTING`, `PLAYED`, `FINISHED`), `AdEvent` (`PREPARE`, `PLAY` — the ads push's `adEvent` discriminator).
 
 Gotcha: `SecurityConfig`'s auth entry point distinguishes 401 vs 404/405 by consulting `RequestMappingHandlerMapping`. It must be injected with `@Qualifier("requestMappingHandlerMapping")` (actuator registers a second bean of that type) and the request path must be parsed via `ServletRequestPathUtils.parseAndCache` because the entry point runs before `DispatcherServlet`.
 
@@ -246,14 +252,14 @@ FCM sending lives in `PushNotificationService` (shared). **Every message is data
 
 QRIS is optional: registration creates no `business_qris` row, so `GET /api/qris` returns `404` until the user uploads one. `POST /api/qris/upload` creates the row on first upload (`qris_code` auto-generated). Once a row exists: `qris_image = NULL` → type `MANAGED` (serves `initial_qris_image`, generated on first access from `qris_code`); non-null → type `UPLOADED`. Reset simply nulls `qris_image`.
 
-**Per-user QRIS (`user_qris`, `QrisController`/`UserQrisService`):** the **main account** (super admin) can give any user in its business their own QRIS image + a **`terminalId`** (same merchant PAN, distinct terminal) — used so a payment callback routes by terminal (below). Managed via `PUT`/`GET`/`DELETE /api/qris/users/{username}` (setting is super-admin **and** team-management gated; reading/removing is super-admin only). One row per user; `terminalId` unique within the business (`uq_user_qris_terminal` → 400 `"Terminal ID sudah digunakan"`). **`GET /api/qris` returns the caller's effective QRIS** — their `user_qris` image if assigned, otherwise the shared `business_qris`. A user without a `user_qris` row falls back to the business QRIS and is notified for every callback of the merchant.
+**Per-user QRIS (`user_qris`, `QrisController`/`UserQrisService`):** the **main account** (super admin) can give any user in its business their own QRIS image + a **`terminalId`** (same merchant PAN, distinct terminal) — used so a payment callback routes by terminal (below). Managed via `PUT`/`GET`/`DELETE /api/qris/users/{id}` (setting is super-admin **and** team-management gated; reading/removing is super-admin only). One row per user; `terminalId` unique within the business (`uq_user_qris_terminal` → 400 `"Terminal ID sudah digunakan"`). **`GET /api/qris` returns the caller's effective QRIS** — their `user_qris` image if assigned, otherwise the shared `business_qris`. A user without a `user_qris` row falls back to the business QRIS and is notified for every callback of the merchant.
 
 ### Products & inventory
 
 Basic per-business SKU catalog with simple inventory, scoped by `business_id` (resolved from the authenticated username via `BusinessContext`):
 - `ProductCategoryController` → `ProductCategoryService` — categories (`product_categories`); names unique per merchant. Deleting a category first **un-categorizes** its products (`ProductRepository.clearCategory` sets their `category_id` to null in the service, so behavior matches under both Flyway/Postgres and the H2 test schema) then removes the row — products are never deleted with it.
 - `ProductController` → `ProductService` — products (`products`); `sku` unique per merchant. Editable fields include an optional `shortDescription`. `stock` is a plain column (inventory management = `PATCH` the value; no ledger). A product's `categoryId` must belong to the same merchant (else 400). `photo` is an optional base64 image validated ≤500 KB decoded; **list responses omit the photo** to keep payloads small, the single-product detail includes it. Prices are `BIGINT` IDR; `costPrice` is optional.
-- **Stock opname** — `POST /api/products/stock-adjustments` (`ProductService.adjustStock`) bulk-sets several products' stock to their newly counted quantities. Atomic and two-pass (unknown product → 400, nothing changes); returns a per-product variance report (`previousStock`/`newStock`/`difference`). No ledger is persisted.
+- **Stock opname** — `POST /api/stock-mutations/adjustments` (`ProductService.adjustStock`) bulk-sets several products' stock to their newly counted quantities. Atomic and two-pass (unknown product → 400, nothing changes); returns a per-product variance report (`previousStock`/`newStock`/`difference`). No ledger is persisted.
 
 ### Stock mutations (repurposed "purchases")
 
@@ -330,6 +336,8 @@ The whole app is pinned to **WIB (`Asia/Jakarta`, UTC+7)**: `BejoApplication.mai
 ## Database
 
 Schema is created by Flyway (`src/main/resources/db/migration/`) at app startup; `ddl-auto: none`. **`V1__init_schema.sql` is the single consolidated baseline** (pre-launch, so presence + ads + all settings are folded straight in rather than migrated across versions), and every statement uses `IF NOT EXISTS`. The DB is **dropped & recreated** from it on a fresh deploy (`podman compose down -v` to drop the volume locally). Once launched, schema changes become additive versioned migrations (`V2…`) — never edit an applied migration in place (Flyway validates checksums against the live DB).
+
+**Schema-per-module + no cross-schema foreign keys.** The tables live in **three Postgres schemas** matching the code modules — `core` (businesses, users, banks, QRIS, sessions, account-settings, presences, token-blacklist), `commerce` (bejo_history, transaction_items, products, product_categories, stock_mutations, stock_mutation_items), `ads` (ad_campaigns, ad_deliveries) — created by `V1` (`CREATE SCHEMA IF NOT EXISTS …`). Entities carry `@Table(schema = "…")`; all queries are JPQL so Hibernate schema-qualifies automatically (no native SQL in main). A commerce/ads table **never FK-references a core table**: `bejo_history`/`products`/`product_categories`/`stock_mutations` hold `business_id` as a **plain soft reference** to `core.businesses(id)` (like `presences`/`ad_deliveries`), not an FK — every surviving FK is intra-schema (`products.category_id`, `transaction_items.history_id`, `stock_mutation_items.mutation_id`, `ad_deliveries.campaign_id`, and core's `*_business` FKs). The invariant is enforced in code — `business_id` is always assigned server-side from `BusinessContext`, never from the client, and businesses are never hard-deleted — with an orphan-detection safety net (`scripts/check-orphans.sql`, exercised on CI by `OrphanDetectionTest`). The H2 test DB pre-creates the schemas via the JDBC `INIT` clause (`application-test.yml`); Flyway keeps its history table in the default schema.
 
 Key tables:
 - `businesses` — the merchant; business name/address/nmid/**merchant_pan** (+ `initial_*` for reset) + `size`/`industry` (NOT NULL, immutable, config-validated) + optional `store_photo` + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `nmid` and `merchant_pan` (each `WHERE … IS NOT NULL`). **`merchant_pan`** is the QRIS merchant PAN carried by the payment callback (no NMID in the payload) — it's how a callback routes to a business; set optionally at registration

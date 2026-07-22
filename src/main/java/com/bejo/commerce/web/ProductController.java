@@ -1,11 +1,9 @@
 package com.bejo.commerce.web;
 
 import com.bejo.commerce.dto.CreateProductRequestDto;
-import com.bejo.commerce.dto.StockAdjustmentRequestDto;
 import com.bejo.commerce.dto.UpdateProductRequestDto;
 import com.bejo.shared.web.ApiResponseDto;
 import com.bejo.commerce.dto.ProductResponseDto;
-import com.bejo.commerce.dto.StockAdjustmentResultResponseDto;
 import com.bejo.commerce.service.ProductService;
 import com.bejo.shared.util.Pagination;
 import jakarta.validation.Valid;
@@ -47,16 +45,6 @@ public class ProductController {
         Page<ProductResponseDto> data = productService.list(
                 authentication.getName(), categoryId, Pagination.of(page, size));
         return ResponseEntity.ok(ApiResponseDto.page(data));
-    }
-
-    // Bulk stock adjustment (stock opname): set several products' stock to their
-    // newly counted quantities at once. Atomic; returns a variance report.
-    @PostMapping("/stock-adjustments")
-    public ResponseEntity<ApiResponseDto<StockAdjustmentResultResponseDto>> adjustStock(
-            @Valid @RequestBody StockAdjustmentRequestDto request,
-            Authentication authentication) {
-        StockAdjustmentResultResponseDto data = productService.adjustStock(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Penyesuaian stok berhasil", data));
     }
 
     @GetMapping("/{id}")

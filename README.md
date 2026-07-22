@@ -1035,7 +1035,7 @@ Partial update — any subset of `sku`, `name`, `shortDescription`, `categoryId`
 
 Hard-deletes the product. **Success — HTTP 200:** `{ "status": 1, "message": "Produk berhasil dihapus" }`
 
-#### `POST /api/products/stock-adjustments` — Bulk stock adjustment (stock opname)
+#### `POST /api/stock-mutations/adjustments` — Bulk stock adjustment (stock opname)
 
 Sets several products' stock to their **newly counted quantities** at once — for stock opname, when the physical count differs from the recorded stock. **Atomic:** if any line references a product the merchant doesn't own, the whole adjustment is rejected and no stock changes. Returns a **variance report**, and records an `ADJUSTMENT` entry in the [stock-mutation history](#stock-mutations) (with the note, if given).
 
@@ -1085,7 +1085,7 @@ The unified **stock-change history**. Every change to a product's stock is recor
 | `type` | Source | Priced? |
 |---|---|---|
 | `PURCHASE` | Restock via `POST /api/stock-mutations` | yes |
-| `ADJUSTMENT` | Stock opname via `POST /api/products/stock-adjustments` | no |
+| `ADJUSTMENT` | Stock opname via `POST /api/stock-mutations/adjustments` | no |
 | `UPDATE` | A `PATCH /api/products/{id}` that changed `stock` | no |
 
 `ADJUSTMENT` and `UPDATE` mutations are created automatically by those product endpoints; this resource is where you **record a purchase** and **read the whole history**. All endpoints require JWT, scoped to the merchant. Each line snapshots the product and the stock before/after (`previousStock` → `newStock`, `quantityChange`).
@@ -1450,17 +1450,17 @@ Clears the uploaded image and reverts to the initial/managed QRIS image (which m
 
 ---
 
-#### `PUT /api/qris/users/{username}` — Assign a user their own QRIS (super admin)
+#### `PUT /api/qris/users/{id}` — Assign a user their own QRIS (super admin)
 
-The main account gives one user their own QRIS image + a **terminal id** (same merchant PAN, distinct terminal), so a payment callback routes by terminal. **Super admin only, and team management must be enabled** (`403` otherwise). `terminalId` is unique within the business (`400 Terminal ID sudah digunakan`); the target must be an active user of the caller's business (`400` otherwise).
+The main account gives one user their own QRIS image + a **terminal id** (same merchant PAN, distinct terminal), so a payment callback routes by terminal. The path `{id}` is the **user id** (the same identifier as `/api/users/members/{id}`). **Super admin only, and team management must be enabled** (`403` otherwise). `terminalId` is unique within the business (`400 Terminal ID sudah digunakan`); the target must be an active user of the caller's business (`400` otherwise).
 
 **Request body:** `{ "terminalId": "A001", "qrisImage": "<base64, ≤±5 MB>" }`
 
-**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "username": "...", "terminalId": "A001", "qrisImage": "...", "createdAt": "...", "updatedAt": "..." } }`
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "terminalId": "A001", "qrisImage": "...", "createdAt": "...", "updatedAt": "..." } }`
 
-#### `GET /api/qris/users` · `GET /api/qris/users/{username}` · `DELETE /api/qris/users/{username}` (super admin)
+#### `GET /api/qris/users` · `GET /api/qris/users/{id}` · `DELETE /api/qris/users/{id}` (super admin)
 
-List all per-user assignments (images omitted), fetch one (with image), or remove one (the user reverts to the shared business QRIS). `404 QRIS pengguna tidak ditemukan` if not assigned.
+List all per-user assignments (`userId` + `username` + `terminalId`, images omitted), fetch one by user id (with image), or remove one by user id (the user reverts to the shared business QRIS). `404 QRIS pengguna tidak ditemukan` if not assigned.
 
 ---
 
@@ -1593,6 +1593,40 @@ Requires the delivery to be `READY` (the app confirmed a good download). Moves i
 #### `GET /api/ads/campaigns` · `GET /api/ads/campaigns/{id}` — Read (admin)
 
 List (paginated, newest first) or fetch one campaign with its delivery state.
+
+#### `GET /api/ads/history` — Merchant ad history (super admin)
+
+Headers: `X-API-TOKEN` + `Authorization: Bearer <JWT>`. Unlike the campaign admin surface above (server-to-server, `X-ADS-ADMIN-TOKEN`), this is a **normal JWT** endpoint for the merchant: the business's **super admin** reads every ad delivered to its own devices and its sub-accounts' — **all states**, newest first. A plain member gets `403`.
+
+Paginated: optional `page` (default 1) + `size` (default 50, max 200). Each row flattens the campaign's name/brand onto the delivery, and identifies the target device's owner by both `targetUsername` and `targetName` (snapshotted, so they read correctly even after the member is removed/renamed); `userActive` is `false` once that member has left the business.
+
+```json
+{
+  "status": 1,
+  "count": 1,
+  "page": 1,
+  "totalPages": 1,
+  "total": 1,
+  "data": [
+    {
+      "id": 42,
+      "campaignId": 5,
+      "campaignName": "Promo Kopi",
+      "brand": "Kopi Nusantara",
+      "targetUsername": "budi",
+      "targetName": "Budi",
+      "userActive": true,
+      "state": "PLAYED",
+      "errorReason": null,
+      "playedAt": "2026-07-19T14:30:00",
+      "finishedAt": null,
+      "playLatitude": -6.2088,
+      "playLongitude": 106.8456,
+      "createdAt": "2026-07-19T14:00:00"
+    }
+  ]
+}
+```
 
 #### `POST /api/ads/deliveries/{id}/downloaded` — Report download (device)
 

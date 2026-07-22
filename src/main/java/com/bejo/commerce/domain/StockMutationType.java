@@ -5,7 +5,7 @@ package com.bejo.commerce.domain;
  *
  * <ul>
  *   <li>{@link #PURCHASE} — restock via {@code POST /api/stock-mutations} (stock in, priced)</li>
- *   <li>{@link #ADJUSTMENT} — stock opname via {@code POST /api/products/stock-adjustments}</li>
+ *   <li>{@link #ADJUSTMENT} — stock opname via {@code POST /api/stock-mutations/adjustments}</li>
  *   <li>{@link #UPDATE} — a {@code PATCH /api/products/{id}} that changed the stock</li>
  *   <li>{@link #SALE} — a {@code POST /api/transactions} with items (stock out, sold)</li>
  * </ul>

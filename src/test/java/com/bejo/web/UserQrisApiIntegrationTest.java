@@ -63,17 +63,19 @@ class UserQrisApiIntegrationTest {
                 .andExpect(status().isOk());
     }
 
-    private void addMember(String adminToken, String username) throws Exception {
-        mockMvc.perform(post("/api/users/members").header("X-API-TOKEN", API_TOKEN)
+    // Adds a member and returns its user id (the API keys per-user QRIS by id, like members).
+    private String addMember(String adminToken, String username) throws Exception {
+        MvcResult r = mockMvc.perform(post("/api/users/members").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "username", username, "password", "password1", "name", "Emp",
                                 "email", username + "@e.com", "phone", "+628123456780"))))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated()).andReturn();
+        return objectMapper.readTree(r.getResponse().getContentAsString()).at("/data/id").asText();
     }
 
-    private void setUserQris(String token, String targetUser, String terminalId, int expectedStatus) throws Exception {
-        mockMvc.perform(put("/api/qris/users/" + targetUser).header("X-API-TOKEN", API_TOKEN)
+    private void setUserQris(String token, String targetId, String terminalId, int expectedStatus) throws Exception {
+        mockMvc.perform(put("/api/qris/users/" + targetId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("terminalId", terminalId, "qrisImage", QR_A))))
                 .andExpect(status().is(expectedStatus));
@@ -82,7 +84,7 @@ class UserQrisApiIntegrationTest {
     @Test
     void mainAccountAssignsUserQrisAndItOverridesTheBusinessQris() throws Exception {
         String adminToken = login(regTeam("uq_admin1"), "d-admin");
-        addMember(adminToken, "uq_member1");
+        String memberId = addMember(adminToken, "uq_member1");
         String memberToken = login("uq_member1", "d-member");
 
         // Business QRIS uploaded by the main account (the fallback for users without their own)
@@ -91,14 +93,15 @@ class UserQrisApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of("qrisImage", QR_BIZ))))
                 .andExpect(status().isOk());
 
-        // Main account gives the member their own QRIS + terminal
-        setUserQris(adminToken, "uq_member1", "A001", 200);
+        // Main account gives the member their own QRIS + terminal (keyed by user id)
+        setUserQris(adminToken, memberId, "A001", 200);
 
-        // Listed for the main account (terminal shown, image omitted)
+        // Listed for the main account (userId + terminal shown, image omitted)
         mockMvc.perform(get("/api/qris/users").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].userId").value(Integer.parseInt(memberId)))
                 .andExpect(jsonPath("$.data[0].username").value("uq_member1"))
                 .andExpect(jsonPath("$.data[0].terminalId").value("A001"))
                 .andExpect(jsonPath("$.data[0].qrisImage").doesNotExist());
@@ -110,7 +113,7 @@ class UserQrisApiIntegrationTest {
                 .andExpect(jsonPath("$.data.qrisImage").value(QR_A));
 
         // Remove it → the member reverts to the shared business QRIS
-        mockMvc.perform(delete("/api/qris/users/uq_member1").header("X-API-TOKEN", API_TOKEN)
+        mockMvc.perform(delete("/api/qris/users/" + memberId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
@@ -122,34 +125,37 @@ class UserQrisApiIntegrationTest {
     @Test
     void aMemberCannotManageUserQris() throws Exception {
         String adminToken = login(regTeam("uq_admin2"), "d-a2");
-        addMember(adminToken, "uq_member2");
+        String memberId = addMember(adminToken, "uq_member2");
         String memberToken = login("uq_member2", "d-m2");
 
-        setUserQris(memberToken, "uq_member2", "B001", 403);   // member → forbidden
+        setUserQris(memberToken, memberId, "B001", 403);   // member → forbidden
     }
 
     @Test
     void duplicateTerminalIsRejected() throws Exception {
         String adminToken = login(regTeam("uq_admin3"), "d-a3");
-        addMember(adminToken, "uq_m3a");
-        addMember(adminToken, "uq_m3b");
+        String m3a = addMember(adminToken, "uq_m3a");
+        String m3b = addMember(adminToken, "uq_m3b");
 
-        setUserQris(adminToken, "uq_m3a", "T100", 200);
-        setUserQris(adminToken, "uq_m3b", "T100", 400);   // same terminal → 400
+        setUserQris(adminToken, m3a, "T100", 200);
+        setUserQris(adminToken, m3b, "T100", 400);   // same terminal → 400
     }
 
     @Test
     void unknownTargetUserIsRejected() throws Exception {
         String adminToken = login(regTeam("uq_admin4"), "d-a4");
-        setUserQris(adminToken, "ghost_user", "T200", 400);
+        setUserQris(adminToken, "999999", "T200", 400);   // no such user id
     }
 
     @Test
     void settingUserQrisRequiresTeamManagement() throws Exception {
         register("uq_solo");
         String adminToken = login("uq_solo", "d-solo");   // fresh solo account, team OFF
+        MvcResult me = mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)).andReturn();
+        String soloId = objectMapper.readTree(me.getResponse().getContentAsString()).at("/data/id").asText();
         // team off → assigning a per-user QRIS (even to self) is gated
-        mockMvc.perform(put("/api/qris/users/uq_solo").header("X-API-TOKEN", API_TOKEN)
+        mockMvc.perform(put("/api/qris/users/" + soloId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("terminalId", "S1", "qrisImage", QR_A))))
                 .andExpect(status().isForbidden())

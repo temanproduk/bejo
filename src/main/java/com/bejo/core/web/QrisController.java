@@ -52,12 +52,13 @@ public class QrisController {
     // The main account assigns a user their own QRIS + terminal id so payment callbacks route
     // by terminal. Super admin only (+ team management for the write).
 
-    @PutMapping("/users/{username}")
+    // Keyed by user id (like /api/users/members/{id}) for a consistent identifier across the API.
+    @PutMapping("/users/{id}")
     public ResponseEntity<ApiResponseDto<UserQrisResponseDto>> setUserQris(
-            @PathVariable String username,
+            @PathVariable Long id,
             @Valid @RequestBody SetUserQrisRequestDto request,
             Authentication authentication) {
-        UserQrisResponseDto data = userQrisService.set(authentication.getName(), username, request);
+        UserQrisResponseDto data = userQrisService.set(authentication.getName(), id, request);
         return ResponseEntity.ok(ApiResponseDto.success("QRIS pengguna disimpan", data));
     }
 
@@ -66,16 +67,16 @@ public class QrisController {
         return ResponseEntity.ok(ApiResponseDto.list(userQrisService.list(authentication.getName())));
     }
 
-    @GetMapping("/users/{username}")
+    @GetMapping("/users/{id}")
     public ResponseEntity<ApiResponseDto<UserQrisResponseDto>> getUserQris(
-            @PathVariable String username, Authentication authentication) {
-        return ResponseEntity.ok(ApiResponseDto.success(userQrisService.get(authentication.getName(), username)));
+            @PathVariable Long id, Authentication authentication) {
+        return ResponseEntity.ok(ApiResponseDto.success(userQrisService.get(authentication.getName(), id)));
     }
 
-    @DeleteMapping("/users/{username}")
+    @DeleteMapping("/users/{id}")
     public ResponseEntity<ApiResponseDto<Void>> deleteUserQris(
-            @PathVariable String username, Authentication authentication) {
-        userQrisService.delete(authentication.getName(), username);
+            @PathVariable Long id, Authentication authentication) {
+        userQrisService.delete(authentication.getName(), id);
         return ResponseEntity.ok(ApiResponseDto.success("QRIS pengguna dihapus", null));
     }
 }

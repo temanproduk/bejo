@@ -1718,7 +1718,7 @@ class ApiIntegrationTest {
                 Map.of("productId", p1, "stock", 8),    // counted 8  (-2)
                 Map.of("productId", p2, "stock", 12)))); // counted 12 (+7)
 
-        mockMvc.perform(post("/api/products/stock-adjustments")
+        mockMvc.perform(post("/api/stock-mutations/adjustments")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1744,7 +1744,7 @@ class ApiIntegrationTest {
                 Map.of("productId", p1, "stock", 99),
                 Map.of("productId", 888888, "stock", 3))));
 
-        mockMvc.perform(post("/api/products/stock-adjustments")
+        mockMvc.perform(post("/api/stock-mutations/adjustments")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
@@ -1878,7 +1878,7 @@ class ApiIntegrationTest {
                 .andExpect(status().isCreated());
 
         // 2) Stock opname (ADJUSTMENT): set to 20, with an optional note
-        mockMvc.perform(post("/api/products/stock-adjustments")
+        mockMvc.perform(post("/api/stock-mutations/adjustments")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)

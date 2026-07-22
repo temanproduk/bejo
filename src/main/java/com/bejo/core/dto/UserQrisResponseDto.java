@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record UserQrisResponseDto(
+        Long userId,
         String username,
         String terminalId,
         String qrisImage,
