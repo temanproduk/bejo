@@ -1,8 +1,8 @@
 package com.bejo.config;
 
-import com.bejo.repository.UserRepository;
-import com.bejo.service.JwtService;
-import com.bejo.service.TokenBlacklistService;
+import com.bejo.core.repository.UserRepository;
+import com.bejo.core.service.JwtService;
+import com.bejo.core.service.TokenBlacklistService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;

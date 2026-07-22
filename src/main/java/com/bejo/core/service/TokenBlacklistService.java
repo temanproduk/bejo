@@ -1,0 +1,46 @@
+package com.bejo.core.service;
+
+import com.bejo.core.domain.TokenBlacklist;
+import com.bejo.core.repository.TokenBlacklistRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+
+// @Lazy(false): ensure the bean is created at startup so its @Scheduled purge
+// is registered even with spring.main.lazy-initialization=true.
+@Service
+@Lazy(false)
+public class TokenBlacklistService {
+
+    private static final Logger log = LoggerFactory.getLogger(TokenBlacklistService.class);
+
+    private final TokenBlacklistRepository repository;
+
+    public TokenBlacklistService(TokenBlacklistRepository repository) {
+        this.repository = repository;
+    }
+
+    @Transactional
+    public void blacklist(String jti, LocalDateTime expiresAt) {
+        TokenBlacklist entry = new TokenBlacklist();
+        entry.setJti(jti);
+        entry.setExpiresAt(expiresAt);
+        repository.save(entry);
+    }
+
+    public boolean isBlacklisted(String jti) {
+        return repository.existsByJti(jti);
+    }
+
+    @Scheduled(fixedDelay = 3_600_000)
+    @Transactional
+    public void purgeExpired() {
+        repository.deleteAllByExpiresAtBefore(LocalDateTime.now());
+        log.debug("[BLACKLIST] Purged expired token entries");
+    }
+}

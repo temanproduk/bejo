@@ -1,20 +1,20 @@
 package com.bejo.config;
 
-import com.bejo.constant.AccountType;
-import com.bejo.constant.Acquirer;
-import com.bejo.constant.BusinessRole;
-import com.bejo.constant.TransactionStatus;
-import com.bejo.constant.TransactionType;
-import com.bejo.entity.Business;
-import com.bejo.entity.BusinessBank;
-import com.bejo.entity.BusinessQris;
-import com.bejo.entity.Transaction;
-import com.bejo.entity.User;
-import com.bejo.repository.BusinessBankRepository;
-import com.bejo.repository.BusinessQrisRepository;
-import com.bejo.repository.BusinessRepository;
-import com.bejo.repository.TransactionRepository;
-import com.bejo.repository.UserRepository;
+import com.bejo.core.domain.AccountType;
+import com.bejo.commerce.domain.Acquirer;
+import com.bejo.core.domain.BusinessRole;
+import com.bejo.commerce.domain.TransactionStatus;
+import com.bejo.commerce.domain.TransactionType;
+import com.bejo.core.domain.Business;
+import com.bejo.core.domain.BusinessBank;
+import com.bejo.core.domain.BusinessQris;
+import com.bejo.commerce.domain.Transaction;
+import com.bejo.core.domain.User;
+import com.bejo.core.repository.BusinessBankRepository;
+import com.bejo.core.repository.BusinessQrisRepository;
+import com.bejo.core.repository.BusinessRepository;
+import com.bejo.commerce.repository.TransactionRepository;
+import com.bejo.core.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -60,7 +60,7 @@ public class DataSeeder implements ApplicationRunner {
     private final BusinessBankRepository businessBankRepository;
     private final BusinessQrisRepository businessQrisRepository;
     private final TransactionRepository transactionRepository;
-    private final com.bejo.service.BusinessOptions businessOptions;
+    private final com.bejo.core.service.BusinessOptions businessOptions;
     private final PasswordEncoder passwordEncoder;
 
     public DataSeeder(UserRepository userRepository,
@@ -68,7 +68,7 @@ public class DataSeeder implements ApplicationRunner {
                       BusinessBankRepository businessBankRepository,
                       BusinessQrisRepository businessQrisRepository,
                       TransactionRepository transactionRepository,
-                      com.bejo.service.BusinessOptions businessOptions,
+                      com.bejo.core.service.BusinessOptions businessOptions,
                       PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.businessOptions = businessOptions;

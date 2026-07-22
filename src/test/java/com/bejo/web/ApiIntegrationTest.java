@@ -33,10 +33,10 @@ class ApiIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
-    @Autowired private com.bejo.repository.TransactionRepository transactionRepository;
-    @Autowired private com.bejo.repository.UserRepository userRepository;
-    @Autowired private com.bejo.repository.SessionRepository sessionRepository;
-    @Autowired private com.bejo.repository.PresenceRepository presenceRepository;
+    @Autowired private com.bejo.commerce.repository.TransactionRepository transactionRepository;
+    @Autowired private com.bejo.core.repository.UserRepository userRepository;
+    @Autowired private com.bejo.core.repository.SessionRepository sessionRepository;
+    @Autowired private com.bejo.core.repository.PresenceRepository presenceRepository;
 
     // ---------- helpers ----------
 
@@ -718,7 +718,7 @@ class ApiIntegrationTest {
         // MANAGED rows are created by the notification flow (needs Firebase),
         // so seed one directly
         Long bizId = userRepository.findBusinessIdByUsername("txn_user13").orElseThrow();
-        com.bejo.entity.Transaction t = new com.bejo.entity.Transaction();
+        com.bejo.commerce.domain.Transaction t = new com.bejo.commerce.domain.Transaction();
         t.setTransactionId("TXN-MANAGED-1");
         t.setTransactionDate(java.time.LocalDateTime.of(2026, 7, 1, 10, 0));
         t.setAmount(15000L);
@@ -2351,7 +2351,7 @@ class ApiIntegrationTest {
                 .at("/data/presences/0/id").asLong();
 
         // Still answerable 10 hours on — the window is a rolling 24h, not the calendar date
-        com.bejo.entity.Presence entry = presenceRepository.findById(pingId).orElseThrow();
+        com.bejo.core.domain.Presence entry = presenceRepository.findById(pingId).orElseThrow();
         entry.setClockDatetime(LocalDateTime.now().minusHours(10));
         presenceRepository.save(entry);
 
