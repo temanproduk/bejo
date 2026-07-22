@@ -8,7 +8,7 @@ import jakarta.persistence.*;
  * changed or deleted; {@code productId} is a plain reference (no FK).
  */
 @Entity
-@Table(name = "stock_mutation_items")
+@Table(name = "stock_mutation_items", schema = "commerce")
 public class StockMutationItem {
 
     @Id

@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
  * set on a PING, when the member taps to acknowledge it.
  */
 @Entity
-@Table(name = "presences")
+@Table(name = "presences", schema = "core")
 public class Presence {
 
     @Id

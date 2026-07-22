@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * the shared business QRIS and is notified for every callback of the merchant.
  */
 @Entity
-@Table(name = "user_qris")
+@Table(name = "user_qris", schema = "core")
 public class UserQris {
 
     @Id

@@ -1,6 +1,8 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:bejo;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    # INIT pre-creates the per-module schemas on connect (entities are @Table(schema = core|commerce|ads)),
+    # so Hibernate create-drop only manages the tables within them.
+    url: jdbc:h2:mem:bejo;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS core\;CREATE SCHEMA IF NOT EXISTS commerce\;CREATE SCHEMA IF NOT EXISTS ads
     username: sa
     password:
     driver-class-name: org.h2.Driver

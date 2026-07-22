@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
  * Scoped per merchant ({@code username}). Line items live in {@link StockMutationItem}.
  */
 @Entity
-@Table(name = "stock_mutations")
+@Table(name = "stock_mutations", schema = "commerce")
 public class StockMutation {
 
     @Id

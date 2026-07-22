@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
  * unique per merchant. Products reference a category by id (nullable).
  */
 @Entity
-@Table(name = "product_categories")
+@Table(name = "product_categories", schema = "commerce")
 public class ProductCategory {
 
     @Id

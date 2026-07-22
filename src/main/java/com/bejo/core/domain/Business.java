@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * National Merchant ID used (later) to route inbound QRIS callbacks to the business.
  */
 @Entity
-@Table(name = "businesses")
+@Table(name = "businesses", schema = "core")
 public class Business {
 
     @Id

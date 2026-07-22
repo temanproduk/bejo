@@ -17,7 +17,7 @@ import java.util.Map;
  * plus the app config toggles. One row per business.
  */
 @Entity
-@Table(name = "account_settings")
+@Table(name = "account_settings", schema = "core")
 public class AccountSettings {
 
     @Id

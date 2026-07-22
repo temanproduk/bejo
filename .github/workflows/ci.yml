@@ -1,0 +1,25 @@
+name: CI
+
+# Runs the full test suite (unit + functional H2 + ArchUnit module rules + the
+# commerce→core orphan-detection check) on every push and PR. Complements deploy.yml,
+# which builds with -DskipTests on the release branch.
+on:
+  push:
+    branches: [main, release]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run tests
+        run: mvn -B test

@@ -5,7 +5,7 @@ import java.util.UUID;
 
 /** A business's QRIS image + code (one row per business, created on first upload). */
 @Entity
-@Table(name = "business_qris")
+@Table(name = "business_qris", schema = "core")
 public class BusinessQris {
 
     @Id

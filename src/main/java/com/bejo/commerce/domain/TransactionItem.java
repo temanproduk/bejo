@@ -10,7 +10,7 @@ import jakarta.persistence.*;
  * {@code bejo_history.id} (the parent transaction row).
  */
 @Entity
-@Table(name = "transaction_items")
+@Table(name = "transaction_items", schema = "commerce")
 public class TransactionItem {
 
     @Id

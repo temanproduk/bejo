@@ -8,7 +8,14 @@
 -- MEMBER). Users are soft-deletable; a released username is reusable (uniqueness among active
 -- users only).
 
-CREATE TABLE IF NOT EXISTS businesses (
+-- Schemas, one per module. commerce/ads reference core.businesses by a plain business_id
+-- column with NO cross-schema FK (see the modular-monolith split); Flyway keeps its history
+-- table in the default schema.
+CREATE SCHEMA IF NOT EXISTS core;
+CREATE SCHEMA IF NOT EXISTS commerce;
+CREATE SCHEMA IF NOT EXISTS ads;
+
+CREATE TABLE IF NOT EXISTS core.businesses (
     id             BIGSERIAL     PRIMARY KEY,
     name           VARCHAR(255)  NOT NULL,
     address        TEXT,
@@ -25,10 +32,10 @@ CREATE TABLE IF NOT EXISTS businesses (
 );
 -- NMID / merchant PAN each uniquely route an inbound QRIS callback to a business (nulls allowed).
 -- The provider's callback carries merchantPan (not NMID), so merchant_pan is the routing key.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_business_nmid ON businesses (nmid) WHERE nmid IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_business_merchant_pan ON businesses (merchant_pan) WHERE merchant_pan IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_business_nmid ON core.businesses (nmid) WHERE nmid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_business_merchant_pan ON core.businesses (merchant_pan) WHERE merchant_pan IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS core.users (
     id                 BIGSERIAL     PRIMARY KEY,
     username           VARCHAR(50)   NOT NULL,
     password_hash      VARCHAR(255)  NOT NULL,
@@ -42,13 +49,13 @@ CREATE TABLE IF NOT EXISTS users (
     account_type       VARCHAR(50)   NOT NULL DEFAULT 'MANAGED',
     deleted_at         TIMESTAMP,                     -- soft delete: non-null = removed, username released
     created_at         TIMESTAMP     NOT NULL DEFAULT NOW(),
-    CONSTRAINT fk_user_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT fk_user_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 -- Username is unique only among ACTIVE users, so a deleted user's username can be reused
-CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_active ON users (username) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_users_business ON users (business_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_active ON core.users (username) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_business ON core.users (business_id);
 
-CREATE TABLE IF NOT EXISTS business_banks (
+CREATE TABLE IF NOT EXISTS core.business_banks (
     id                        BIGSERIAL     PRIMARY KEY,
     business_id               BIGINT        NOT NULL,
     bank_name                 VARCHAR(100)  NOT NULL DEFAULT '',
@@ -58,10 +65,10 @@ CREATE TABLE IF NOT EXISTS business_banks (
     initial_bank_number       VARCHAR(20),
     initial_bank_account_name VARCHAR(100),
     CONSTRAINT uq_bank_business UNIQUE (business_id),
-    CONSTRAINT fk_bank_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT fk_bank_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 
-CREATE TABLE IF NOT EXISTS business_qris (
+CREATE TABLE IF NOT EXISTS core.business_qris (
     id                   BIGSERIAL   PRIMARY KEY,
     business_id          BIGINT      NOT NULL,
     qris_code            VARCHAR(36) NOT NULL,
@@ -69,7 +76,7 @@ CREATE TABLE IF NOT EXISTS business_qris (
     initial_qris_image   TEXT,
     CONSTRAINT uq_qris_business UNIQUE (business_id),
     CONSTRAINT uq_qris_code     UNIQUE (qris_code),
-    CONSTRAINT fk_qris_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT fk_qris_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 
 -- Per-user QRIS: the main account may give an individual user their OWN QRIS image with a
@@ -77,7 +84,7 @@ CREATE TABLE IF NOT EXISTS business_qris (
 -- so a user with a row here is notified ONLY for callbacks matching their terminal; a user without
 -- a row falls back to the shared business_qris and is notified for every callback of the merchant.
 -- Set only by the super admin. One row per user; terminal id unique within the business.
-CREATE TABLE IF NOT EXISTS user_qris (
+CREATE TABLE IF NOT EXISTS core.user_qris (
     id           BIGSERIAL    PRIMARY KEY,
     business_id  BIGINT       NOT NULL,
     username     VARCHAR(50)  NOT NULL,   -- same width as users.username (no FK; history-safe)
@@ -87,11 +94,11 @@ CREATE TABLE IF NOT EXISTS user_qris (
     updated_at   TIMESTAMP,
     CONSTRAINT uq_user_qris_user     UNIQUE (business_id, username),
     CONSTRAINT uq_user_qris_terminal UNIQUE (business_id, terminal_id),
-    CONSTRAINT fk_user_qris_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT fk_user_qris_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
-CREATE INDEX IF NOT EXISTS idx_user_qris_business ON user_qris (business_id);
+CREATE INDEX IF NOT EXISTS idx_user_qris_business ON core.user_qris (business_id);
 
-CREATE TABLE IF NOT EXISTS bejo_sessions (
+CREATE TABLE IF NOT EXISTS core.bejo_sessions (
     id             BIGSERIAL    PRIMARY KEY,
     username       VARCHAR(50)  NOT NULL,             -- no FK: username uniqueness is partial (active only)
     device_id      VARCHAR(255) NOT NULL,
@@ -104,7 +111,7 @@ CREATE TABLE IF NOT EXISTS bejo_sessions (
     CONSTRAINT uq_username_device UNIQUE (username, device_id)
 );
 
-CREATE TABLE IF NOT EXISTS bejo_history (
+CREATE TABLE IF NOT EXISTS commerce.bejo_history (
     id               BIGSERIAL    PRIMARY KEY,
     transaction_id   VARCHAR(255) NOT NULL,
     business_id      BIGINT       NOT NULL,
@@ -125,13 +132,14 @@ CREATE TABLE IF NOT EXISTS bejo_history (
     deleted_at       TIMESTAMP,
     scrape_date      TIMESTAMP,
     CONSTRAINT uq_transaction_id  UNIQUE (transaction_id),
-    CONSTRAINT uq_idempotency_key UNIQUE (idempotency_key),
-    CONSTRAINT fk_history_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT uq_idempotency_key UNIQUE (idempotency_key)
+    -- business_id is a soft reference to core.businesses(id): NO cross-schema FK (commerce -> core).
+    -- The app assigns business_id from BusinessContext; orphans are guarded in code + scripts/check-orphans.sql.
 );
 
 -- Products sold within a transaction (optional line items). Snapshots the product so
 -- history survives a later product edit/delete; product_id is a plain reference (no FK).
-CREATE TABLE IF NOT EXISTS transaction_items (
+CREATE TABLE IF NOT EXISTS commerce.transaction_items (
     id         BIGSERIAL    PRIMARY KEY,
     history_id BIGINT       NOT NULL,                 -- parent bejo_history.id
     product_id BIGINT,
@@ -140,15 +148,15 @@ CREATE TABLE IF NOT EXISTS transaction_items (
     quantity   INTEGER      NOT NULL,
     unit_price BIGINT       NOT NULL DEFAULT 0,       -- selling price per unit at sale time, IDR
     subtotal   BIGINT       NOT NULL DEFAULT 0,       -- unit_price * quantity, IDR
-    CONSTRAINT fk_transaction_item_history FOREIGN KEY (history_id) REFERENCES bejo_history (id)
+    CONSTRAINT fk_transaction_item_history FOREIGN KEY (history_id) REFERENCES commerce.bejo_history (id)
 );
 
-CREATE TABLE IF NOT EXISTS token_blacklist (
+CREATE TABLE IF NOT EXISTS core.token_blacklist (
     jti        VARCHAR(36) PRIMARY KEY,
     expires_at TIMESTAMP   NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS account_settings (
+CREATE TABLE IF NOT EXISTS core.account_settings (
     id                        BIGSERIAL   PRIMARY KEY,
     business_id               BIGINT      NOT NULL,
     monitored_apps            TEXT,
@@ -162,20 +170,20 @@ CREATE TABLE IF NOT EXISTS account_settings (
     team_management_enabled   BOOLEAN     NOT NULL DEFAULT FALSE,   -- activate employees + presence (super-admin-set)
     updated_at                TIMESTAMP,
     CONSTRAINT uq_account_settings_business UNIQUE (business_id),
-    CONSTRAINT fk_account_settings_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT fk_account_settings_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 
 -- ── Products, categories & inventory (per business) ───────────────────────────
-CREATE TABLE IF NOT EXISTS product_categories (
+CREATE TABLE IF NOT EXISTS commerce.product_categories (
     id          BIGSERIAL    PRIMARY KEY,
     business_id BIGINT       NOT NULL,
     name        VARCHAR(100) NOT NULL,
     created_at  TIMESTAMP    NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_category_name UNIQUE (business_id, name),
-    CONSTRAINT fk_category_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT uq_category_name UNIQUE (business_id, name)
+    -- business_id: soft reference to core.businesses(id), no cross-schema FK
 );
 
-CREATE TABLE IF NOT EXISTS products (
+CREATE TABLE IF NOT EXISTS commerce.products (
     id                BIGSERIAL     PRIMARY KEY,
     business_id       BIGINT        NOT NULL,
     sku               VARCHAR(64)   NOT NULL,
@@ -189,27 +197,27 @@ CREATE TABLE IF NOT EXISTS products (
     created_at        TIMESTAMP     NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMP,
     CONSTRAINT uq_product_sku      UNIQUE (business_id, sku),
-    CONSTRAINT fk_product_business FOREIGN KEY (business_id) REFERENCES businesses (id),
-    CONSTRAINT fk_product_category FOREIGN KEY (category_id) REFERENCES product_categories (id)
+    -- business_id: soft reference to core.businesses(id), no cross-schema FK. category_id stays FK (intra-commerce).
+    CONSTRAINT fk_product_category FOREIGN KEY (category_id) REFERENCES commerce.product_categories (id)
 );
 
 -- ── Stock mutations (restock / opname / product edit / sale) ─────────────────
 -- A stock mutation is any recorded change to product stock. type is one of PURCHASE
 -- (restock), ADJUSTMENT (stock opname), UPDATE (product edit changed stock), SALE (a
 -- transaction with items). total_amount is only meaningful for PURCHASE.
-CREATE TABLE IF NOT EXISTS stock_mutations (
+CREATE TABLE IF NOT EXISTS commerce.stock_mutations (
     id           BIGSERIAL   PRIMARY KEY,
     business_id  BIGINT      NOT NULL,
     type         VARCHAR(20) NOT NULL DEFAULT 'PURCHASE',
     total_amount BIGINT      NOT NULL DEFAULT 0,
     note         VARCHAR(255),
-    created_at   TIMESTAMP   NOT NULL DEFAULT NOW(),
-    CONSTRAINT fk_mutation_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    created_at   TIMESTAMP   NOT NULL DEFAULT NOW()
+    -- business_id: soft reference to core.businesses(id), no cross-schema FK
 );
 
 -- Line items snapshot the product (sku/name/price) so history survives even if the
 -- product is later edited or deleted; product_id is a plain reference (no FK).
-CREATE TABLE IF NOT EXISTS stock_mutation_items (
+CREATE TABLE IF NOT EXISTS commerce.stock_mutation_items (
     id              BIGSERIAL    PRIMARY KEY,
     mutation_id     BIGINT       NOT NULL,
     product_id      BIGINT,
@@ -220,7 +228,7 @@ CREATE TABLE IF NOT EXISTS stock_mutation_items (
     quantity_change INTEGER      NOT NULL DEFAULT 0,  -- new_stock - previous_stock (signed)
     unit_price      BIGINT,                           -- cost per unit (PURCHASE only), IDR
     subtotal        BIGINT,                           -- unit_price * quantity (PURCHASE only)
-    CONSTRAINT fk_mutation_item FOREIGN KEY (mutation_id) REFERENCES stock_mutations (id)
+    CONSTRAINT fk_mutation_item FOREIGN KEY (mutation_id) REFERENCES commerce.stock_mutations (id)
 );
 
 -- ── Employee daily presence (attendance) ─────────────────────────────────────
@@ -229,7 +237,7 @@ CREATE TABLE IF NOT EXISTS stock_mutation_items (
 -- the member so history survives a rename or soft-delete; user_id is a plain reference (no FK).
 -- The calendar day is always CAST(clock_datetime AS DATE) — there is no stored date column;
 -- response_datetime is set only when a member acknowledges their PING from the app.
-CREATE TABLE IF NOT EXISTS presences (
+CREATE TABLE IF NOT EXISTS core.presences (
     id                BIGSERIAL        PRIMARY KEY,
     business_id       BIGINT           NOT NULL,
     user_id           BIGINT           NOT NULL,
@@ -242,13 +250,13 @@ CREATE TABLE IF NOT EXISTS presences (
     note              VARCHAR(255),
     response_datetime TIMESTAMP,                   -- PING only: when the member tapped it
     created_at        TIMESTAMP        NOT NULL DEFAULT NOW(),
-    CONSTRAINT fk_presence_business FOREIGN KEY (business_id) REFERENCES businesses (id)
+    CONSTRAINT fk_presence_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 
 -- A member clocks in at most once and out at most once per calendar day (the day derived from
 -- clock_datetime, no stored column). PINGs excluded: the super admin may ping repeatedly.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_presence_clock_daily
-    ON presences (user_id, type, (CAST(clock_datetime AS DATE)))
+    ON core.presences (user_id, type, (CAST(clock_datetime AS DATE)))
     WHERE type IN ('CLOCK_IN', 'CLOCK_OUT');
 
 -- ── Voice-ad campaigns ───────────────────────────────────────────────────────
@@ -256,7 +264,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_presence_clock_daily
 -- name + integrity are kept here). A campaign fans out to devices as ad_deliveries — one per
 -- target device — which carry the lifecycle state (see constant/AdCampaignState) + a timestamp
 -- per step. target_username/target_device_id have no FK (same rationale as presences.user_id).
-CREATE TABLE IF NOT EXISTS ad_campaigns (
+CREATE TABLE IF NOT EXISTS ads.ad_campaigns (
     id                  BIGSERIAL     PRIMARY KEY,
     name                VARCHAR(255)  NOT NULL,
     brand               VARCHAR(255),
@@ -267,7 +275,7 @@ CREATE TABLE IF NOT EXISTS ad_campaigns (
     created_at          TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS ad_deliveries (
+CREATE TABLE IF NOT EXISTS ads.ad_deliveries (
     id                  BIGSERIAL     PRIMARY KEY,
     campaign_id         BIGINT        NOT NULL,
     business_id         BIGINT        NOT NULL,   -- snapshot of the target's business (survives member removal); the merchant ad-history scope
@@ -288,22 +296,22 @@ CREATE TABLE IF NOT EXISTS ad_deliveries (
     play_latitude       DOUBLE PRECISION,         -- where the ad played (may arrive later)
     play_longitude      DOUBLE PRECISION,
     created_at          TIMESTAMP     NOT NULL DEFAULT NOW(),
-    CONSTRAINT fk_ad_delivery_campaign FOREIGN KEY (campaign_id) REFERENCES ad_campaigns (id)
+    CONSTRAINT fk_ad_delivery_campaign FOREIGN KEY (campaign_id) REFERENCES ads.ad_campaigns (id)
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_bejo_history_business          ON bejo_history (business_id);
-CREATE INDEX IF NOT EXISTS idx_bejo_history_transaction_date  ON bejo_history (transaction_date DESC);
-CREATE INDEX IF NOT EXISTS idx_transaction_items_history      ON transaction_items (history_id);
-CREATE INDEX IF NOT EXISTS idx_bejo_sessions_device_id        ON bejo_sessions (device_id);
-CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at     ON token_blacklist (expires_at);
-CREATE INDEX IF NOT EXISTS idx_product_categories_business     ON product_categories (business_id);
-CREATE INDEX IF NOT EXISTS idx_products_business               ON products (business_id);
-CREATE INDEX IF NOT EXISTS idx_products_category               ON products (category_id);
-CREATE INDEX IF NOT EXISTS idx_stock_mutations_business             ON stock_mutations (business_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_stock_mutation_items_mutation        ON stock_mutation_items (mutation_id);
-CREATE INDEX IF NOT EXISTS idx_presences_business_clock  ON presences (business_id, clock_datetime DESC);
-CREATE INDEX IF NOT EXISTS idx_presences_user_clock      ON presences (business_id, user_id, clock_datetime DESC);
-CREATE INDEX IF NOT EXISTS idx_ad_deliveries_campaign    ON ad_deliveries (campaign_id);
-CREATE INDEX IF NOT EXISTS idx_ad_deliveries_target      ON ad_deliveries (target_username, state);
-CREATE INDEX IF NOT EXISTS idx_ad_deliveries_business     ON ad_deliveries (business_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_bejo_history_business          ON commerce.bejo_history (business_id);
+CREATE INDEX IF NOT EXISTS idx_bejo_history_transaction_date  ON commerce.bejo_history (transaction_date DESC);
+CREATE INDEX IF NOT EXISTS idx_transaction_items_history      ON commerce.transaction_items (history_id);
+CREATE INDEX IF NOT EXISTS idx_bejo_sessions_device_id        ON core.bejo_sessions (device_id);
+CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at     ON core.token_blacklist (expires_at);
+CREATE INDEX IF NOT EXISTS idx_product_categories_business     ON commerce.product_categories (business_id);
+CREATE INDEX IF NOT EXISTS idx_products_business               ON commerce.products (business_id);
+CREATE INDEX IF NOT EXISTS idx_products_category               ON commerce.products (category_id);
+CREATE INDEX IF NOT EXISTS idx_stock_mutations_business             ON commerce.stock_mutations (business_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_mutation_items_mutation        ON commerce.stock_mutation_items (mutation_id);
+CREATE INDEX IF NOT EXISTS idx_presences_business_clock  ON core.presences (business_id, clock_datetime DESC);
+CREATE INDEX IF NOT EXISTS idx_presences_user_clock      ON core.presences (business_id, user_id, clock_datetime DESC);
+CREATE INDEX IF NOT EXISTS idx_ad_deliveries_campaign    ON ads.ad_deliveries (campaign_id);
+CREATE INDEX IF NOT EXISTS idx_ad_deliveries_target      ON ads.ad_deliveries (target_username, state);
+CREATE INDEX IF NOT EXISTS idx_ad_deliveries_business     ON ads.ad_deliveries (business_id, id DESC);

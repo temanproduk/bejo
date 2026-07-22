@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * (≤500 KB decoded).
  */
 @Entity
-@Table(name = "products")
+@Table(name = "products", schema = "commerce")
 public class Product {
 
     @Id

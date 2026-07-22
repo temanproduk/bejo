@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * reuse (uniqueness is enforced only among active users).
  */
 @Entity
-@Table(name = "users")
+@Table(name = "users", schema = "core")
 public class User {
 
     @Id

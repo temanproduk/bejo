@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "token_blacklist")
+@Table(name = "token_blacklist", schema = "core")
 public class TokenBlacklist {
 
     @Id

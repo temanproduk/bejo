@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 
 /** A business's bank account details (one row per business). */
 @Entity
-@Table(name = "business_banks")
+@Table(name = "business_banks", schema = "core")
 public class BusinessBank {
 
     @Id
