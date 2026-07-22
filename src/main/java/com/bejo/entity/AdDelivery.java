@@ -28,8 +28,18 @@ public class AdDelivery {
     @Column(name = "business_id", nullable = false)
     private Long businessId;
 
+    // The target user, snapshotted at send time (username + name + the stable id). Kept on the row
+    // so the history shows who the ad went to even after the member is removed or renamed — and,
+    // because the id never changes (unlike a released-and-reused username), userActive resolves to
+    // the right person. No FK, same rationale as presences.user_id.
+    @Column(name = "target_user_id", nullable = false)
+    private Long targetUserId;
+
     @Column(name = "target_username", nullable = false, length = 50)
     private String targetUsername;
+
+    @Column(name = "target_name", nullable = false, length = 100)
+    private String targetName;
 
     @Column(name = "target_device_id", nullable = false)
     private String targetDeviceId;
@@ -86,8 +96,12 @@ public class AdDelivery {
     public void setCampaignId(Long campaignId) { this.campaignId = campaignId; }
     public Long getBusinessId() { return businessId; }
     public void setBusinessId(Long businessId) { this.businessId = businessId; }
+    public Long getTargetUserId() { return targetUserId; }
+    public void setTargetUserId(Long targetUserId) { this.targetUserId = targetUserId; }
     public String getTargetUsername() { return targetUsername; }
     public void setTargetUsername(String targetUsername) { this.targetUsername = targetUsername; }
+    public String getTargetName() { return targetName; }
+    public void setTargetName(String targetName) { this.targetName = targetName; }
     public String getTargetDeviceId() { return targetDeviceId; }
     public void setTargetDeviceId(String targetDeviceId) { this.targetDeviceId = targetDeviceId; }
     public String getState() { return state; }

@@ -2533,7 +2533,7 @@
                 }
               ]
             },
-            "description": "Merchant-facing ad history (normal JWT, super admin only) — every voice-ad delivery to this business's devices (this account + its sub-accounts), all states, newest first. Scoped by the business_id snapshotted on each delivery, so a delivery to a member removed since still appears. Each row flattens the campaign name/brand onto the delivery's status + played/finished time + play location.\n\nPaginated: optional page (default 1) + size (default 50, max 200)."
+            "description": "Merchant-facing ad history (normal JWT, super admin only) — every voice-ad delivery to this business's devices (this account + its sub-accounts), all states, newest first. Scoped by the business_id snapshotted on each delivery, so a delivery to a member removed since still appears. Each row identifies who it went to (targetUsername + targetName, both snapshotted; userActive is false once that member has left) and flattens the campaign name/brand onto the delivery's status + played/finished time + play location.\n\nPaginated: optional page (default 1) + size (default 50, max 200)."
           }
         },
         {

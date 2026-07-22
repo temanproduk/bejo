@@ -11,6 +11,7 @@ import com.bejo.dto.response.AdHistoryResponseDto;
 import com.bejo.entity.AdCampaign;
 import com.bejo.entity.AdDelivery;
 import com.bejo.entity.Session;
+import com.bejo.entity.User;
 import com.bejo.exception.ForbiddenException;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.push.AdsPushPayload;
@@ -37,6 +38,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -133,9 +135,9 @@ public class AdsCampaignService {
 
         // Target must be an active user with a registered device that can actually receive a
         // push — fail the typo (and a device that never registered its FCM token) now, rather
-        // than pushing into the void at prepare/play time. Resolve the target's business here so
-        // it can be snapshotted on the delivery (the merchant ad-history scope).
-        Long targetBusinessId = userRepository.findBusinessIdByUsername(request.targetUsername())
+        // than pushing into the void at prepare/play time. Load the target so its business + id +
+        // name can be snapshotted on the delivery (the merchant ad-history scope + who it went to).
+        User target = userRepository.findByUsernameAndDeletedAtIsNull(request.targetUsername())
                 .orElseThrow(() -> new IllegalArgumentException("Target pengguna tidak ditemukan"));
         Session session = sessionRepository.findByUsernameAndDeviceId(request.targetUsername(), request.targetDeviceId())
                 .orElseThrow(() -> new IllegalArgumentException("Perangkat target tidak ditemukan"));
@@ -165,8 +167,10 @@ public class AdsCampaignService {
 
         AdDelivery delivery = new AdDelivery();
         delivery.setCampaignId(campaign.getId());
-        delivery.setBusinessId(targetBusinessId);
+        delivery.setBusinessId(target.getBusinessId());
+        delivery.setTargetUserId(target.getId());
         delivery.setTargetUsername(request.targetUsername());
+        delivery.setTargetName(target.getName());
         delivery.setTargetDeviceId(request.targetDeviceId());
         delivery.setState(AdCampaignState.CREATED);
         deliveryRepository.save(delivery);
@@ -371,7 +375,14 @@ public class AdsCampaignService {
         List<Long> campaignIds = page.getContent().stream().map(AdDelivery::getCampaignId).distinct().toList();
         Map<Long, AdCampaign> campaigns = new HashMap<>();
         for (AdCampaign c : campaignRepository.findAllById(campaignIds)) campaigns.put(c.getId(), c);
-        return page.map(d -> toHistoryDto(d, campaigns.get(d.getCampaignId())));
+
+        // Which target users are still with the business (one query, no N+1) — keyed on the stable
+        // snapshotted id, so a removed member reads as inactive even if their username was reused.
+        List<Long> userIds = page.getContent().stream().map(AdDelivery::getTargetUserId).distinct().toList();
+        Set<Long> activeUserIds = new HashSet<>(userRepository.findActiveIdsByIdIn(userIds));
+
+        return page.map(d -> toHistoryDto(d, campaigns.get(d.getCampaignId()),
+                activeUserIds.contains(d.getTargetUserId())));
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -474,10 +485,11 @@ public class AdsCampaignService {
                 c.getAudioSha256(), c.getAudioSizeBytes(), state, c.getCreatedAt(), deliveryDtos);
     }
 
-    private AdHistoryResponseDto toHistoryDto(AdDelivery d, AdCampaign c) {
+    private AdHistoryResponseDto toHistoryDto(AdDelivery d, AdCampaign c, boolean userActive) {
         return new AdHistoryResponseDto(d.getId(), d.getCampaignId(),
                 c != null ? c.getName() : null, c != null ? c.getBrand() : null,
-                d.getTargetUsername(), d.getState(), d.getErrorReason(),
+                d.getTargetUsername(), d.getTargetName(), userActive,
+                d.getState(), d.getErrorReason(),
                 d.getPlayedAt(), d.getFinishedAt(), d.getPlayLatitude(), d.getPlayLongitude(),
                 d.getCreatedAt());
     }

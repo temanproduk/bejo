@@ -271,7 +271,9 @@ CREATE TABLE IF NOT EXISTS ad_deliveries (
     id                  BIGSERIAL     PRIMARY KEY,
     campaign_id         BIGINT        NOT NULL,
     business_id         BIGINT        NOT NULL,   -- snapshot of the target's business (survives member removal); the merchant ad-history scope
+    target_user_id      BIGINT        NOT NULL,   -- snapshot of the target user's id (no FK — like presences.user_id); resolves userActive + survives username reuse
     target_username     VARCHAR(50)   NOT NULL,   -- same width as users.username
+    target_name         VARCHAR(100)  NOT NULL,   -- snapshot of the target user's display name (same width as users.name); history reads it even after removal/rename
     target_device_id    VARCHAR(255)  NOT NULL,
     state               VARCHAR(20)   NOT NULL DEFAULT 'CREATED',
     error_reason        VARCHAR(500),

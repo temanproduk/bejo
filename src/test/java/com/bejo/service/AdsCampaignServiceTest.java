@@ -8,6 +8,7 @@ import com.bejo.dto.request.CreateAdCampaignRequestDto;
 import com.bejo.entity.AdCampaign;
 import com.bejo.entity.AdDelivery;
 import com.bejo.entity.Session;
+import com.bejo.entity.User;
 import com.bejo.exception.ForbiddenException;
 import com.bejo.repository.AdCampaignRepository;
 import com.bejo.repository.AdDeliveryRepository;
@@ -46,6 +47,8 @@ class AdsCampaignServiceTest {
     private static final Long DELIVERY_ID = 10L;
     private static final Long CAMPAIGN_ID = 5L;
     private static final Long BIZ = 1L;
+    private static final Long USER_ID = 42L;
+    private static final String USER_NAME = "Budi";
 
     @Mock private AdCampaignRepository campaignRepository;
     @Mock private AdDeliveryRepository deliveryRepository;
@@ -82,10 +85,22 @@ class AdsCampaignServiceTest {
         AdDelivery d = new AdDelivery();
         ReflectionTestUtils.setField(d, "id", DELIVERY_ID);
         d.setCampaignId(CAMPAIGN_ID);
+        d.setBusinessId(BIZ);
+        d.setTargetUserId(USER_ID);
         d.setTargetUsername(USER);
+        d.setTargetName(USER_NAME);
         d.setTargetDeviceId(DEVICE);
         d.setState(state);
         return d;
+    }
+
+    private User targetUser() {
+        User u = new User();
+        ReflectionTestUtils.setField(u, "id", USER_ID);
+        u.setUsername(USER);
+        u.setName(USER_NAME);
+        u.setBusinessId(BIZ);
+        return u;
     }
 
     private AdCampaign campaign(String sha, long size) {
@@ -103,7 +118,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createUploadsAudioAndSavesCampaignAndDelivery() {
-        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.of(BIZ));
+        when(userRepository.findByUsernameAndDeletedAtIsNull(USER)).thenReturn(Optional.of(targetUser()));
         when(sessionRepository.findByUsernameAndDeviceId(USER, DEVICE)).thenReturn(Optional.of(sessionWithToken()));
         when(audioInspector.durationSeconds(any(), eq("mp3"))).thenReturn(5);
 
@@ -113,10 +128,12 @@ class AdsCampaignServiceTest {
         assertThat(dto.audioSizeBytes()).isEqualTo(5L);
         verify(audioStorage).put(any(), any(), eq("audio/mpeg"));
         verify(campaignRepository).save(any(AdCampaign.class));
-        // The delivery snapshots the target's business (the merchant ad-history scope)
+        // The delivery snapshots the target (business scope + who it went to — survives removal)
         ArgumentCaptor<AdDelivery> saved = ArgumentCaptor.forClass(AdDelivery.class);
         verify(deliveryRepository).save(saved.capture());
         assertThat(saved.getValue().getBusinessId()).isEqualTo(BIZ);
+        assertThat(saved.getValue().getTargetUserId()).isEqualTo(USER_ID);
+        assertThat(saved.getValue().getTargetName()).isEqualTo(USER_NAME);
     }
 
     @Test
@@ -140,7 +157,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createRejectsUnknownTargetUser() {
-        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameAndDeletedAtIsNull(USER)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.create(createRequest("audio/mpeg", "x".getBytes())))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Target pengguna");
@@ -149,7 +166,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createRejectsAudioLongerThanTheDurationCap() {
-        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.of(BIZ));
+        when(userRepository.findByUsernameAndDeletedAtIsNull(USER)).thenReturn(Optional.of(targetUser()));
         when(sessionRepository.findByUsernameAndDeviceId(USER, DEVICE)).thenReturn(Optional.of(sessionWithToken()));
         when(audioInspector.durationSeconds(any(), eq("mp3"))).thenReturn(15);
 
@@ -161,7 +178,7 @@ class AdsCampaignServiceTest {
 
     @Test
     void createRejectsDeviceWithoutPushToken() {
-        when(userRepository.findBusinessIdByUsername(USER)).thenReturn(Optional.of(BIZ));
+        when(userRepository.findByUsernameAndDeletedAtIsNull(USER)).thenReturn(Optional.of(targetUser()));
         when(sessionRepository.findByUsernameAndDeviceId(USER, DEVICE)).thenReturn(Optional.of(new Session())); // no token
 
         assertThatThrownBy(() -> service.create(createRequest("audio/mpeg", "hello".getBytes())))
@@ -330,6 +347,7 @@ class AdsCampaignServiceTest {
         AdCampaign campaign = campaign("sha", 100L);
         campaign.setBrand("Kopi Nusantara");
         when(campaignRepository.findAllById(List.of(CAMPAIGN_ID))).thenReturn(List.of(campaign));
+        when(userRepository.findActiveIdsByIdIn(List.of(USER_ID))).thenReturn(List.of(USER_ID)); // still active
 
         var page = service.history(USER, pageable);
 
@@ -339,7 +357,25 @@ class AdsCampaignServiceTest {
             assertThat(row.state()).isEqualTo(AdCampaignState.PLAYED);
             assertThat(row.playedAt()).isNotNull();
             assertThat(row.targetUsername()).isEqualTo(USER);
+            assertThat(row.targetName()).isEqualTo(USER_NAME);   // who it went to (snapshotted)
+            assertThat(row.userActive()).isTrue();
         });
+    }
+
+    @Test
+    void historyFlagsARemovedTargetAsInactiveButStillNamesThem() {
+        Pageable pageable = PageRequest.of(0, 50);
+        when(businessContext.requireSuperAdminBusinessId(USER)).thenReturn(BIZ);
+        when(deliveryRepository.findByBusinessIdOrderByIdDesc(BIZ, pageable))
+                .thenReturn(new PageImpl<>(List.of(delivery(AdCampaignState.FINISHED)), pageable, 1));
+        when(campaignRepository.findAllById(List.of(CAMPAIGN_ID))).thenReturn(List.of(campaign("sha", 100L)));
+        when(userRepository.findActiveIdsByIdIn(List.of(USER_ID))).thenReturn(List.of()); // member removed since
+
+        var row = service.history(USER, pageable).getContent().get(0);
+
+        assertThat(row.targetName()).isEqualTo(USER_NAME);   // still identifiable after removal
+        assertThat(row.targetUsername()).isEqualTo(USER);
+        assertThat(row.userActive()).isFalse();
     }
 
     @Test

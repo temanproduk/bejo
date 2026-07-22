@@ -8,6 +8,10 @@ import java.time.LocalDateTime;
  * reads the whole business's history), so it carries only what a merchant cares about — which ad,
  * to whom, its status, and when it played — not the internal integrity/step fields the delivery
  * lifecycle uses.
+ *
+ * <p>The target user is identified by both {@code targetUsername} and {@code targetName} (both
+ * snapshotted on the delivery, so they read correctly even after the member is removed/renamed);
+ * {@code userActive} is resolved on read and is false once that member has left the business.
  */
 public record AdHistoryResponseDto(
         Long id,
@@ -15,6 +19,8 @@ public record AdHistoryResponseDto(
         String campaignName,
         String brand,
         String targetUsername,
+        String targetName,
+        boolean userActive,
         String state,
         String errorReason,
         LocalDateTime playedAt,
