@@ -92,6 +92,11 @@ app:
     # Log the request body on 4xx/5xx (secrets masked, capped). Toggle + cap here.
     log-body-on-error: ${REQUEST_LOG_BODY_ON_ERROR:true}
     max-body-length: ${REQUEST_LOG_MAX_BODY_LENGTH:2048}
+  push:
+    # In-memory FCM delivery queue: worker threads + bounded queue (CallerRunsPolicy back-pressure).
+    queue:
+      threads: ${PUSH_QUEUE_THREADS:4}
+      capacity: ${PUSH_QUEUE_CAPACITY:1000}
   ads:
     # Cloud Storage bucket holding campaign audio (created + locked down by scripts/init-gcp.sh).
     gcs-bucket: ${ADS_GCS_BUCKET:}

@@ -46,7 +46,7 @@ public class QrisService {
         // otherwise fall back to the shared business QRIS below.
         UserQris own = userQrisRepository.findByBusinessIdAndUsername(businessId, username).orElse(null);
         if (own != null) {
-            log.info("[QRIS] Serving per-user QRIS for username={} terminalId={}", username, own.getTerminalId());
+            log.debug("[QRIS] Serving per-user QRIS for username={} terminalId={}", username, own.getTerminalId());
             return new QrisResponseDto(QrisType.UPLOADED, own.getQrisImage(),
                     business.getName(), business.getAddress(), business.getNmid());
         }
@@ -55,7 +55,7 @@ public class QrisService {
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
         if (qris.getQrisImage() != null) {
-            log.info("[QRIS] Serving UPLOADED image for businessId={}", businessId);
+            log.debug("[QRIS] Serving UPLOADED image for businessId={}", businessId);
             return new QrisResponseDto(QrisType.UPLOADED, qris.getQrisImage(),
                     business.getName(), business.getAddress(), business.getNmid());
         }
@@ -64,7 +64,7 @@ public class QrisService {
         // (e.g. a freshly registered business that hasn't uploaded a QRIS yet), in
         // which case the client renders an empty state instead of a placeholder.
         String initialImage = qris.getInitialQrisImage();
-        log.info("[QRIS] Serving MANAGED image (present={}) for businessId={}", initialImage != null, businessId);
+        log.debug("[QRIS] Serving MANAGED image (present={}) for businessId={}", initialImage != null, businessId);
         return new QrisResponseDto(QrisType.MANAGED, initialImage,
                 business.getName(), business.getAddress(), business.getNmid());
     }

@@ -1269,6 +1269,31 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void selfServiceAccountUpgradesToManaged() throws Exception {
+        String token = registerAndLogin("upg_user1");
+
+        // Both merchantPan and nmid are required
+        mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
+                        .content("{\"merchantPan\":\"MPAN-UPG1\"}"))
+                .andExpect(status().isBadRequest());
+
+        // Valid upgrade → 200, NMID now set on the business
+        mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
+                        .content("{\"merchantPan\":\"MPAN-UPG1\",\"nmid\":\"ID-UPG1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.nmid").value("ID-UPG1"));
+
+        // Upgrading again is rejected — the account is already managed
+        mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
+                        .content("{\"merchantPan\":\"MPAN-UPG1\",\"nmid\":\"ID-UPG1\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Akun sudah dikelola Bejo"));
+    }
+
+    @Test
     void getMeReturnsOwnAccountBundle() throws Exception {
         String token = registerAndLogin("me_user1");
 

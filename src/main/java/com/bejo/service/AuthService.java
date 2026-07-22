@@ -60,7 +60,7 @@ public class AuthService {
 
     @Transactional
     public LoginResponseDto login(LoginRequestDto request) {
-        log.info("[LOGIN] username={} deviceId={}", request.username(), request.deviceId());
+        log.debug("[LOGIN] username={} deviceId={}", request.username(), request.deviceId());
 
         User user = userRepository.findByUsernameAndDeletedAtIsNull(request.username())
                 .orElseThrow(() -> {

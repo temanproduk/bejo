@@ -86,14 +86,12 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
                     request.getMethod(), uri, query != null ? "?" + query : "", status, duration);
 
             if (isCallback && status >= 400) {
-                // Error: full request dump (every header + the whole body) at WARN
+                // Error only: full request dump (every header + the whole body) at WARN, to debug a
+                // rejected callback. The success path is logged by QrisCallbackService (the key
+                // fields), so no verbose body dump is needed there.
                 log.warn("[CALLBACK-REQ] {} {} status={} headers=[{}] body={}",
                         request.getMethod(), uri, status,
                         headers(request), callbackBody((CachedBodyHttpServletRequest) req));
-            } else if (isCallback && log.isDebugEnabled()) {
-                // Success: just the body, at DEBUG — quiet in prod (INFO), but bump this logger to
-                // DEBUG to inspect the provider's real payloads (terminal id, merchant pan, …).
-                log.debug("[CALLBACK-REQ] body={}", callbackBody((CachedBodyHttpServletRequest) req));
             } else if (req instanceof ContentCachingRequestWrapper wrapper && status >= 400) {
                 String body = extractBody(wrapper);
                 if (!body.isBlank()) {

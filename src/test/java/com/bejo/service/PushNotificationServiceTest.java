@@ -2,6 +2,9 @@ package com.bejo.service;
 
 import com.bejo.constant.PushType;
 import com.bejo.entity.Session;
+import com.bejo.push.PushDeliveryQueue;
+import com.bejo.push.PushJobSender;
+import com.bejo.push.PushTokenMaintenance;
 import com.bejo.push.SimplePushPayload;
 import com.bejo.repository.SessionRepository;
 import com.bejo.repository.UserRepository;
@@ -32,7 +35,11 @@ class PushNotificationServiceTest {
     @Mock private UserRepository userRepository;
 
     private PushNotificationService service() {
-        return new PushNotificationService(sessionRepository, userRepository, new SimpleMeterRegistry());
+        PushJobSender sender = new PushJobSender(new PushTokenMaintenance(sessionRepository), new SimpleMeterRegistry());
+        // Synchronous queue (the interface is one method) so sends run inline and the wire-format
+        // assertions are deterministic.
+        PushDeliveryQueue syncQueue = sender::deliver;
+        return new PushNotificationService(sessionRepository, userRepository, syncQueue, sender);
     }
 
     @Test

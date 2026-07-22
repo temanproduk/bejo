@@ -7,6 +7,7 @@ import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.request.UpdateBankRequestDto;
 import com.bejo.dto.request.UpdateBusinessRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
+import com.bejo.dto.request.UpgradeAccountRequestDto;
 import com.bejo.dto.response.BankResponseDto;
 import com.bejo.dto.response.BusinessResponseDto;
 import com.bejo.dto.response.MeResponseDto;
@@ -14,6 +15,7 @@ import com.bejo.dto.response.ProfilePictureResponseDto;
 import com.bejo.entity.Business;
 import com.bejo.entity.BusinessBank;
 import com.bejo.entity.User;
+import com.bejo.exception.ForbiddenException;
 import com.bejo.exception.ResourceNotFoundException;
 import com.bejo.repository.BusinessBankRepository;
 import com.bejo.repository.BusinessRepository;
@@ -164,6 +166,35 @@ public class UserService {
         business.setNmid(request.nmid());
         businessRepository.save(business);
         log.info("[BUSINESS] Updated businessId={} by username={}", business.getId(), username);
+    }
+
+    /**
+     * Upgrade a self-service account to be <b>managed by Bejo</b>: sets the business's NMID +
+     * merchant PAN (the QRIS-callback routing credentials, both required) and flips the account
+     * type to {@code MANAGED}. Super admin only; a `409` if the NMID/merchant PAN already belong to
+     * another business. Returns the refreshed account bundle.
+     */
+    @Transactional
+    public MeResponseDto upgradeToManaged(String username, UpgradeAccountRequestDto request) {
+        User user = businessContext.requireUser(username);
+        if (!user.isSuperAdmin()) {
+            throw new ForbiddenException("Hanya super admin yang dapat meningkatkan akun");
+        }
+        if (AccountType.MANAGED.equals(user.getAccountType())) {
+            throw new IllegalArgumentException("Akun sudah dikelola Bejo");
+        }
+        Business business = businessRepository.findById(user.getBusinessId())
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+        String nmid = request.nmid().trim();
+        String merchantPan = request.merchantPan().trim();
+        business.setNmid(nmid);
+        business.setInitialNmid(nmid);
+        business.setMerchantPan(merchantPan);
+        businessRepository.save(business);
+        user.setAccountType(AccountType.MANAGED);
+        userRepository.save(user);
+        log.info("[UPGRADE] Account '{}' (businessId={}) upgraded to MANAGED", username, business.getId());
+        return getMe(username);
     }
 
     @Transactional

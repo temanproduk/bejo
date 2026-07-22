@@ -83,10 +83,12 @@ public class QrisCallbackService {
     @Transactional
     public QrMpmNotifyResponseDto processNotify(QrMpmNotifyRequestDto req, String xTimestamp) {
         callbackCounter.increment();
-        log.info("[CALLBACK] status={} amount={}",
-                req.latestTransactionStatus(), req.amount() != null ? req.amount().value() : null);
-
         QrMpmNotifyRequestDto.AdditionalInfo info = req.additionalInfo();
+        log.debug("[CALLBACK] Received status={} amount={} merchantPan={} terminalId={} providerTxnId={}",
+                req.latestTransactionStatus(), req.amount() != null ? req.amount().value() : null,
+                info != null ? info.merchantPan() : null, info != null ? info.terminalId() : null,
+                info != null ? info.transactionId() : null);
+
         // Route by merchant PAN (the callback carries no NMID); fall back to the default account.
         Business business = resolveBusiness(info != null ? info.merchantPan() : null);
         Long businessId = business.getId();
@@ -119,19 +121,20 @@ public class QrisCallbackService {
         t.setScrapeDate(LocalDateTime.now());
         t.setInfo(toJson(req));
         transactionRepository.save(t);
-        log.info("[CALLBACK] Recorded transactionId={} businessId={} amount={} status={}",
-                transactionId, businessId, t.getAmount(), status);
+        log.info("[CALLBACK] Recorded txnId={} businessId={} amount={} status={} merchantPan={} providerTxnId={}",
+                transactionId, businessId, t.getAmount(), status,
+                info != null ? info.merchantPan() : null, info != null ? info.transactionId() : null);
 
         // Best-effort push to the terminal's recipients — must never fail the callback.
         try {
             String terminalId = info != null ? info.terminalId() : null;
             List<String> recipients = resolveRecipients(businessId, terminalId);
-            log.info("[CALLBACK] Routing push to {} recipient(s) for businessId={} terminalId={}",
+            log.debug("[CALLBACK] Routing push to {} recipient(s) for businessId={} terminalId={}",
                     recipients.size(), businessId, terminalId);
             pushNotificationService.sendToUsernames(recipients, buildPushData(t, businessName));
         } catch (RuntimeException e) {
-            log.error("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
-                    transactionId, e.getMessage(), e);
+            log.warn("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
+                    transactionId, e.getMessage());
         }
 
         return response(t.getId(), req, amount, tip);
@@ -206,7 +209,7 @@ public class QrisCallbackService {
         try {
             return new BigDecimal(value);
         } catch (NumberFormatException e) {
-            log.error("[CALLBACK] Invalid amount value '{}', using 0", value);
+            log.warn("[CALLBACK] Invalid amount value '{}', using 0", value);
             return BigDecimal.ZERO;
         }
     }

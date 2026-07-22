@@ -865,6 +865,14 @@ Reverts `businessName`, `businessAddress`, and `nmid` to registration values, an
 }
 ```
 
+#### `POST /api/users/me/upgrade` — Upgrade to a Bejo-managed account (super admin)
+
+Upgrades a **self-service** account to **managed by Bejo**: sets the business's `merchantPan` + `nmid` (the QRIS-callback routing credentials, **both required** — a missing/blank value is `400`) and flips the account's `account_type` to `MANAGED`. Super admin only. Returns the refreshed `/me` bundle.
+
+**Request body:** `{ "merchantPan": "9360082232606290012", "nmid": "ID1026540778978" }`
+
+**Errors:** `400 merchantPan wajib diisi` / `400 nmid wajib diisi`, `400 Akun sudah dikelola Bejo` (already managed), `409 NMID sudah digunakan oleh bisnis lain` / `409 Merchant PAN sudah digunakan oleh bisnis lain`.
+
 **Errors:** `400 Data bisnis awal tidak tersedia untuk direset` (no initial values stored)
 
 ---

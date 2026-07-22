@@ -63,7 +63,7 @@ public class AccountSettingsService {
     @Transactional(readOnly = true)
     public AccountSettingsResponseDto getSettings(String username) {
         Long businessId = businessContext.requireBusinessId(username);
-        log.info("[ACCOUNT-SETTINGS] Get for businessId={}", businessId);
+        log.debug("[ACCOUNT-SETTINGS] Get for businessId={}", businessId);
         boolean teamManagement = teamManagementEffective(businessId, null);
         return repository.findByBusinessId(businessId)
                 .map(s -> toResponse(s, teamManagement))

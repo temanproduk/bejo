@@ -42,6 +42,15 @@ public interface SessionRepository extends JpaRepository<Session, Long> {
                         @Param("pushToken") String pushToken,
                         @Param("now") LocalDateTime now);
 
+    /**
+     * Clear a dead FCM token, but only if it's still the same one FCM rejected — a conditional
+     * update so a login that rotated the token in the meantime (from another thread) isn't clobbered
+     * back to null. Returns rows changed (0 if the token had already moved on).
+     */
+    @Modifying
+    @Query("UPDATE Session s SET s.pushToken = null WHERE s.id = :id AND s.pushToken = :staleToken")
+    int clearPushTokenIfMatches(@Param("id") Long id, @Param("staleToken") String staleToken);
+
     // Logout a device: drop its FCM token and mark the session logged out
     @Modifying
     @Query("UPDATE Session s SET s.pushToken = null, s.loginStatus = false, s.lastUpdated = :now WHERE s.username = :username AND s.deviceId = :deviceId")

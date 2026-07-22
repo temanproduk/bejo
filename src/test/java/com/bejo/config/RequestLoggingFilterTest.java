@@ -142,22 +142,11 @@ class RequestLoggingFilterTest {
     }
 
     @Test
-    void callbackSuccessLogsBodyOnlyAtDebug() throws Exception {
-        // Success dumps just the body, and only at DEBUG (quiet in prod; bump the logger to inspect).
+    void callbackSuccessDoesNotDump() throws Exception {
+        // A successful callback produces no [CALLBACK-REQ] dump (the service logs its key fields);
+        // only an error (below) dumps the full request.
         logbackLogger.setLevel(Level.DEBUG);
         MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{\"foo\":\"bar\"}");
-
-        filter.doFilter(req, new MockHttpServletResponse(), chainReturning(200));
-
-        assertThat(callbackLogs())
-                .anyMatch(l -> l.startsWith("[CALLBACK-REQ] body=") && l.contains("\"foo\":\"bar\""));
-    }
-
-    @Test
-    void callbackSuccessIsQuietAtInfo() throws Exception {
-        // At INFO (prod default), a successful callback produces no [CALLBACK-REQ] dump.
-        logbackLogger.setLevel(Level.INFO);
-        MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{}");
 
         filter.doFilter(req, new MockHttpServletResponse(), chainReturning(200));
 

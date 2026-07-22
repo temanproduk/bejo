@@ -117,6 +117,10 @@ public class GlobalExceptionHandler {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("NMID sudah digunakan oleh bisnis lain"));
             }
+            if ("uq_business_merchant_pan".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponseDto.error("Merchant PAN sudah digunakan oleh bisnis lain"));
+            }
             if ("uq_qris_code".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("QRIS code sudah digunakan"));

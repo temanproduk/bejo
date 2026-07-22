@@ -5,6 +5,7 @@ import com.bejo.dto.request.RegisterRequestDto;
 import com.bejo.dto.request.UpdateBankRequestDto;
 import com.bejo.dto.request.UpdateBusinessRequestDto;
 import com.bejo.dto.request.UpdateProfileRequestDto;
+import com.bejo.dto.request.UpgradeAccountRequestDto;
 import com.bejo.dto.response.ApiResponseDto;
 import com.bejo.dto.response.BankResponseDto;
 import com.bejo.dto.response.BusinessResponseDto;
@@ -77,6 +78,15 @@ public class UserController {
     public ResponseEntity<ApiResponseDto<BusinessResponseDto>> resetBusiness(Authentication authentication) {
         BusinessResponseDto data = userService.resetBusiness(authentication.getName());
         return ResponseEntity.ok(ApiResponseDto.success("Info bisnis dikembalikan ke awal", data));
+    }
+
+    // Upgrade a self-service account to be managed by Bejo — requires merchant PAN + NMID.
+    @PostMapping("/me/upgrade")
+    public ResponseEntity<ApiResponseDto<MeResponseDto>> upgradeToManaged(
+            @Valid @RequestBody UpgradeAccountRequestDto request,
+            Authentication authentication) {
+        MeResponseDto data = userService.upgradeToManaged(authentication.getName(), request);
+        return ResponseEntity.ok(ApiResponseDto.success("Akun berhasil ditingkatkan ke Managed", data));
     }
 
     @PatchMapping("/me/password")

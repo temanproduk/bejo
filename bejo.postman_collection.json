@@ -1090,6 +1090,48 @@
             },
             "description": "Clears the BUSINESS picture (sets it back to null). Idempotent — succeeds whether or not a picture was set. NOTE: super admin only — a plain member gets 403."
           }
+        },
+        {
+          "name": "Upgrade to Managed (super admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantPan\": \"9360082232606290012\",\n  \"nmid\": \"ID1026540778978\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/me/upgrade",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "me",
+                "upgrade"
+              ]
+            },
+            "description": "Upgrade a self-service account to managed by Bejo. Requires merchantPan + nmid (both mandatory -> 400 if missing). Super admin only. 400 if already managed; 409 if the NMID/merchant PAN belongs to another business."
+          }
         }
       ]
     },
