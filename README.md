@@ -1035,47 +1035,6 @@ Partial update — any subset of `sku`, `name`, `shortDescription`, `categoryId`
 
 Hard-deletes the product. **Success — HTTP 200:** `{ "status": 1, "message": "Produk berhasil dihapus" }`
 
-#### `POST /api/stock-mutations/adjustments` — Bulk stock adjustment (stock opname)
-
-Sets several products' stock to their **newly counted quantities** at once — for stock opname, when the physical count differs from the recorded stock. **Atomic:** if any line references a product the merchant doesn't own, the whole adjustment is rejected and no stock changes. Returns a **variance report**, and records an `ADJUSTMENT` entry in the [stock-mutation history](#stock-mutations) (with the note, if given).
-
-**Request body**
-
-| Field | Required | Description |
-|---|---|---|
-| `note` | no | Free text stored on the resulting stock mutation, max 255 chars |
-| `items` | yes | 1–500 lines |
-| `items[].productId` | yes | One of the merchant's products |
-| `items[].stock` | yes | New absolute counted quantity, ≥ 0 |
-
-```json
-{
-  "note": "opname sore",
-  "items": [
-    { "productId": 12, "stock": 8 },
-    { "productId": 15, "stock": 12 }
-  ]
-}
-```
-
-**Success — HTTP 200** — each product's stock is set, with the variance (`difference = newStock − previousStock`, negative = shrinkage):
-
-```json
-{
-  "status": 1,
-  "message": "Penyesuaian stok berhasil",
-  "data": {
-    "total": 2,
-    "items": [
-      { "productId": 12, "sku": "KOPI-01", "name": "Kopi Susu", "previousStock": 10, "newStock": 8,  "difference": -2 },
-      { "productId": 15, "sku": "TEH-01",  "name": "Teh Manis",  "previousStock": 5,  "newStock": 12, "difference": 7 }
-    ]
-  }
-}
-```
-
-**Errors:** `400 items tidak boleh kosong`, `400 stock tidak boleh negatif`, `400 note maksimal 255 karakter`, `400 Produk tidak ditemukan: <id>`
-
 ---
 
 ### Stock mutations
@@ -1088,7 +1047,7 @@ The unified **stock-change history**. Every change to a product's stock is recor
 | `ADJUSTMENT` | Stock opname via `POST /api/stock-mutations/adjustments` | no |
 | `UPDATE` | A `PATCH /api/products/{id}` that changed `stock` | no |
 
-`ADJUSTMENT` and `UPDATE` mutations are created automatically by those product endpoints; this resource is where you **record a purchase** and **read the whole history**. All endpoints require JWT, scoped to the merchant. Each line snapshots the product and the stock before/after (`previousStock` → `newStock`, `quantityChange`).
+`UPDATE` mutations are created automatically by a product edit (`PATCH /api/products/{id}` that changes `stock`); `PURCHASE` (restock) and `ADJUSTMENT` (stock opname) are **recorded through this resource**, which also **reads the whole history**. All endpoints require JWT, scoped to the merchant. Each line snapshots the product and the stock before/after (`previousStock` → `newStock`, `quantityChange`).
 
 #### `POST /api/stock-mutations` — Record a purchase (restock)
 
@@ -1131,6 +1090,47 @@ Buying stock from a supplier: **raises the stock of several products at once** (
 ```
 
 **Errors:** `400 items tidak boleh kosong`, `400 quantity harus lebih dari 0`, `400 Produk tidak ditemukan: <id>`
+
+#### `POST /api/stock-mutations/adjustments` — Bulk stock adjustment (stock opname)
+
+Sets several products' stock to their **newly counted quantities** at once — for stock opname, when the physical count differs from the recorded stock. **Atomic:** if any line references a product the merchant doesn't own, the whole adjustment is rejected and no stock changes. Returns a **variance report**, and records an `ADJUSTMENT` entry in the [stock-mutation history](#stock-mutations) (with the note, if given).
+
+**Request body**
+
+| Field | Required | Description |
+|---|---|---|
+| `note` | no | Free text stored on the resulting stock mutation, max 255 chars |
+| `items` | yes | 1–500 lines |
+| `items[].productId` | yes | One of the merchant's products |
+| `items[].stock` | yes | New absolute counted quantity, ≥ 0 |
+
+```json
+{
+  "note": "opname sore",
+  "items": [
+    { "productId": 12, "stock": 8 },
+    { "productId": 15, "stock": 12 }
+  ]
+}
+```
+
+**Success — HTTP 200** — each product's stock is set, with the variance (`difference = newStock − previousStock`, negative = shrinkage):
+
+```json
+{
+  "status": 1,
+  "message": "Penyesuaian stok berhasil",
+  "data": {
+    "total": 2,
+    "items": [
+      { "productId": 12, "sku": "KOPI-01", "name": "Kopi Susu", "previousStock": 10, "newStock": 8,  "difference": -2 },
+      { "productId": 15, "sku": "TEH-01",  "name": "Teh Manis",  "previousStock": 5,  "newStock": 12, "difference": 7 }
+    ]
+  }
+}
+```
+
+**Errors:** `400 items tidak boleh kosong`, `400 stock tidak boleh negatif`, `400 note maksimal 255 karakter`, `400 Produk tidak ditemukan: <id>`
 
 #### `GET /api/stock-mutations` — Stock-change history
 
