@@ -587,7 +587,7 @@ Since nothing is pre-rendered, **`data.type` is how the app tells the kinds apar
 | `PRESENCE` | An [attendance](#employee-presence) event — a clock-in/out to the **super admin**, a ping to the **member** | `presenceType` (`CLOCK_IN` / `CLOCK_OUT` / `PING`), `presenceId`, `userId`, `username`, `clockDatetime` |
 | `ADS` | A [voice-ad](#voice-ads) step — to the **one target device** | `adEvent` (`PREPARE` / `PLAY`), `campaignId`, `deliveryId`, `campaignName`; PREPARE also carries `audioUrl`, `sha256`, `sizeBytes`, `contentType` |
 
-Presence and ads pushes additionally go out at **Android priority `high`**, so FCM delivers them at once and wakes the app even in Doze rather than batching them until the device next wakes.
+Transaction, presence and ads pushes all go out at **Android priority `high`**, so FCM delivers them at once and wakes the app even in Doze — the app runs its announcement/dialog on arrival — rather than batching them until the device next wakes.
 
 ```json
 // PRESENCE ping — the app can open the response dialog for presenceId 13

@@ -6,7 +6,11 @@ import com.bejo.notification.AbstractPushPayload;
 
 import java.util.Map;
 
-/** A payment landed — sent to every device of every user in the business. Normal priority. */
+/**
+ * A payment landed — sent to every device of every user in the business. <b>Urgent</b>: delivered
+ * data-only at Android priority HIGH so the app wakes at once and can run its payment announcement
+ * even when backgrounded / in Doze, rather than FCM batching it until the device next wakes.
+ */
 public final class TransactionPushPayload extends AbstractPushPayload {
 
     private final Transaction transaction;
@@ -16,6 +20,11 @@ public final class TransactionPushPayload extends AbstractPushPayload {
         super(PushType.TRANSACTION, title, body);
         this.transaction = transaction;
         this.merchantName = merchantName;
+    }
+
+    @Override
+    public boolean urgent() {
+        return true;
     }
 
     @Override
