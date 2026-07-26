@@ -10,7 +10,10 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
-      connection-timeout: 30000
+      # Max wait to acquire a connection from the pool (not query time). Kept below the
+      # 15s Cloud Run request timeout so a starved pool fails fast with a clean 500,
+      # rather than the request being severed mid-flight.
+      connection-timeout: 10000
   flyway:
     baseline-on-migrate: true
     baseline-version: 0

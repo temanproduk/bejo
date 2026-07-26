@@ -1784,7 +1784,7 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` / `SEED_MERCHANT_PAN` | Seed user values |
 | `BUSINESS_MAX_USERS` / `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` / `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | *(optional)* Business option overrides — built-in defaults apply if unset |
 | `JWT_EXPIRATION_MS` / `CALLBACK_DEFAULT_USERNAME` / `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | *(optional)* Other overrides — defaults apply if unset |
-| `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds. Default `30` (max `3600`) |
+| `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds. Default `15` (max `3600`) |
 | `ADS_GCS_BUCKET` | *(optional)* Ad-audio bucket. Defaults to `<project>-ads` |
 | `ADS_SIGNED_URL_TTL_SECONDS` / `ADS_MAX_AUDIO_BYTES` / `ADS_MAX_AUDIO_SECONDS` | *(optional)* Voice-ad limits — defaults `86400` / `2097152` / `10` |
 
