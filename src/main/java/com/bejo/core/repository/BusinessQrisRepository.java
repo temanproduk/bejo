@@ -9,4 +9,8 @@ import java.util.Optional;
 @Repository
 public interface BusinessQrisRepository extends JpaRepository<BusinessQris, Long> {
     Optional<BusinessQris> findByBusinessId(Long businessId);
+
+    // Whether the business has a QRIS at all — registration creates no row, so this is false
+    // until the first upload (see QrisService.hasOwnQris).
+    boolean existsByBusinessId(Long businessId);
 }

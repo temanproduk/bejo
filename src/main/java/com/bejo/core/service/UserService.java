@@ -47,6 +47,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final BusinessRepository businessRepository;
     private final BusinessBankRepository businessBankRepository;
+    private final QrisService qrisService;
     private final BusinessContext businessContext;
     private final AccountSettingsService accountSettingsService;
     private final BusinessOptions businessOptions;
@@ -55,6 +56,7 @@ public class UserService {
     public UserService(UserRepository userRepository,
                        BusinessRepository businessRepository,
                        BusinessBankRepository businessBankRepository,
+                       QrisService qrisService,
                        BusinessContext businessContext,
                        AccountSettingsService accountSettingsService,
                        BusinessOptions businessOptions,
@@ -62,6 +64,7 @@ public class UserService {
         this.userRepository = userRepository;
         this.businessRepository = businessRepository;
         this.businessBankRepository = businessBankRepository;
+        this.qrisService = qrisService;
         this.businessContext = businessContext;
         this.accountSettingsService = accountSettingsService;
         this.businessOptions = businessOptions;
@@ -83,7 +86,9 @@ public class UserService {
         return new MeResponseDto(
                 user.getId(), user.getUsername(), user.getAccountType(), user.getName(),
                 user.getEmail(), user.isEmailVerified(), user.getPhone(), user.isPhoneVerified(),
-                user.getBusinessRole(), business.getName(), business.getAddress(), business.getNmid(),
+                user.getBusinessRole(),
+                qrisService.hasOwnQris(user),
+                business.getName(), business.getAddress(), business.getNmid(),
                 bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName(),
                 business.getPicture(), accountSettingsService.getSettings(username));
     }
@@ -160,7 +165,7 @@ public class UserService {
 
     @Transactional
     public void updateBusiness(String username, UpdateBusinessRequestDto request) {
-        Business business = requireBusiness(username);
+        Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
         business.setName(request.businessName());
         business.setAddress(request.businessAddress());
         business.setNmid(request.nmid());
@@ -199,7 +204,7 @@ public class UserService {
 
     @Transactional
     public BusinessResponseDto resetBusiness(String username) {
-        Business business = requireBusiness(username);
+        Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
         if (business.getInitialName() == null) {
             throw new IllegalArgumentException("Data bisnis awal tidak tersedia untuk direset");
         }
@@ -213,7 +218,7 @@ public class UserService {
 
     @Transactional
     public void updateBank(String username, UpdateBankRequestDto request) {
-        BusinessBank bank = requireBank(username);
+        BusinessBank bank = requireBankAsSuperAdmin(username);  // super-admin only
         bank.setBankName(request.bankName());
         bank.setBankNumber(request.bankNumber());
         bank.setBankAccountName(request.bankAccountName());
@@ -223,7 +228,7 @@ public class UserService {
 
     @Transactional
     public BankResponseDto resetBank(String username) {
-        BusinessBank bank = requireBank(username);
+        BusinessBank bank = requireBankAsSuperAdmin(username);  // super-admin only
         if (bank.getInitialBankName() == null) {
             throw new IllegalArgumentException("Data rekening awal tidak tersedia untuk direset");
         }
@@ -286,8 +291,9 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
     }
 
-    private BusinessBank requireBank(String username) {
-        Long businessId = businessContext.requireBusinessId(username);
+    // Only the business's super admin may edit/reset the shared bank data (403 otherwise)
+    private BusinessBank requireBankAsSuperAdmin(String username) {
+        Long businessId = businessContext.requireSuperAdminBusinessId(username);
         return businessBankRepository.findByBusinessId(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Bank data not found"));
     }

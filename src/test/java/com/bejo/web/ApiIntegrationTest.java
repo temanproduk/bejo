@@ -294,7 +294,10 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.data[0].amount").value(75000))
                 .andExpect(jsonPath("$.data[0].acquirer").value("Cash"))
-                .andExpect(jsonPath("$.data[0].merchantName").value("Warung txn_user1"));
+                .andExpect(jsonPath("$.data[0].merchantName").value("Warung txn_user1"))
+                // The list surfaces who created the transaction (the account/sub-account)
+                .andExpect(jsonPath("$.data[0].createdBy").value("txn_user1"))
+                .andExpect(jsonPath("$.data[0].updatedBy").doesNotExist());   // never edited
     }
 
     @Test
@@ -632,6 +635,37 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void subAccountCannotDeleteTransaction() throws Exception {
+        String adminToken = registerAdminWithTeam("txn_del_admin");
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("txn_del_member"))))
+                .andExpect(status().isCreated());
+        String memberToken = login("txn_del_member", "password1", "dm-del");
+
+        // A member creates a transaction in the shared business...
+        String txnId = createTransaction(memberToken, "del-key-member", 12000);
+        // ...but a sub-account may NOT delete it (super-admin-only) → 403
+        mockMvc.perform(delete("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+
+        // The super admin still can, and the member's username is recorded as creator
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.data[0].createdBy").value("txn_del_member"));
+        mockMvc.perform(delete("/api/transactions/" + txnId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void idempotencyKeyOfDeletedTransactionStillReplays() throws Exception {
         String token = registerAndLogin("txn_user9");
         String txnId = createTransaction(token, "del-key-4", 40000);
@@ -839,20 +873,28 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void qrisCallbackCreatesANewTransactionEachTime() throws Exception {
+    void qrisCallbackIsIdempotentOnTheProviderReference() throws Exception {
         ensureCallbackSeedUser();
         long before = seedTxnCount();
         String body = callbackBody("8888000011112222", "IDEMREF01", "IDEMPART01", "INV-IDEM-01");
 
-        // PoC: no reference to dedupe on — each callback creates a new transaction
-        for (int i = 0; i < 2; i++) {
+        // A gateway retries a notification on any timeout or non-2xx. Re-delivering the same
+        // payment must acknowledge without recording it twice.
+        for (int i = 0; i < 3; i++) {
             mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
                             .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
                             .contentType(APPLICATION_JSON)
                             .content(body))
                     .andExpect(status().isOk());
         }
+        assertThat(seedTxnCount()).isEqualTo(before + 1);
 
+        // A genuinely different payment (new provider reference) still records
+        mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                        .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
+                        .contentType(APPLICATION_JSON)
+                        .content(callbackBody("8888000011112222", "IDEMREF02", "IDEMPART02", "INV-IDEM-02")))
+                .andExpect(status().isOk());
         assertThat(seedTxnCount()).isEqualTo(before + 2);
     }
 
@@ -1430,6 +1472,161 @@ class ApiIntegrationTest {
                 .andReturn();
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
         assertThat(json.at("/data/businessName").asText()).isEqualTo("Warung prof_user1");
+    }
+
+    @Test
+    void memberCannotEditBankOrBusiness() throws Exception {
+        String adminToken = registerAdminWithTeam("prof_admin2");
+        mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("prof_member2"))))
+                .andExpect(status().isCreated());
+        String memberToken = login("prof_member2", "password1", "dm2");
+
+        // The shared bank/business data is super-admin-only — a member is forbidden
+        mockMvc.perform(patch("/api/users/me/bank")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "bankName", "Mandiri", "bankNumber", "9876543210", "bankAccountName", "Member"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/users/me/bank/reset")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/users/me/business")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("businessName", "Toko Baru"))))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/users/me/business/reset")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void changingThePasswordRevokesTokensIssuedBeforeIt() throws Exception {
+        String phoneToken = registerAndLogin("pwrevoke1");
+        // A second device holds its own token for the same account
+        String tabletToken = login("pwrevoke1", "password1", "tablet-1");
+
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tabletToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/users/me/password")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + phoneToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "oldPassword", "password1", "newPassword", "newpass123"))))
+                .andExpect(status().isOk());
+
+        // Both tokens die immediately — including the other device's, which is the point:
+        // a stolen token must not outlive the password the user changed to remediate.
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + tabletToken))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + phoneToken))
+                .andExpect(status().isUnauthorized());
+
+        // Logging in again with the new password issues a working token
+        String fresh = login("pwrevoke1", "newpass123", "dev-fresh");
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + fresh))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void superAdminResettingAMemberPasswordRevokesTheirTokens() throws Exception {
+        String adminToken = registerAdminWithTeam("pwrevoke_admin");
+        MvcResult created = mockMvc.perform(post("/api/users/members")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(memberBody("pwrevoke_member"))))
+                .andExpect(status().isCreated()).andReturn();
+        String memberId = objectMapper.readTree(created.getResponse().getContentAsString()).at("/data/id").asText();
+        String memberToken = login("pwrevoke_member", "password1", "dm-revoke");
+
+        mockMvc.perform(patch("/api/users/members/" + memberId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("password", "resetpass9"))))
+                .andExpect(status().isOk());
+
+        // The member is signed out everywhere the moment the admin resets their password
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void repeatedFailedLoginsLockTheAccountOut() throws Exception {
+        register("throttled1");
+
+        // app.security.login.max-failures = 3 in the test profile
+        for (int i = 0; i < 3; i++) {
+            mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
+                            .contentType(APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "username", "throttled1", "password", "wrong-one", "deviceId", "d1"))))
+                    .andExpect(status().isBadRequest());
+        }
+
+        // Further attempts are refused outright — even with the CORRECT password
+        mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "throttled1", "password", "password1", "deviceId", "d1"))))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.status").value(0));
+
+        // Another account is unaffected
+        register("throttled2");
+        mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "throttled2", "password", "password1", "deviceId", "d2"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void aSuccessfulLoginResetsTheFailureCount() throws Exception {
+        register("throttled3");
+        for (int i = 0; i < 2; i++) {
+            mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
+                            .contentType(APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "username", "throttled3", "password", "wrong-one", "deviceId", "d1"))))
+                    .andExpect(status().isBadRequest());
+        }
+        // Getting it right clears the history, so the next typo doesn't tip them over
+        login("throttled3", "password1", "d1");
+        for (int i = 0; i < 2; i++) {
+            mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
+                            .contentType(APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "username", "throttled3", "password", "wrong-one", "deviceId", "d1"))))
+                    .andExpect(status().isBadRequest());
+        }
+        login("throttled3", "password1", "d1");
+    }
+
+    @Test
+    void oversizedRequestBodyIsRejected() throws Exception {
+        String token = registerAndLogin("bigbody1");
+        // Beyond app.security.max-request-bytes (8 MB) — refused before anything reads it
+        String huge = "x".repeat(9 * 1024 * 1024);
+        mockMvc.perform(post("/api/qris/upload")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"qrisImage\":\"" + huge + "\"}"))
+                .andExpect(status().isPayloadTooLarge());
     }
 
     @Test

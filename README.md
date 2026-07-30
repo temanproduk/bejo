@@ -223,7 +223,7 @@ Null fields are omitted.
 | `phone` | Yes | International format e.g. `+628123456789` |
 | `isPhoneVerified` | System | Always `false` (verification not yet implemented) |
 
-The following are **business-level** (shared by all of the business's users), edited via the profile endpoints by any member:
+The following are **business-level** (shared by all of the business's users); any member may read them, but **only the `SUPER_ADMIN` may edit or reset them** (a plain member gets `403`):
 
 | Field | Description |
 |---|---|
@@ -265,6 +265,12 @@ Initial values (`initialName`, `initialAddress`, `initialNmid`, `initialBankName
 
 Authenticates and returns a JWT. Registers or updates the device's FCM push token.
 
+> **`hasOwnQris`** tells the app whether this account monitors a QRIS of its own — i.e. whether it runs a QRIS merchant app and sees its own incoming-payment notifications. It is returned on **login** and **`GET /api/users/me`**:
+> - **super admin** — `true` once the business has a QRIS at all (registration creates none, so it is `false` until the first [upload](#post-apiqrisupload--upload-business-qris-super-admin)); the shared business QRIS is theirs to monitor.
+> - **sub-account (`MEMBER`)** — `true` only when the super admin assigned them their **own** [per-user QRIS](#per-user-qris). A member who shares the business QRIS gets `false`, because it is the super admin who monitors it.
+>
+> **Rate limited.** After **10 consecutive failed attempts** for the same username the account is locked for **15 minutes** and further attempts return **`429 Terlalu banyak percobaan masuk. Coba lagi dalam N menit.`** — including attempts with the correct password. Any successful login resets the counter, so ordinary typos never lock a user out. Configurable via `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_MINUTES`.
+
 **Request body**
 
 | Field | Required | Description |
@@ -290,6 +296,7 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "phone": "+628100000000",
     "isPhoneVerified": false,
     "businessRole": "SUPER_ADMIN",
+    "hasOwnQris": true,
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
     "nmid": "ID1026540778978",
@@ -360,7 +367,9 @@ Returns the authenticated user's transaction history, newest first. Soft-deleted
       "issuerName": "BNI",
       "merchantPan": "936009XXXXXX0001",
       "customerPan": "401177XXXXXX5678",
-      "rrn": "000100000002"
+      "rrn": "000100000002",
+      "createdBy": "budi_kasir",
+      "updatedBy": "budi_kasir"
     }
   ],
   "count": 1,
@@ -371,6 +380,8 @@ Returns the authenticated user's transaction history, newest first. Soft-deleted
 ```
 
 `issuerName`, `merchantPan`, `customerPan`, `rrn` are omitted when null. `count` is the number of rows in this page; `page` is the current (1-based) page, `totalPages` the number of pages, `total` the total matching rows.
+
+`createdBy` / `updatedBy` identify **which account or sub-account** created and last edited the transaction (username). They are present on MANUAL/PARSED transactions and **omitted** on MANAGED (server-recorded callback) rows; `updatedBy` is omitted until the transaction is first edited.
 
 ---
 
@@ -423,6 +434,14 @@ Adds a transaction manually or from an external acquirer. The server generates `
 | `items` | no | Products sold: array of `{ productId, quantity }` (max 200). Validates + reduces stock, records a `SALE` [stock mutation](#stock-mutations), and derives `amount` from the line subtotals |
 
 When `items` are supplied the sale is atomic: an unknown product, a duplicate product line, or **insufficient stock** rejects the whole transaction (`400`, nothing changes). Each line's unit price is snapshotted from the product's current selling price. Read them back on `GET /api/transactions/{transactionId}` (the history list omits items).
+
+The creating account/sub-account is recorded as the transaction's `createdBy` (returned by the list/detail endpoints).
+
+> **PARSED transactions notify by who detected them.** A `PARSED` transaction is a real-time payment an app detected off a QRIS merchant notification. The detecting device (the creator) already played the alert locally before calling the API and the app dedupes, so it is **included** in the push (it won't double-play). The server pushes a data-only transaction notification to the business **super admin (always)** plus everyone sharing the QRIS the payment landed on:
+> - **detected by the super admin** (payment on the shared business QRIS) → the super admin + all sub-accounts **without** their own [per-user QRIS](#per-user-qris). A sub-account with its own QRIS runs a separate merchant app and detects its own payments there, so it's excluded.
+> - **detected by a sub-account with its own QRIS** (payment on that sub's separate QRIS) → the super admin + just that sub-account.
+>
+> The push is best-effort (a delivery failure never fails the transaction) and only fires for the single `POST /api/transactions` path — **not** bulk sync.
 
 **Success — HTTP 201**
 
@@ -554,9 +573,11 @@ Edits a transaction. Partial update — only the fields present in the body are 
 
 ---
 
-#### `DELETE /api/transactions/{transactionId}`
+#### `DELETE /api/transactions/{transactionId}` (super admin)
 
-Soft-deletes a transaction: the row is kept in the database with a `deleted_at` timestamp and disappears from history. Deletion cannot be undone via the API. Only the authenticated user's own transactions can be deleted.
+Soft-deletes a transaction: the row is kept in the database with a `deleted_at` timestamp and disappears from history. Deletion cannot be undone via the API.
+
+**Super-admin-only** — a sub-account (`MEMBER`) gets `403`, even for a transaction it created itself. (Creating and editing transactions stay open to any member; only deletion is restricted.)
 
 **Stock return:** if the transaction has sold-product [line items](#post-apitransactions), deleting it **returns each item's quantity to its product's stock** and records a `SALE` reversal [stock mutation](#stock-mutations). (A product deleted since the sale is skipped.) The line-item records are kept; stock is returned exactly once.
 
@@ -569,7 +590,7 @@ Soft-deletes a transaction: the row is kept in the database with a `deleted_at` 
 }
 ```
 
-**Errors:** `404 Transaction not found` (unknown, already deleted, or another user's transaction)
+**Errors:** `403 Hanya super admin yang dapat mengubah pengaturan bisnis` (a sub-account), `404 Transaction not found` (unknown, already deleted, or another business's transaction)
 
 ---
 
@@ -817,7 +838,7 @@ All endpoints below require JWT.
 
 Returns the caller's own account: `id`, profile, `businessRole`, and the shared business/bank/`profilePicture`/`accountSettings` — the **same shape as the login `data` minus the token fields**, so the client can refresh its full state without re-authenticating. `id` also lets the client identify itself in the [members](#business-members) list.
 
-**Success — HTTP 200:** `{ "status": 1, "data": { "id": 1, "username": "alice", "businessRole": "SUPER_ADMIN", ...business/bank/profilePicture/accountSettings... } }`
+**Success — HTTP 200:** `{ "status": 1, "data": { "id": 1, "username": "alice", "businessRole": "SUPER_ADMIN", "hasOwnQris": true, ...business/bank/profilePicture/accountSettings... } }`
 
 ---
 
@@ -833,9 +854,9 @@ Returns the caller's own account: `id`, profile, `businessRole`, and the shared 
 
 ---
 
-#### `PATCH /api/users/me/business` — Update business info
+#### `PATCH /api/users/me/business` — Update business info (super admin)
 
-Does not affect the initial values stored at registration.
+Super-admin-only (the business info is shared) — a plain member gets `403 Hanya super admin yang dapat mengubah pengaturan bisnis`. Does not affect the initial values stored at registration.
 
 | Field | Required | Validation |
 |---|---|---|
@@ -847,9 +868,9 @@ Does not affect the initial values stored at registration.
 
 ---
 
-#### `POST /api/users/me/business/reset` — Reset business info
+#### `POST /api/users/me/business/reset` — Reset business info (super admin)
 
-Reverts `businessName`, `businessAddress`, and `nmid` to registration values, and returns the reverted values so the client can repopulate the edit form.
+Super-admin-only (a plain member gets `403`). Reverts `businessName`, `businessAddress`, and `nmid` to registration values, and returns the reverted values so the client can repopulate the edit form.
 
 **Success — HTTP 200**
 
@@ -877,9 +898,9 @@ Upgrades a **self-service** account to **managed by Bejo**: sets the business's 
 
 ---
 
-#### `PATCH /api/users/me/bank` — Update bank info
+#### `PATCH /api/users/me/bank` — Update bank info (super admin)
 
-Does not affect the initial values stored at registration.
+Super-admin-only (the bank/rekening info is shared) — a plain member gets `403 Hanya super admin yang dapat mengubah pengaturan bisnis`. Does not affect the initial values stored at registration.
 
 | Field | Required | Validation |
 |---|---|---|
@@ -891,9 +912,9 @@ Does not affect the initial values stored at registration.
 
 ---
 
-#### `POST /api/users/me/bank/reset` — Reset bank info
+#### `POST /api/users/me/bank/reset` — Reset bank info (super admin)
 
-Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, and returns the reverted values so the client can repopulate the edit form.
+Super-admin-only (a plain member gets `403`). Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, and returns the reverted values so the client can repopulate the edit form.
 
 **Success — HTTP 200**
 
@@ -921,6 +942,8 @@ Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, 
 | `newPassword` | yes | Min 8 chars, at least 1 letter and 1 digit |
 
 **Errors:** `400 Password saat ini tidak sesuai`, `400 Password baru minimal 8 karakter`, `400 Password baru harus mengandung minimal 1 huruf dan 1 angka`
+
+> **Changing the password signs the account out everywhere.** Every JWT issued before the change stops working immediately — on this device and every other one — so the client must log in again with the new password to get a fresh token. The same applies when a super admin resets a member's password via `PATCH /api/users/members/{id}`: that member's tokens are revoked at once.
 
 ---
 
@@ -1476,14 +1499,16 @@ This endpoint does **not** use the standard `{ status, message, data }` envelope
 > - **finds the business by `merchantPan`** (`businesses.merchant_pan`), falling back to the configured default account (`app.callback.default-username`) if it matches nothing, and records the transaction there;
 > - **routes the push by `terminalId`**: the **super admin** always gets it, a user with **no** [per-user QRIS](#put-apiqrisusersusername--assign-a-user-their-own-qris-super-admin) always gets it (they use the shared business QRIS), and a user **with** their own QRIS gets it only when their terminal id matches the callback's. A callback with no `terminalId` rings the whole business.
 >
-> **⚠️ Still PoC:** `idempotencyKey` is null (no reference dedupe yet — each callback creates a new row), and `X-TIMESTAMP` is ignored so the transaction date is `now()`. These will be restored once the provider's references stabilize.
+> **Idempotent:** re-delivering the same notification does **not** create a second transaction — see *Idempotency* below.
+>
+> **⚠️ Still PoC:** `X-TIMESTAMP` is ignored, so the transaction date is the server's `now()` (deliberate — the server clock is trusted over the provider's).
 
 **Headers**
 
 | Header | Mandatory | Description |
 |---|---|---|
 | `Content-Type: application/json` | ✅ | |
-| `X-TIMESTAMP` | optional | ISO-8601 transaction time (offset / `Z` / none). **Currently ignored** (PoC) — the transaction date is recorded as `now()`. |
+| `X-TIMESTAMP` | optional | ISO-8601 transaction time (offset / `Z` / none). **Ignored** — the transaction date is recorded as the server's `now()`. |
 
 **Request body** (unknown fields are ignored)
 
@@ -1510,7 +1535,7 @@ All fields are optional in PoC mode; only `amount.value` (when present) and `lat
 **Behavior (PoC)**
 
 - **Attribution** — every callback is recorded against the seed user's business (`app.callback.default-username` → its `business_id`); if that user doesn't exist, returns `404`.
-- **No idempotency** — there's no reference to dedupe on, so each callback creates a new transaction (generated `transactionId`, null idempotency key).
+- **Idempotency** — the notification is deduped on the provider's own reference: `additionalInfo.transactionId`, falling back to `originalReferenceNo`. Re-delivering the same payment (gateways retry on any timeout or non-2xx) is acknowledged with `200` and the **original** transaction's data, without recording it again. Two retries arriving at the same instant can produce one `409`; the next retry then sees the committed row and gets a normal `200`, so a duplicate never becomes a second transaction. A payload with neither reference can't be deduped — it is recorded and a warning is logged.
 - **Status mapping** — `00`→SUCCESS, `01`→PENDING, `02`→FAILED, `03`→REFUNDED, `04`→CANCELLED, `05`→EXPIRED, else/absent UNKNOWN.
 - **Amount** — parsed from `amount.value`; missing/invalid → `0` (never fails the callback).
 - **Records a `MANAGED` transaction** and saves the full payload JSON to its `info` column.
@@ -1714,6 +1739,9 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `API_TOKEN` | yes | Shared secret for `X-API-TOKEN` header |
 | `JWT_SECRET` | yes | Base64-encoded signing key, min 256 bits — `openssl rand -base64 32` |
 | `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `604800000` (7 days); `0` disables expiry |
+| `LOGIN_MAX_FAILURES` | no | Consecutive failed logins per username before a lockout. Default `10` |
+| `LOGIN_LOCKOUT_MINUTES` | no | How long a locked account must wait. Default `15` |
+| `MAX_REQUEST_BYTES` | no | Max request body size; larger bodies get `413`. Default `8388608` (8 MB) |
 | `BUSINESS_MAX_USERS` | no | Max users per business, **including** the super admin. Default `10` |
 | `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` | no | Allowed business sizes + default (comma-separated). Default `Mikro,Kecil,Menengah,Besar,Non-Profit` / `Mikro` |
 | `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | no | Allowed industries + default (comma-separated). Default is the 11-industry list / `Makanan & Minuman` |

@@ -16,12 +16,21 @@ import com.bejo.commerce.dto.TransactionItemResponseDto;
 import com.bejo.commerce.dto.TransactionResponseDto;
 import com.bejo.commerce.dto.TransactionSummaryResponseDto;
 import com.bejo.core.domain.Business;
+import com.bejo.core.domain.BusinessRole;
+import com.bejo.core.domain.User;
+import com.bejo.core.domain.UserQris;
 import com.bejo.commerce.domain.Product;
 import com.bejo.commerce.domain.Transaction;
 import com.bejo.commerce.domain.TransactionItem;
+import com.bejo.commerce.push.TransactionPushPayload;
+import com.bejo.notification.PushNotificationService;
+import com.bejo.notification.PushPayload;
 import com.bejo.shared.exception.ResourceNotFoundException;
 import com.bejo.core.repository.BusinessRepository;
+import com.bejo.core.repository.UserRepository;
+import com.bejo.core.repository.UserQrisRepository;
 import com.bejo.commerce.repository.ProductRepository;
+import com.bejo.commerce.repository.ProductStock;
 import com.bejo.commerce.repository.TransactionItemRepository;
 import com.bejo.commerce.repository.TransactionRepository;
 import com.bejo.shared.util.AppTime;
@@ -36,10 +45,13 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -65,6 +77,9 @@ public class TransactionService {
     private final ProductRepository productRepository;
     private final StockMutationService stockMutationService;
     private final BusinessRepository businessRepository;
+    private final UserRepository userRepository;
+    private final UserQrisRepository userQrisRepository;
+    private final PushNotificationService pushNotificationService;
     private final BusinessContext businessContext;
     private final Validator validator;
     private final Counter transactionFetchCounter;
@@ -74,6 +89,9 @@ public class TransactionService {
                               ProductRepository productRepository,
                               StockMutationService stockMutationService,
                               BusinessRepository businessRepository,
+                              UserRepository userRepository,
+                              UserQrisRepository userQrisRepository,
+                              PushNotificationService pushNotificationService,
                               BusinessContext businessContext,
                               Validator validator,
                               MeterRegistry meterRegistry) {
@@ -82,6 +100,9 @@ public class TransactionService {
         this.productRepository = productRepository;
         this.stockMutationService = stockMutationService;
         this.businessRepository = businessRepository;
+        this.userRepository = userRepository;
+        this.userQrisRepository = userQrisRepository;
+        this.pushNotificationService = pushNotificationService;
         this.businessContext = businessContext;
         this.validator = validator;
         this.transactionFetchCounter = Counter.builder("transactions.fetched").register(meterRegistry);
@@ -158,12 +179,18 @@ public class TransactionService {
             return new TransactionCreatedResponseDto(existing.get().getTransactionId());
         }
 
-        Transaction t = buildTransaction(businessId, idempotencyKey, request);
+        Transaction t = buildTransaction(businessId, username, idempotencyKey, request);
         transactionRepository.save(t);
         // Optional line items: validate stock, reduce it, and snapshot the sold products.
         // Any insufficient stock rolls back the whole transaction (@Transactional).
         applyItems(businessId, t, request.items());
-        log.info("[TXN] Created type={} acquirer={} transactionId={}", t.getType(), t.getAcquirer(), t.getTransactionId());
+        log.info("[TXN] Created type={} acquirer={} transactionId={} createdBy={}",
+                t.getType(), t.getAcquirer(), t.getTransactionId(), username);
+        // A PARSED transaction is a real-time payment an app detected — notify the super admin
+        // plus everyone sharing the QRIS it landed on (see notifyParsedTransaction).
+        if (TransactionType.PARSED.equals(t.getType())) {
+            notifyParsedTransaction(businessId, t, username);
+        }
         return new TransactionCreatedResponseDto(t.getTransactionId());
     }
 
@@ -197,14 +224,23 @@ public class TransactionService {
             lines.add(new Line(product, item.quantity()));
         }
 
-        // Pass 2 — reduce stock, snapshot the sold products, record the stock ledger entry
+        // Pass 2 — draw the stock down atomically. The pass-1 check above gives the friendly
+        // error message; this conditional update is what actually makes it safe, refusing the
+        // sale if a concurrent one took the stock in between (0 rows changed).
+        for (Line line : lines) {
+            if (productRepository.decreaseStock(line.product.getId(), businessId, line.quantity) == 0) {
+                throw new IllegalArgumentException("Stok tidak cukup untuk " + line.product.getName()
+                        + " (stok berubah, coba lagi)");
+            }
+        }
+        // Authoritative post-update stock for the ledger (the loaded entities are now stale)
+        Map<Long, Integer> stocks = currentStocks(lines.stream().map(l -> l.product.getId()).toList());
+
         List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
         long total = 0;
         for (Line line : lines) {
-            int previous = line.product.getStock();
-            int updated = previous - line.quantity;
-            line.product.setStock(updated);
-            productRepository.save(line.product);
+            int updated = stocks.getOrDefault(line.product.getId(), line.product.getStock() - line.quantity);
+            int previous = updated + line.quantity;
 
             long unitPrice = line.product.getPrice();
             long subtotal = unitPrice * line.quantity;
@@ -284,7 +320,7 @@ public class TransactionService {
                             key, RESULT_DUPLICATE, existing.get().getTransactionId(), null));
                     continue;
                 }
-                Transaction t = buildTransaction(businessId, key, item.transaction());
+                Transaction t = buildTransaction(businessId, username, key, item.transaction());
                 transactionRepository.save(t);
                 created++;
                 results.add(new BulkTransactionResultResponseDto.ItemResult(
@@ -312,8 +348,9 @@ public class TransactionService {
     }
 
     // Builds an unsaved MANUAL/PARSED transaction, applying the cross-field rule that
-    // PARSED requires an explicit acquirer (MANUAL defaults to Cash).
-    private Transaction buildTransaction(Long businessId, String idempotencyKey, AddTransactionRequestDto request) {
+    // PARSED requires an explicit acquirer (MANUAL defaults to Cash). createdBy snapshots the
+    // account/sub-account that entered it (username).
+    private Transaction buildTransaction(Long businessId, String username, String idempotencyKey, AddTransactionRequestDto request) {
         boolean isParsed = TransactionType.PARSED.equals(request.type());
         if (isParsed && (request.acquirer() == null || request.acquirer().isBlank())) {
             throw new IllegalArgumentException("Metode pembayaran wajib diisi");
@@ -335,6 +372,7 @@ public class TransactionService {
         t.setAcquirer(acquirer);
         t.setStatus(TransactionStatus.SUCCESS);
         t.setScrapeDate(LocalDateTime.now());
+        t.setCreatedBy(username);
         return t;
     }
 
@@ -368,8 +406,9 @@ public class TransactionService {
         // Optional line-item replacement — reconciles stock and (when non-empty) re-derives
         // the amount, so it runs after the scalar amount is applied.
         if (request.items() != null) reconcileItems(businessId, t, request.items());
+        t.setUpdatedBy(username);
         transactionRepository.save(t);
-        log.info("[TXN] Updated transactionId={} businessId={}", transactionId, businessId);
+        log.info("[TXN] Updated transactionId={} businessId={} updatedBy={}", transactionId, businessId, username);
 
         List<TransactionItemResponseDto> items = itemDtos(t.getId());
         return toDto(t, merchantName(businessId), items.isEmpty() ? null : items);
@@ -423,20 +462,31 @@ public class TransactionService {
             products.put(pid, product);
         }
 
-        // Pass 2 — apply the stock deltas, then rebuild the line-item rows
-        List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
+        // Pass 2 — apply the stock deltas atomically (see applyItems), then rebuild the line items
+        Map<Long, Integer> applied = new LinkedHashMap<>();
         for (Long pid : allIds) {
             Product product = products.get(pid);
             if (product == null) continue;      // removed line whose product is gone
             int delta = newQty.getOrDefault(pid, 0) - oldQty.getOrDefault(pid, 0);
-            if (delta != 0) {
-                int previous = product.getStock();
-                int updated = previous - delta;
-                product.setStock(updated);
-                productRepository.save(product);
-                changes.add(new StockMutationService.StockChangeLine(product, previous, updated));
+            if (delta == 0) continue;
+            if (delta > 0) {
+                if (productRepository.decreaseStock(pid, businessId, delta) == 0) {
+                    throw new IllegalArgumentException("Stok tidak cukup untuk " + product.getName()
+                            + " (stok berubah, coba lagi)");
+                }
+            } else {
+                productRepository.increaseStock(pid, businessId, -delta);
             }
+            applied.put(pid, delta);
         }
+        Map<Long, Integer> stocks = currentStocks(applied.keySet());
+
+        List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
+        applied.forEach((pid, delta) -> {
+            Product product = products.get(pid);
+            int updated = stocks.getOrDefault(pid, product.getStock() - delta);
+            changes.add(new StockMutationService.StockChangeLine(product, updated + delta, updated));
+        });
 
         transactionItemRepository.deleteAll(existing);
         long total = 0;
@@ -468,7 +518,8 @@ public class TransactionService {
 
     @Transactional
     public void delete(String username, String transactionId) {
-        Long businessId = businessContext.requireBusinessId(username);
+        // Deleting a transaction is super-admin-only — a sub-account (MEMBER) gets 403.
+        Long businessId = businessContext.requireSuperAdminBusinessId(username);
         Transaction t = transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull(transactionId, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
         // Return the sold stock to its products (a deleted sale un-sells its items). The item
@@ -486,20 +537,104 @@ public class TransactionService {
         List<TransactionItem> items = transactionItemRepository.findByHistoryIdOrderByIdAsc(t.getId());
         if (items.isEmpty()) return;
         List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
+        Map<Long, Product> restored = new LinkedHashMap<>();
+        Map<Long, Integer> returnedQty = new LinkedHashMap<>();
         for (TransactionItem item : items) {
             Product product = productRepository.findByIdAndBusinessId(item.getProductId(), businessId).orElse(null);
             if (product == null) continue;   // product deleted — can't return its stock
-            int previous = product.getStock();
-            int updated = previous + item.getQuantity();
-            product.setStock(updated);
-            productRepository.save(product);
-            changes.add(new StockMutationService.StockChangeLine(product, previous, updated));
+            // Atomic credit back, so a concurrent sale of the same product isn't overwritten
+            productRepository.increaseStock(product.getId(), businessId, item.getQuantity());
+            restored.put(product.getId(), product);
+            returnedQty.merge(product.getId(), item.getQuantity(), Integer::sum);
         }
+        Map<Long, Integer> stocks = currentStocks(restored.keySet());
+        restored.forEach((pid, product) -> {
+            int qty = returnedQty.getOrDefault(pid, 0);
+            int updated = stocks.getOrDefault(pid, product.getStock() + qty);
+            changes.add(new StockMutationService.StockChangeLine(product, updated - qty, updated));
+        });
         if (!changes.isEmpty()) {
             stockMutationService.recordStockChange(businessId, StockMutationType.SALE,
                     "Sale delete " + t.getTransactionId(), changes);
             log.info("[TXN] Returned stock for {} line(s) on delete of transactionId={}", changes.size(), t.getTransactionId());
         }
+    }
+
+    /**
+     * Notify the relevant accounts of a newly-recorded PARSED transaction. A PARSED entry is a
+     * real-time payment an app detected off a QRIS merchant notification; the detecting device
+     * ({@code creator}) already played the alert locally before calling the API and the client
+     * dedupes, so the detector is still included here (it won't double-play).
+     *
+     * <p>Recipients = the business <b>super admin</b> (always — merchant oversight) plus everyone
+     * sharing the QRIS the payment landed on:
+     * <ul>
+     *   <li>created by the super admin (or any account on the <b>shared</b> business QRIS) → the
+     *       super admin + all members <b>without</b> their own {@code user_qris} (the shared-QRIS
+     *       cohort);</li>
+     *   <li>created by a member with their <b>own</b> QRIS (a separate merchant app) → the super
+     *       admin + just that member (no one else shares that QRIS).</li>
+     * </ul>
+     * Recipients are resolved now (fast DB reads) but the push is deferred to after the transaction
+     * commits so a rollback never buzzes a phone; best-effort — a send failure is logged, never rethrown.
+     */
+    private void notifyParsedTransaction(Long businessId, Transaction t, String creator) {
+        Set<String> withOwnQris = userQrisRepository.findByBusinessId(businessId).stream()
+                .map(UserQris::getUsername)
+                .collect(Collectors.toSet());
+
+        Set<String> recipients = new LinkedHashSet<>();
+        // The super admin always gets it (oversight of every sale).
+        userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(businessId, BusinessRole.SUPER_ADMIN)
+                .map(User::getUsername)
+                .ifPresent(recipients::add);
+
+        if (withOwnQris.contains(creator)) {
+            // Payment on the creator's own QRIS — only the creator shares it (besides the admin).
+            recipients.add(creator);
+        } else {
+            // Payment on the shared business QRIS — everyone on it (members without their own QRIS).
+            userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(businessId, BusinessRole.MEMBER)
+                    .stream()
+                    .map(User::getUsername)
+                    .filter(u -> !withOwnQris.contains(u))
+                    .forEach(recipients::add);
+        }
+        if (recipients.isEmpty()) return;
+
+        PushPayload payload = new TransactionPushPayload(t, merchantName(businessId),
+                "Pembayaran Diterima", "Pembayaran Rp" + t.getAmount() + " diterima");
+        List<String> targets = List.copyOf(recipients);
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            sendParsedPushQuietly(targets, payload, t.getTransactionId());
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() {
+                sendParsedPushQuietly(targets, payload, t.getTransactionId());
+            }
+        });
+    }
+
+    private void sendParsedPushQuietly(List<String> recipients, PushPayload payload, String transactionId) {
+        try {
+            int queued = pushNotificationService.sendToUsernames(recipients, payload);
+            log.info("[TXN] Notified {} shared-QRIS employee(s) of PARSED transactionId={} ({} push job(s) queued)",
+                    recipients.size(), transactionId, queued);
+        } catch (RuntimeException e) {
+            log.warn("[TXN] Employee notification failed for PARSED transactionId={} (transaction still recorded): {}",
+                    transactionId, e.getMessage());
+        }
+    }
+
+    /**
+     * Reads the products' stock back from the database after an atomic update, so the ledger
+     * records the real before/after rather than the stale values on the loaded entities.
+     */
+    private Map<Long, Integer> currentStocks(Collection<Long> productIds) {
+        if (productIds.isEmpty()) return Map.of();
+        return productRepository.findStockByIdIn(productIds).stream()
+                .collect(Collectors.toMap(ProductStock::getId, ProductStock::getStock));
     }
 
     private String merchantName(Long businessId) {
@@ -523,6 +658,8 @@ public class TransactionService {
                 t.getMerchantPan(),
                 t.getCustomerPan(),
                 t.getRrn(),
+                t.getCreatedBy(),
+                t.getUpdatedBy(),
                 items
         );
     }

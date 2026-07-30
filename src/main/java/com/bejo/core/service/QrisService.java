@@ -4,6 +4,7 @@ import com.bejo.core.domain.QrisType;
 import com.bejo.core.dto.QrisResponseDto;
 import com.bejo.core.domain.Business;
 import com.bejo.core.domain.BusinessQris;
+import com.bejo.core.domain.User;
 import com.bejo.core.domain.UserQris;
 import com.bejo.shared.exception.ResourceNotFoundException;
 import com.bejo.core.repository.BusinessQrisRepository;
@@ -34,6 +35,29 @@ public class QrisService {
         this.businessQrisRepository = businessQrisRepository;
         this.userQrisRepository = userQrisRepository;
         this.businessContext = businessContext;
+    }
+
+    /**
+     * Whether this user has a QRIS <b>of their own to monitor</b> — the {@code hasOwnQris} flag on
+     * the login / {@code /me} bundles. The app uses it to decide whether to offer the
+     * "sound on incoming payment detected by another app" toggle, which only makes sense for an
+     * account that actually runs a QRIS merchant app and sees its own payment notifications:
+     * <ul>
+     *   <li><b>Super admin</b> — the shared business QRIS is effectively theirs, so this is true
+     *       once the business has one (registration creates none, so it is false until the first
+     *       upload). Also true if they were additionally given their own {@code user_qris}.</li>
+     *   <li><b>Member</b> — true only when the super admin assigned them their <b>own</b>
+     *       {@code user_qris}. A member sharing the business QRIS doesn't run the merchant app
+     *       (the super admin does), so it is false for them.</li>
+     * </ul>
+     */
+    @Transactional(readOnly = true)
+    public boolean hasOwnQris(User user) {
+        Long businessId = user.getBusinessId();
+        if (userQrisRepository.existsByBusinessIdAndUsername(businessId, user.getUsername())) {
+            return true;
+        }
+        return user.isSuperAdmin() && businessQrisRepository.existsByBusinessId(businessId);
     }
 
     @Transactional

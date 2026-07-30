@@ -61,6 +61,14 @@ public class Transaction {
     @Column(name = "idempotency_key", unique = true)
     private String idempotencyKey;
 
+    // Audit: the username of the account/sub-account that created this transaction, and the one
+    // that last edited it (MANUAL/PARSED only; both NULL on a server-recorded MANAGED callback row).
+    @Column(name = "created_by", length = 50)
+    private String createdBy;
+
+    @Column(name = "updated_by", length = 50)
+    private String updatedBy;
+
     // Soft delete: NULL = active, non-NULL = when the user deleted it
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
@@ -102,4 +110,8 @@ public class Transaction {
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public LocalDateTime getDeletedAt() { return deletedAt; }
     public void setDeletedAt(LocalDateTime deletedAt) { this.deletedAt = deletedAt; }
+    public String getCreatedBy() { return createdBy; }
+    public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
+    public String getUpdatedBy() { return updatedBy; }
+    public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
 }

@@ -18,6 +18,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByUsernameAndDeletedAtIsNull(String username);
 
+    // The active user's current password hash — the per-request auth check needs both
+    // "is this user still active?" (empty = gone/soft-deleted) and the hash the token was
+    // bound to, so it resolves them in one query instead of two.
+    @Query("SELECT u.passwordHash FROM User u WHERE u.username = :username AND u.deletedAt IS NULL")
+    Optional<String> findPasswordHashByUsername(@Param("username") String username);
+
     // Resolve the business scope for an authenticated user (business-owned data is keyed
     // on business_id, not username).
     @Query("SELECT u.businessId FROM User u WHERE u.username = :username AND u.deletedAt IS NULL")

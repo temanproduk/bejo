@@ -14,8 +14,23 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Collections;
+import java.util.Optional;
 
+/**
+ * Authenticates a request from its bearer token. A token is accepted only when all of the
+ * following hold — the token is parsed <b>once</b> and the user looked up <b>once</b>:
+ * <ol>
+ *   <li>signature + expiry are valid;</li>
+ *   <li>its {@code jti} is not blacklisted (logged out);</li>
+ *   <li>the user still exists and is not soft-deleted (a released username can't be impersonated);</li>
+ *   <li>its password-binding claim still matches the user's current password hash — so a password
+ *       change (by the user or by a super admin) instantly invalidates tokens issued before it,
+ *       on every device.</li>
+ * </ol>
+ */
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
@@ -41,24 +56,35 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String token = authHeader.substring(7);
-
-        if (jwtService.isValid(token)) {
-            String jti = jwtService.extractJti(token);
-            String username = jwtService.extractUsername(token);
-            // Reject tokens whose user no longer exists / was soft-deleted (its username
-            // may since have been reused): the token stays signed+unexpired, but the
-            // account is gone, so it must not authenticate anything.
-            if (!tokenBlacklistService.isBlacklisted(jti)
-                    && userRepository.existsByUsernameAndDeletedAtIsNull(username)) {
-                UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
-                        username, null, Collections.emptyList()
-                );
-                auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(auth);
-            }
-        }
+        jwtService.parse(authHeader.substring(7))
+                .filter(claims -> !tokenBlacklistService.isBlacklisted(claims.jti()))
+                .filter(this::passwordBindingStillMatches)
+                .ifPresent(claims -> {
+                    UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                            claims.username(), null, Collections.emptyList()
+                    );
+                    auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(auth);
+                });
 
         chain.doFilter(request, response);
+    }
+
+    /**
+     * One query resolves both "is this user still active?" (no row → soft-deleted or gone) and
+     * "was this token issued against the current password?". A token minted before this claim
+     * existed carries none and is rejected — it must be re-issued by logging in again.
+     */
+    private boolean passwordBindingStillMatches(JwtService.TokenClaims claims) {
+        if (claims.passwordBinding() == null) {
+            return false;
+        }
+        Optional<String> currentHash = userRepository.findPasswordHashByUsername(claims.username());
+        return currentHash
+                .map(jwtService::passwordBinding)
+                .filter(expected -> MessageDigest.isEqual(
+                        expected.getBytes(StandardCharsets.UTF_8),
+                        claims.passwordBinding().getBytes(StandardCharsets.UTF_8)))
+                .isPresent();
     }
 }

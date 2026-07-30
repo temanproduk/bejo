@@ -19,6 +19,10 @@ public record MeResponseDto(
         String phone,
         boolean isPhoneVerified,
         String businessRole,
+        // True when this user has their OWN QRIS assigned (a user_qris row) rather than sharing
+        // the business QRIS — i.e. they run a separate QRIS merchant app and detect their own
+        // incoming payments, so the app may offer them the external-notification sound toggle.
+        boolean hasOwnQris,
         String businessName,
         String businessAddress,
         String nmid,

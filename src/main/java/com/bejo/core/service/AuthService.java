@@ -30,30 +30,44 @@ public class AuthService {
     private final BusinessRepository businessRepository;
     private final BusinessBankRepository businessBankRepository;
     private final SessionRepository sessionRepository;
+    private final QrisService qrisService;
     private final AccountSettingsService accountSettingsService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final TokenBlacklistService tokenBlacklistService;
+    private final LoginThrottleService loginThrottleService;
     private final Counter loginSuccessCounter;
     private final Counter loginFailureCounter;
+
+    /**
+     * A real BCrypt hash of a value nobody knows, verified against when the username doesn't
+     * exist. Without it an unknown username returns before any hashing while a real one pays
+     * ~100ms, and that timing difference tells an attacker which usernames are valid.
+     */
+    private final String dummyHash;
 
     public AuthService(UserRepository userRepository,
                        BusinessRepository businessRepository,
                        BusinessBankRepository businessBankRepository,
                        SessionRepository sessionRepository,
+                       QrisService qrisService,
                        AccountSettingsService accountSettingsService,
                        PasswordEncoder passwordEncoder,
                        JwtService jwtService,
                        TokenBlacklistService tokenBlacklistService,
+                       LoginThrottleService loginThrottleService,
                        MeterRegistry meterRegistry) {
         this.userRepository = userRepository;
         this.businessRepository = businessRepository;
         this.businessBankRepository = businessBankRepository;
         this.sessionRepository = sessionRepository;
+        this.qrisService = qrisService;
         this.accountSettingsService = accountSettingsService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.tokenBlacklistService = tokenBlacklistService;
+        this.loginThrottleService = loginThrottleService;
+        this.dummyHash = passwordEncoder.encode(java.util.UUID.randomUUID().toString());
         this.loginSuccessCounter = Counter.builder("login.attempts").tag("result", "success").register(meterRegistry);
         this.loginFailureCounter = Counter.builder("login.attempts").tag("result", "failure").register(meterRegistry);
     }
@@ -62,17 +76,22 @@ public class AuthService {
     public LoginResponseDto login(LoginRequestDto request) {
         log.debug("[LOGIN] username={} deviceId={}", request.username(), request.deviceId());
 
-        User user = userRepository.findByUsernameAndDeletedAtIsNull(request.username())
-                .orElseThrow(() -> {
-                    loginFailureCounter.increment();
-                    return new IllegalArgumentException("Nama pengguna atau kata sandi salah");
-                });
+        // Refuse outright while this account is locked out (429), before touching the DB.
+        loginThrottleService.assertNotLocked(request.username());
 
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        User user = userRepository.findByUsernameAndDeletedAtIsNull(request.username()).orElse(null);
+        // Always run one BCrypt comparison, even for an unknown username, so the response time
+        // doesn't reveal whether the account exists.
+        String hash = user != null ? user.getPasswordHash() : dummyHash;
+        boolean passwordOk = passwordEncoder.matches(request.password(), hash);
+
+        if (user == null || !passwordOk) {
             loginFailureCounter.increment();
-            log.warn("[LOGIN] Bad password for username={}", request.username());
+            loginThrottleService.recordFailure(request.username());
+            log.warn("[LOGIN] Failed attempt for username={}", request.username());
             throw new IllegalArgumentException("Nama pengguna atau kata sandi salah");
         }
+        loginThrottleService.recordSuccess(request.username());
 
         Business business = businessRepository.findById(user.getBusinessId())
                 .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
@@ -81,7 +100,8 @@ public class AuthService {
 
         upsertSession(request);
 
-        String token = jwtService.generateToken(request.username());
+        // The token is bound to the current password hash, so changing the password revokes it.
+        String token = jwtService.generateToken(request.username(), user.getPasswordHash());
         var accountSettings = accountSettingsService.getSettings(request.username());
 
         loginSuccessCounter.increment();
@@ -96,6 +116,7 @@ public class AuthService {
                 user.getPhone(),
                 user.isPhoneVerified(),
                 user.getBusinessRole(),
+                qrisService.hasOwnQris(user),
                 business.getName(),
                 business.getAddress(),
                 business.getNmid(),
@@ -113,10 +134,11 @@ public class AuthService {
 
     @Transactional
     public void logout(String token, String username, String deviceId) {
-        String jti = jwtService.extractJti(token);
-        LocalDateTime expiresAt = jwtService.extractExpiration(token);
-        tokenBlacklistService.blacklist(jti, expiresAt);
-        log.info("[LOGOUT] Token blacklisted jti={}", jti);
+        // Single parse; the request already authenticated, so the token is well-formed here.
+        jwtService.parse(token).ifPresent(claims -> {
+            tokenBlacklistService.blacklist(claims.jti(), claims.expiresAt());
+            log.info("[LOGOUT] Token blacklisted jti={}", claims.jti());
+        });
 
         // Clear the FCM token for the device being logged out so it stops receiving
         // pushes (other devices of the same user are untouched). deviceId is optional

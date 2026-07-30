@@ -13,6 +13,7 @@ import com.bejo.commerce.domain.ProductCategory;
 import com.bejo.shared.exception.ResourceNotFoundException;
 import com.bejo.commerce.repository.ProductCategoryRepository;
 import com.bejo.commerce.repository.ProductRepository;
+import com.bejo.commerce.repository.ProductSummary;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -77,7 +78,7 @@ public class ProductService {
         p.setPhoto(request.photo());
         productRepository.save(p);
         log.info("[PRODUCT] Created id={} sku={} for businessId={}", p.getId(), sku, businessId);
-        return toDto(p, categoryName, true);
+        return toDto(p, categoryName);
     }
 
     @Transactional(readOnly = true)
@@ -85,13 +86,14 @@ public class ProductService {
         Long businessId = businessContext.requireBusinessId(username);
         log.info("[PRODUCT] List for businessId={} categoryId={} page={} size={}",
                 businessId, categoryId, pageable.getPageNumber(), pageable.getPageSize());
-        Page<Product> products = categoryId != null
-                ? productRepository.findByBusinessIdAndCategoryIdOrderByNameAsc(businessId, categoryId, pageable)
-                : productRepository.findByBusinessIdOrderByNameAsc(businessId, pageable);
+        // The projection excludes `photo` at the SQL level, so the images are never fetched
+        Page<ProductSummary> products = categoryId != null
+                ? productRepository.findSummaryByBusinessIdAndCategoryIdOrderByNameAsc(businessId, categoryId, pageable)
+                : productRepository.findSummaryByBusinessIdOrderByNameAsc(businessId, pageable);
 
-        // Resolve category names in one shot; omit photos to keep the list small
+        // Resolve category names in one shot
         Map<Long, String> names = categoryNames(businessId);
-        return products.map(p -> toDto(p, names.get(p.getCategoryId()), false));
+        return products.map(p -> toDto(p, names.get(p.getCategoryId())));
     }
 
     @Transactional(readOnly = true)
@@ -100,7 +102,7 @@ public class ProductService {
         log.info("[PRODUCT] Get id={} for businessId={}", id, businessId);
         Product p = productRepository.findByIdAndBusinessId(id, businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Produk tidak ditemukan: " + id));
-        return toDto(p, categoryName(businessId, p.getCategoryId()), true);
+        return toDto(p, categoryName(businessId, p.getCategoryId()));
     }
 
     @Transactional
@@ -145,7 +147,7 @@ public class ProductService {
                     List.of(new StockMutationService.StockChangeLine(p, previousStock, p.getStock())));
         }
         log.info("[PRODUCT] Updated id={} for businessId={}", id, businessId);
-        return toDto(p, categoryName(businessId, p.getCategoryId()), true);
+        return toDto(p, categoryName(businessId, p.getCategoryId()));
     }
 
     /**
@@ -229,12 +231,23 @@ public class ProductService {
         }
     }
 
-    private ProductResponseDto toDto(Product p, String categoryName, boolean includePhoto) {
+    // Detail mapping — includes the photo.
+    private ProductResponseDto toDto(Product p, String categoryName) {
         return new ProductResponseDto(
                 p.getId(), p.getSku(), p.getName(), p.getShortDescription(),
                 p.getCategoryId(), categoryName,
                 p.getPrice(), p.getCostPrice(), p.getStock(),
-                includePhoto ? p.getPhoto() : null,
+                p.getPhoto(),
+                p.getCreatedAt(), p.getUpdatedAt());
+    }
+
+    // List mapping — the projection has no photo to give, so it is always absent.
+    private ProductResponseDto toDto(ProductSummary p, String categoryName) {
+        return new ProductResponseDto(
+                p.getId(), p.getSku(), p.getName(), p.getShortDescription(),
+                p.getCategoryId(), categoryName,
+                p.getPrice(), p.getCostPrice(), p.getStock(),
+                null,
                 p.getCreatedAt(), p.getUpdatedAt());
     }
 }

@@ -20,6 +20,11 @@ app:
   jwt:
     secret: dGVzdC1zZWNyZXQta2V5LWZvci11bml0LXRlc3RzLW11c3QtYmUtMjU2LWJpdHMtbG9uZyE=
     expiration-ms: 86400000
+  security:
+    login:
+      # Low so a test can reach the lockout in a few attempts (production default is 10)
+      max-failures: 3
+      lockout-minutes: 15
   seed:
     password: ""
   callback:

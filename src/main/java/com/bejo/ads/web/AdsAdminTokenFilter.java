@@ -12,6 +12,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -33,6 +34,13 @@ public class AdsAdminTokenFilter extends OncePerRequestFilter {
     private static final String HEADER = "X-ADS-ADMIN-TOKEN";
     private static final String PATH_PREFIX = "/api/ads/campaigns";
 
+    // This filter runs before Spring Security's firewall, so the raw URI it sees is not
+    // necessarily the path Spring MVC will map the request to (percent-encoding, path
+    // parameters, double slashes). Guard on the decoded/normalized path AS WELL AS the raw
+    // one and require the token if EITHER looks like the admin surface — an encoded variant
+    // that still reaches the controller then can't slip past the check.
+    private static final UrlPathHelper PATH_HELPER = new UrlPathHelper();
+
     @Value("${app.ads.admin-token:}")
     private String adminToken;
 
@@ -40,7 +48,7 @@ public class AdsAdminTokenFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        if (!request.getRequestURI().startsWith(PATH_PREFIX)) {
+        if (!guardsThisRequest(request)) {
             chain.doFilter(request, response);
             return;
         }
@@ -57,6 +65,20 @@ public class AdsAdminTokenFilter extends OncePerRequestFilter {
             return;
         }
         chain.doFilter(request, response);
+    }
+
+    // True when either the raw or the decoded/normalized path targets the admin surface.
+    private boolean guardsThisRequest(HttpServletRequest request) {
+        if (request.getRequestURI().startsWith(PATH_PREFIX)) {
+            return true;
+        }
+        try {
+            return PATH_HELPER.getPathWithinApplication(request).startsWith(PATH_PREFIX);
+        } catch (RuntimeException e) {
+            // Unparseable path: treat as guarded rather than letting it through unchecked.
+            log.warn("Could not normalize request path — guarding it: {}", e.getMessage());
+            return true;
+        }
     }
 
     private void reject(HttpServletResponse response, String message) throws IOException {

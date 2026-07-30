@@ -3,6 +3,7 @@ package com.bejo.core.service;
 import com.bejo.core.dto.QrisResponseDto;
 import com.bejo.core.domain.Business;
 import com.bejo.core.domain.BusinessQris;
+import com.bejo.core.domain.User;
 import com.bejo.shared.exception.ResourceNotFoundException;
 import com.bejo.core.repository.BusinessQrisRepository;
 import com.bejo.core.repository.UserQrisRepository;
@@ -18,6 +19,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -173,5 +175,46 @@ class QrisServiceTest {
         // No initial image is generated — stays null (empty state)
         assertThat(q.getInitialQrisImage()).isNull();
         verify(businessQrisRepository).save(q);
+    }
+
+    // ── hasOwnQris: does this account monitor a QRIS of its own? ──
+
+    private User asUser(String username, String role) {
+        User u = new User();
+        u.setUsername(username);
+        u.setBusinessId(BIZ);
+        u.setBusinessRole(role);
+        return u;
+    }
+
+    @Test
+    void superAdminHasOwnQrisOnceTheBusinessHasOne() {
+        when(userQrisRepository.existsByBusinessIdAndUsername(BIZ, "admin")).thenReturn(false);
+        when(businessQrisRepository.existsByBusinessId(BIZ)).thenReturn(true);
+
+        assertThat(qrisService.hasOwnQris(asUser("admin", com.bejo.core.domain.BusinessRole.SUPER_ADMIN))).isTrue();
+    }
+
+    @Test
+    void superAdminWithoutAnyBusinessQrisDoesNot() {
+        when(userQrisRepository.existsByBusinessIdAndUsername(BIZ, "admin")).thenReturn(false);
+        when(businessQrisRepository.existsByBusinessId(BIZ)).thenReturn(false);
+
+        assertThat(qrisService.hasOwnQris(asUser("admin", com.bejo.core.domain.BusinessRole.SUPER_ADMIN))).isFalse();
+    }
+
+    @Test
+    void memberWithAnAssignedQrisDoes() {
+        when(userQrisRepository.existsByBusinessIdAndUsername(BIZ, "emp")).thenReturn(true);
+
+        assertThat(qrisService.hasOwnQris(asUser("emp", com.bejo.core.domain.BusinessRole.MEMBER))).isTrue();
+    }
+
+    @Test
+    void memberSharingTheBusinessQrisDoesNot() {
+        when(userQrisRepository.existsByBusinessIdAndUsername(BIZ, "emp")).thenReturn(false);
+        // Even though the business has a QRIS — it is the super admin who monitors it
+        assertThat(qrisService.hasOwnQris(asUser("emp", com.bejo.core.domain.BusinessRole.MEMBER))).isFalse();
+        verify(businessQrisRepository, never()).existsByBusinessId(any());
     }
 }

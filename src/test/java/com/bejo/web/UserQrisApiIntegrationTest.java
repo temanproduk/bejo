@@ -122,6 +122,59 @@ class UserQrisApiIntegrationTest {
                 .andExpect(jsonPath("$.data.qrisImage").value(QR_BIZ));
     }
 
+    // The app gates its "Bunyi Uang Masuk dari Aplikasi" toggle on this flag: a member with
+    // their own QRIS runs a separate merchant app and detects its own incoming payments.
+    @Test
+    void hasOwnQrisReflectsTheAssignmentOnLoginAndMe() throws Exception {
+        String adminToken = login(regTeam("uq_flag_admin"), "d-flag-a");
+        String memberId = addMember(adminToken, "uq_flag_member");
+
+        // Before assignment: the member shares the business QRIS
+        mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON).content(objectMapper.writeValueAsString(Map.of(
+                                "username", "uq_flag_member", "password", "password1", "deviceId", "d-flag-m"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.hasOwnQris").value(false));
+
+        setUserQris(adminToken, memberId, "F001", 200);
+
+        // After assignment: both login and /me report it
+        MvcResult relogin = mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
+                        .contentType(APPLICATION_JSON).content(objectMapper.writeValueAsString(Map.of(
+                                "username", "uq_flag_member", "password", "password1", "deviceId", "d-flag-m"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.hasOwnQris").value(true))
+                .andReturn();
+        String memberToken = objectMapper.readTree(relogin.getResponse().getContentAsString())
+                .at("/data/token").asText();
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.hasOwnQris").value(true));
+
+        // The super admin: false while the business still has no QRIS at all...
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(jsonPath("$.data.hasOwnQris").value(false));
+
+        // ...and true once one is uploaded — the shared business QRIS is the admin's to monitor
+        mockMvc.perform(post("/api/qris/upload").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("qrisImage", QR_BIZ))))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(jsonPath("$.data.hasOwnQris").value(true));
+
+        // Removing the assignment flips it back
+        mockMvc.perform(delete("/api/qris/users/" + memberId).header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(jsonPath("$.data.hasOwnQris").value(false));   // shares the business QRIS again
+    }
+
     @Test
     void aMemberCannotManageUserQris() throws Exception {
         String adminToken = login(regTeam("uq_admin2"), "d-a2");

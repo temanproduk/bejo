@@ -39,6 +39,7 @@ class UserServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private BusinessRepository businessRepository;
     @Mock private BusinessBankRepository businessBankRepository;
+    @Mock private QrisService qrisService;
     @Mock private BusinessContext businessContext;
     @Mock private AccountSettingsService accountSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
@@ -53,9 +54,9 @@ class UserServiceTest {
     @BeforeEach
     void setUp() {
         userService = new UserService(userRepository, businessRepository, businessBankRepository,
-                businessContext, accountSettingsService, BUSINESS_OPTIONS, passwordEncoder);
-        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads / business+bank edits
-        lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // picture mutations (super admin)
+                qrisService, businessContext, accountSettingsService, BUSINESS_OPTIONS, passwordEncoder);
+        lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads
+        lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // picture / business / bank mutations (super admin)
     }
 
     private RegisterRequestDto registerRequest() {
@@ -362,6 +363,23 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.deleteProfilePicture("bob"))
                 .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
         verify(businessRepository, never()).save(any());
+    }
+
+    @Test
+    void nonSuperAdminCannotEditBusinessOrBank() {
+        when(businessContext.requireSuperAdminBusinessId("bob"))
+                .thenThrow(new com.bejo.shared.exception.ForbiddenException("Hanya super admin yang dapat mengubah pengaturan bisnis"));
+
+        assertThatThrownBy(() -> userService.updateBusiness("bob", new UpdateBusinessRequestDto("X", "Y", "Z")))
+                .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> userService.resetBusiness("bob"))
+                .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> userService.updateBank("bob", new UpdateBankRequestDto("X", "Y", "Z")))
+                .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> userService.resetBank("bob"))
+                .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
+        verify(businessRepository, never()).save(any());
+        verify(businessBankRepository, never()).save(any());
     }
 
     @Test

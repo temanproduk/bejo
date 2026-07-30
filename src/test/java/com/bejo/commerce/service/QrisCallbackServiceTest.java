@@ -120,7 +120,7 @@ class QrisCallbackServiceTest {
         Transaction t = captor.getValue();
         assertThat(t.getBusinessId()).isEqualTo(BIZ);              // always the seed user's business
         assertThat(t.getTransactionId()).startsWith("TXN-");       // generated, not from payload
-        assertThat(t.getIdempotencyKey()).isNull();                // PoC: no dedupe
+        assertThat(t.getIdempotencyKey()).isEqualTo("INV/QRM/4542BR/250826/2G4Y6CCZ");  // provider ref = dedupe key
         assertThat(t.getAmount()).isEqualTo(100L);
         assertThat(t.getStatus()).isEqualTo("SUCCESS");
         assertThat(t.getType()).isEqualTo("MANAGED");

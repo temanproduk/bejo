@@ -12,6 +12,10 @@ public interface UserQrisRepository extends JpaRepository<UserQris, Long> {
 
     Optional<UserQris> findByBusinessIdAndUsername(Long businessId, String username);
 
+    // Whether this user has their own QRIS assigned (vs. falling back to the shared business
+    // one) — surfaced on the login / me bundles so the app knows it detects its own payments.
+    boolean existsByBusinessIdAndUsername(Long businessId, String username);
+
     // All per-user QRIS in a business — used by the main account's listing and by callback routing
     // (map username -> terminal id to decide who gets a payment push).
     List<UserQris> findByBusinessId(Long businessId);

@@ -44,10 +44,12 @@ class AuthServiceTest {
     @Mock private BusinessRepository businessRepository;
     @Mock private BusinessBankRepository businessBankRepository;
     @Mock private SessionRepository sessionRepository;
+    @Mock private QrisService qrisService;
     @Mock private AccountSettingsService accountSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtService jwtService;
     @Mock private TokenBlacklistService tokenBlacklistService;
+    @Mock private LoginThrottleService loginThrottleService;
 
     private SimpleMeterRegistry meterRegistry;
     private AuthService authService;
@@ -56,7 +58,8 @@ class AuthServiceTest {
     void setUp() {
         meterRegistry = new SimpleMeterRegistry();
         authService = new AuthService(userRepository, businessRepository, businessBankRepository,
-                sessionRepository, accountSettingsService, passwordEncoder, jwtService, tokenBlacklistService, meterRegistry);
+                sessionRepository, qrisService, accountSettingsService, passwordEncoder, jwtService, tokenBlacklistService,
+                loginThrottleService, meterRegistry);
         lenient().when(accountSettingsService.getSettings("alice")).thenReturn(
                 new AccountSettingsResponseDto(Map.of(), List.of(), List.of(), true, false, false, false, false, false));
     }
@@ -123,7 +126,7 @@ class AuthServiceTest {
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
         when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank()));
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.empty());
-        when(jwtService.generateToken("alice")).thenReturn("jwt-token");
+        when(jwtService.generateToken("alice", "$hash")).thenReturn("jwt-token");
         when(jwtService.getExpiresInSeconds()).thenReturn(86_400L);
 
         LoginResponseDto data = authService.login(new LoginRequestDto("alice", "pw", "dev-1", "fcm-token"));
@@ -159,7 +162,7 @@ class AuthServiceTest {
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
         when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank()));
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.of(existing));
-        when(jwtService.generateToken("alice")).thenReturn("jwt-token");
+        when(jwtService.generateToken("alice", "$hash")).thenReturn("jwt-token");
 
         authService.login(new LoginRequestDto("alice", "pw", "dev-1", null));
 
@@ -180,7 +183,7 @@ class AuthServiceTest {
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
         when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank()));
         when(sessionRepository.findByUsernameAndDeviceId("alice", "dev-1")).thenReturn(Optional.of(existing));
-        when(jwtService.generateToken("alice")).thenReturn("jwt-token");
+        when(jwtService.generateToken("alice", "$hash")).thenReturn("jwt-token");
 
         authService.login(new LoginRequestDto("alice", "pw", "dev-1", "new-token"));
 
@@ -189,8 +192,8 @@ class AuthServiceTest {
 
     @Test
     void logoutBlacklistsTokenAndClearsDeviceToken() {
-        when(jwtService.extractJti("token")).thenReturn("jti-123");
-        when(jwtService.extractExpiration("token")).thenReturn(java.time.LocalDateTime.now().plusDays(1));
+        when(jwtService.parse("token")).thenReturn(java.util.Optional.of(new JwtService.TokenClaims(
+                "alice", "jti-123", "binding", java.time.LocalDateTime.now().plusDays(1))));
 
         authService.logout("token", "alice", "dev-1");
 
@@ -200,8 +203,8 @@ class AuthServiceTest {
 
     @Test
     void logoutWithoutDeviceIdOnlyBlacklists() {
-        when(jwtService.extractJti("token")).thenReturn("jti-123");
-        when(jwtService.extractExpiration("token")).thenReturn(java.time.LocalDateTime.now().plusDays(1));
+        when(jwtService.parse("token")).thenReturn(java.util.Optional.of(new JwtService.TokenClaims(
+                "alice", "jti-123", "binding", java.time.LocalDateTime.now().plusDays(1))));
 
         authService.logout("token", "alice", null);
 

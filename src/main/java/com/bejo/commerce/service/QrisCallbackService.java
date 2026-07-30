@@ -98,13 +98,31 @@ public class QrisCallbackService {
         BigDecimal amount = parseAmount(req.amount() != null ? req.amount().value() : null);
         BigDecimal tip = info != null && info.tip() != null ? parseAmount(info.tip()) : BigDecimal.ZERO;
         String status = mapStatus(req.latestTransactionStatus());
+
+        // Dedupe on the provider's own reference: payment gateways retry a notification on any
+        // timeout or non-2xx, and without this every retry recorded the same payment again,
+        // inflating the merchant's history and totals. Prefer additionalInfo.transactionId,
+        // falling back to the SNAP originalReferenceNo.
+        String providerReference = firstNonBlank(
+                info != null ? info.transactionId() : null, req.originalReferenceNo());
+        if (providerReference != null) {
+            var duplicate = transactionRepository.findByIdempotencyKeyAndBusinessId(providerReference, businessId);
+            if (duplicate.isPresent()) {
+                log.info("[CALLBACK] Duplicate notification for providerRef={} businessId={} — already recorded as txnId={}",
+                        providerReference, businessId, duplicate.get().getTransactionId());
+                return response(duplicate.get().getId(), req, amount, tip);
+            }
+        } else {
+            log.warn("[CALLBACK] Notification carries no provider reference — cannot dedupe, recording as new");
+        }
+
         String transactionId = "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
 
         Transaction t = new Transaction();
         t.setTransactionId(transactionId);
-        // PoC: no reference number to dedupe on, so no idempotency key — each callback
-        // creates a distinct transaction (Postgres allows multiple NULL unique values).
-        t.setIdempotencyKey(null);
+        // The provider's reference doubles as the idempotency key; the unique constraint on
+        // it is the backstop when two retries arrive at the same moment.
+        t.setIdempotencyKey(providerReference);
         t.setInvoiceId(req.originalReferenceNo());
         //t.setTransactionDate(parseTimestamp(xTimestamp));
         t.setTransactionDate(LocalDateTime.now());
@@ -139,6 +157,20 @@ public class QrisCallbackService {
         }
 
         return response(t.getId(), req, amount, tip);
+    }
+
+    /**
+     * The provider's reference for this payment, used as the dedupe key. Returns null when the
+     * payload carries neither field, in which case the notification can't be deduped.
+     *
+     * <p>A simultaneous re-delivery can still slip past the lookup and hit the unique constraint;
+     * that surfaces as a 409, and the provider's next retry finds the committed row and gets a
+     * normal 200 — so the duplicate still never becomes a second transaction.
+     */
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) return first;
+        if (second != null && !second.isBlank()) return second;
+        return null;
     }
 
     // The business a callback belongs to: matched by merchant PAN, else the configured default account.

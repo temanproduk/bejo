@@ -147,6 +147,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponseDto.error(ex.getMessage()));
     }
 
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ApiResponseDto<Void>> handleTooManyRequests(TooManyRequestsException ex, HttpServletRequest req) {
+        log.warn("[429] {} — {}", at(req), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(ApiResponseDto.error(ex.getMessage()));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponseDto<Void>> handleBadRequest(IllegalArgumentException ex, HttpServletRequest req) {
         log.warn("[400] {} — {}", at(req), ex.getMessage());
