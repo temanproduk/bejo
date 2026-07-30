@@ -34,6 +34,7 @@ import com.bejo.commerce.repository.ProductStock;
 import com.bejo.commerce.repository.TransactionItemRepository;
 import com.bejo.commerce.repository.TransactionRepository;
 import com.bejo.shared.util.AppTime;
+import com.bejo.shared.util.Rupiah;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.validation.ConstraintViolation;
@@ -603,7 +604,7 @@ public class TransactionService {
         if (recipients.isEmpty()) return;
 
         PushPayload payload = new TransactionPushPayload(t, merchantName(businessId),
-                "Pembayaran Diterima", "Pembayaran Rp" + t.getAmount() + " diterima");
+                "Pembayaran Diterima", "Pembayaran " + Rupiah.format(t.getAmount()) + " diterima");
         List<String> targets = List.copyOf(recipients);
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             sendParsedPushQuietly(targets, payload, t.getTransactionId());

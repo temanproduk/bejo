@@ -610,6 +610,16 @@ Since nothing is pre-rendered, **`data.type` is how the app tells the kinds apar
 
 Transaction, presence and ads pushes all go out at **Android priority `high`**, so FCM delivers them at once and wakes the app even in Doze — the app runs its announcement/dialog on arrival — rather than batching them until the device next wakes.
 
+`TRANSACTION` pushes carry the amount **already formatted for display** in `body` — Indonesian currency, `.` grouping thousands and `,` for decimals, with decimals shown only when non-zero (never padded to `,00`). The raw integer is still in `data.amount` if the app needs to compute with it.
+
+```json
+// TRANSACTION — the app announces body as-is; amount stays raw for any local formatting
+{ "type": "TRANSACTION", "transactionId": "TXN-A1B2C3D4",
+  "title": "Pembayaran Diterima", "body": "Pembayaran Rp 1.000.000 diterima",
+  "amount": "1000000", "status": "SUCCESS", "issuerName": "AstraPay",
+  "merchantName": "Warung Alice", "transactionDate": "2026-06-28T09:14:00" }
+```
+
 ```json
 // PRESENCE ping — the app can open the response dialog for presenceId 13
 { "type": "PRESENCE", "presenceType": "PING", "presenceId": "13",

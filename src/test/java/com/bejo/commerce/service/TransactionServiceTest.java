@@ -275,6 +275,31 @@ class TransactionServiceTest {
         assertThat(captor.getValue()).containsExactly("alice");
     }
 
+    // The app renders the push itself (data-only), so the body must arrive already formatted
+    // as Indonesian currency.
+    @Test
+    void parsedPushBodyFormatsTheAmountAsRupiah() {
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
+                .thenReturn(Optional.empty());
+        when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
+                .thenReturn(Optional.of(named("alice")));
+        when(userQrisRepository.findByBusinessId(BIZ)).thenReturn(List.of());
+
+        transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));   // amount 50_000
+
+        ArgumentCaptor<com.bejo.notification.PushPayload> captor =
+                ArgumentCaptor.forClass(com.bejo.notification.PushPayload.class);
+        verify(pushNotificationService).sendToUsernames(any(), captor.capture());
+        var data = captor.getValue().toData();
+
+        assertThat(data.get("body")).isEqualTo("Pembayaran Rp 50.000 diterima");
+        assertThat(data.get("title")).isEqualTo("Pembayaran Diterima");
+        // Everything the app needs rides in the data map; urgent keeps Android priority HIGH so a
+        // backgrounded app still wakes and announces the payment.
+        assertThat(data).containsKeys("type", "title", "body", "transactionId", "amount");
+        assertThat(captor.getValue().urgent()).isTrue();
+    }
+
     private User member(String username) {
         User u = new User();
         u.setUsername(username);

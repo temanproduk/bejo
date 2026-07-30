@@ -18,6 +18,7 @@ import com.bejo.commerce.repository.TransactionRepository;
 import com.bejo.core.repository.UserQrisRepository;
 import com.bejo.core.repository.UserRepository;
 import com.bejo.shared.util.AppTime;
+import com.bejo.shared.util.Rupiah;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
@@ -220,7 +221,7 @@ public class QrisCallbackService {
     private PushPayload buildPushData(Transaction t, String merchantName) {
         // A payment push (PushType.TRANSACTION), not an attendance event; the app renders it.
         return new TransactionPushPayload(t, merchantName,
-                "Pembayaran Diterima", "Pembayaran Rp" + t.getAmount() + " diterima");
+                "Pembayaran Diterima", "Pembayaran " + Rupiah.format(t.getAmount()) + " diterima");
     }
 
     // Per the spec, response.status is the acknowledgment status (processing
