@@ -1439,6 +1439,13 @@ For the keyword endpoint: `400 Tidak ada data yang diubah` (all fields null), `4
 
 Returns the caller's **effective** QRIS: if the main account [assigned this user their own QRIS](#put-apiqrisusersusername--assign-a-user-their-own-qris-super-admin), that image (with its terminal); otherwise the shared business QRIS. `type` indicates whether the image is Bejo-managed or user-uploaded.
 
+> **Compatibility contract with the app.** The server treats the code as **opaque**: it is stored verbatim and served verbatim, never parsed, normalised or re-ordered. So a payload the app decodes, sends, reads back and re-encodes produces a QR that scans identically to the merchant's original. What the server enforces is only:
+> - non-blank, **max 1024 characters**;
+> - **no control characters** (a sign of corruption);
+> - **non-ASCII is allowed** — EMVCo tag `64` carries merchant name/city in a local script, so a valid payload may contain it.
+>
+> The server additionally checks the EMV checksum and **logs a warning without rejecting** if it fails, so an unfamiliar acquirer is never blocked. To mirror it, the algorithm is **CRC-16/CCITT-FALSE** (polynomial `0x1021`, init `0xFFFF`, no reflection, no final XOR) over everything up to *and including* the trailing `6304`, compared against the last 4 hex digits. Verified against a real AstraPay payload ending `63042C15`.
+
 **QRIS is stored and served as a _code_, not an image.** The app decodes the merchant's QR once and sends the **EMV payload string**; the server stores that and returns it, and the app renders the QR locally. A few hundred bytes travel instead of a multi-MB base64 image.
 
 **QRIS is optional.** A freshly registered merchant has no QRIS record at all, so `GET /api/qris` returns **`404 QRIS data not found`** until they supply one via `POST /api/qris/upload` (which creates the record on first upload). Once a record exists, `qrisCode` **may still be `null`** — e.g. after a reset, the response is `type: MANAGED` with `qrisCode: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to add their QRIS.

@@ -13,6 +13,8 @@ import com.bejo.core.repository.UserQrisRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.nio.charset.StandardCharsets;
 import org.springframework.transaction.annotation.Transactional;
 
 
@@ -138,9 +140,21 @@ public class QrisService {
     }
 
     /**
-     * A QRIS code is the EMV payload the app decoded from the merchant's QR. Validation is
-     * deliberately light — length and printability — because rejecting an unusual but valid
-     * payload would block a real merchant, and the app has already parsed it once.
+     * Validates a QRIS code — the EMV payload the app decoded from the merchant's QR.
+     *
+     * <p>The contract with the app is that this string round-trips <b>unchanged</b>: it is stored
+     * verbatim and served verbatim, so re-encoding it yields a QR that scans identically to the
+     * merchant's original. The server therefore does not parse, normalise or rewrite it.
+     *
+     * <p>Validation is deliberately narrow, rejecting only what cannot be a scanned payload:
+     * blank, over-long, or containing control characters (a sign of corruption). Notably it does
+     * <b>not</b> require ASCII — EMVCo tag 64 ("Merchant Information — Language Template") exists
+     * to carry a merchant's name and city in a local script, so a valid payload may hold non-ASCII
+     * text, and rejecting it would lock out a real merchant.
+     *
+     * <p>A payload whose CRC does not check out is <b>logged but still accepted</b>: the app has
+     * already decoded it from a physical QR, so a mismatch more likely means an acquirer we
+     * haven't seen than a corrupt code, and refusing it would break that merchant outright.
      */
     static String validateQrisCode(String value) {
         String code = value.trim();
@@ -151,9 +165,45 @@ public class QrisService {
             throw new IllegalArgumentException("Kode QRIS terlalu panjang (maksimal "
                     + MAX_QRIS_CODE_LENGTH + " karakter)");
         }
-        if (code.chars().anyMatch(c -> c < 0x20 || c > 0x7E)) {
+        if (code.chars().anyMatch(Character::isISOControl)) {
             throw new IllegalArgumentException("Format kode QRIS tidak valid");
         }
+        if (!crcMatches(code)) {
+            log.warn("[QRIS] Code failed its EMV CRC check (accepted anyway) — starts with '{}', length {}",
+                    code.substring(0, Math.min(12, code.length())), code.length());
+        }
         return code;
+    }
+
+    /**
+     * Whether the payload's trailing CRC tag agrees with its contents, i.e. the code is intact and
+     * will re-encode into the merchant's original QR.
+     *
+     * <p>Per EMVCo, a payload ends with tag {@code 63} length {@code 04} followed by four hex
+     * digits, and the checksum is <b>CRC-16/CCITT-FALSE</b> (polynomial {@code 0x1021}, initial
+     * value {@code 0xFFFF}, no reflection, no final XOR) over everything up to and including those
+     * {@code 6304} characters. An Android implementation must match this exactly. Returns false
+     * when no CRC tag is recognisable, so the caller can treat "unparseable" and "mismatched" alike.
+     */
+    static boolean crcMatches(String code) {
+        if (code.length() < 8 || !code.startsWith("6304", code.length() - 8)) {
+            return false;
+        }
+        String body = code.substring(0, code.length() - 4);
+        String stated = code.substring(code.length() - 4);
+        return stated.equalsIgnoreCase(crc16CcittFalse(body));
+    }
+
+    /** CRC-16/CCITT-FALSE of {@code data}, as four uppercase hex digits. */
+    static String crc16CcittFalse(String data) {
+        int crc = 0xFFFF;
+        for (byte b : data.getBytes(StandardCharsets.UTF_8)) {
+            crc ^= (b & 0xFF) << 8;
+            for (int bit = 0; bit < 8; bit++) {
+                crc = (crc & 0x8000) != 0 ? ((crc << 1) ^ 0x1021) : (crc << 1);
+                crc &= 0xFFFF;
+            }
+        }
+        return String.format("%04X", crc);
     }
 }

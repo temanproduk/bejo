@@ -240,4 +240,76 @@ class QrisServiceTest {
 
         assertThat(data.qrisCode()).isEqualTo(CODE);
     }
+
+    // ── QRIS code contract with the Android app ──
+    // The app decodes the merchant's QR and sends this string; the server stores and serves it
+    // verbatim so the app can re-encode a QR that scans identically. These pin that contract.
+
+    /** A real QRIS payload, decoded from an actual AstraPay merchant QR. */
+    private static final String REAL_QRIS =
+            "00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI"
+            + "51440014ID.CO.QRIS.WWW0215ID10265407789780303UMI5204581453033605802ID"
+            + "5906Susilo6007TANGSEL61051541362080704A00163042C15";
+
+    @Test
+    void crcOfARealMerchantPayloadChecksOut() {
+        // Its trailing tag is 6304 2C15; the checksum covers everything up to and including "6304"
+        assertThat(REAL_QRIS).endsWith("63042C15");
+        assertThat(QrisService.crc16CcittFalse(REAL_QRIS.substring(0, REAL_QRIS.length() - 4)))
+                .isEqualTo("2C15");
+        assertThat(QrisService.crcMatches(REAL_QRIS)).isTrue();
+    }
+
+    @Test
+    void aTamperedPayloadFailsTheCrc() {
+        // One character changed anywhere invalidates the checksum — this is what would catch a
+        // payload corrupted between the app and the server.
+        String tampered = REAL_QRIS.replace("5906Susilo", "5906Susila");
+        assertThat(QrisService.crcMatches(tampered)).isFalse();
+        assertThat(QrisService.crcMatches("no-crc-tag-here")).isFalse();
+    }
+
+    @Test
+    void aRealPayloadIsStoredExactlyAsSent() {
+        BusinessQris q = qris(null, null);
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
+
+        qrisService.uploadQris("alice", REAL_QRIS);
+
+        // Byte-for-byte — no normalising, re-ordering or re-encoding, or the app's regenerated
+        // QR would differ from the merchant's original.
+        assertThat(q.getQrisPayload()).isEqualTo(REAL_QRIS);
+    }
+
+    @Test
+    void aNonAsciiMerchantNameIsAccepted() {
+        // EMVCo tag 64 carries name/city in a local script, so a valid payload may be non-ASCII.
+        // Rejecting it would lock out a real merchant.
+        String withUnicode = "000201" + "5913Warung Ibu Ayu" + "6407" + "\u00d6\u00e7\u011f" + "63041234";
+        BusinessQris q = qris(null, null);
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
+
+        qrisService.uploadQris("alice", withUnicode);
+
+        assertThat(q.getQrisPayload()).isEqualTo(withUnicode);
+    }
+
+    @Test
+    void aCodeWithABadCrcIsAcceptedNotRejected() {
+        // An acquirer we haven't seen must not be blocked; the mismatch is logged instead.
+        String badCrc = REAL_QRIS.substring(0, REAL_QRIS.length() - 4) + "0000";
+        BusinessQris q = qris(null, null);
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
+
+        qrisService.uploadQris("alice", badCrc);
+
+        assertThat(q.getQrisPayload()).isEqualTo(badCrc);
+    }
+
+    @Test
+    void controlCharactersAreStillRejected() {
+        assertThatThrownBy(() -> qrisService.uploadQris("alice", "000201\u0000BAD63041234"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tidak valid");
+    }
 }
