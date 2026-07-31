@@ -168,7 +168,8 @@ public class UserService {
         Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
         business.setName(request.businessName());
         business.setAddress(request.businessAddress());
-        business.setNmid(request.nmid());
+        // NMID is intentionally not touched here — it lives on the QRIS and is parsed from the
+        // uploaded QRIS code, so business info can no longer put it out of step with the QR.
         businessRepository.save(business);
         log.info("[BUSINESS] Updated businessId={} by username={}", business.getId(), username);
     }
@@ -210,10 +211,9 @@ public class UserService {
         }
         business.setName(business.getInitialName());
         business.setAddress(business.getInitialAddress());
-        business.setNmid(business.getInitialNmid());
         businessRepository.save(business);
         log.info("[BUSINESS RESET] Reverted businessId={} by username={}", business.getId(), username);
-        return new BusinessResponseDto(business.getName(), business.getAddress(), business.getNmid());
+        return new BusinessResponseDto(business.getName(), business.getAddress());
     }
 
     @Transactional

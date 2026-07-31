@@ -32,6 +32,18 @@ public class BusinessQris {
     @Column(name = "qris_image", columnDefinition = "TEXT")
     private String qrisPayload;
 
+    // Merchant identity parsed out of the QRIS code at upload time, so the caption the app
+    // shows above the QR always describes the QR itself (see QrisCodeParser).
+    @Column(name = "qris_merchant_name", length = 255)
+    private String qrisMerchantName;
+
+    @Column(name = "nmid", length = 50)
+    private String nmid;
+
+    // The acquirer's reverse-domain GUID from the code, e.g. ID.CO.ASTRAPAY.WWW
+    @Column(name = "acquirer", length = 100)
+    private String acquirer;
+
     // The managed/initial QRIS served when the merchant hasn't supplied their own.
     @Column(name = "initial_qris_image", columnDefinition = "TEXT")
     private String initialQrisPayload;
@@ -50,4 +62,10 @@ public class BusinessQris {
     public void setQrisPayload(String qrisPayload) { this.qrisPayload = qrisPayload; }
     public String getInitialQrisPayload() { return initialQrisPayload; }
     public void setInitialQrisPayload(String initialQrisPayload) { this.initialQrisPayload = initialQrisPayload; }
+    public String getQrisMerchantName() { return qrisMerchantName; }
+    public void setQrisMerchantName(String qrisMerchantName) { this.qrisMerchantName = qrisMerchantName; }
+    public String getNmid() { return nmid; }
+    public void setNmid(String nmid) { this.nmid = nmid; }
+    public String getAcquirer() { return acquirer; }
+    public void setAcquirer(String acquirer) { this.acquirer = acquirer; }
 }

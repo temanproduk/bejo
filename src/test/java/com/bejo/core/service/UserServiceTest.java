@@ -269,11 +269,13 @@ class UserServiceTest {
         Business business = new Business();
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
-        userService.updateBusiness("alice", new UpdateBusinessRequestDto("Toko Baru", "Bandung", "ID999"));
+        business.setNmid("ID-FROM-QRIS");
+        userService.updateBusiness("alice", new UpdateBusinessRequestDto("Toko Baru", "Bandung"));
 
         assertThat(business.getName()).isEqualTo("Toko Baru");
         assertThat(business.getAddress()).isEqualTo("Bandung");
-        assertThat(business.getNmid()).isEqualTo("ID999");
+        // NMID belongs to the QRIS now — editing business info must leave it alone
+        assertThat(business.getNmid()).isEqualTo("ID-FROM-QRIS");
     }
 
     @Test
@@ -283,13 +285,15 @@ class UserServiceTest {
         business.setInitialName("Warung Alice");
         business.setInitialAddress("Jakarta");
         business.setInitialNmid("ID123");
+        business.setNmid("ID-FROM-QRIS");
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         userService.resetBusiness("alice");
 
         assertThat(business.getName()).isEqualTo("Warung Alice");
         assertThat(business.getAddress()).isEqualTo("Jakarta");
-        assertThat(business.getNmid()).isEqualTo("ID123");
+        // Reset covers editable business info only; NMID comes from the QRIS and is untouched
+        assertThat(business.getNmid()).isEqualTo("ID-FROM-QRIS");
     }
 
     @Test
@@ -370,7 +374,7 @@ class UserServiceTest {
         when(businessContext.requireSuperAdminBusinessId("bob"))
                 .thenThrow(new com.bejo.shared.exception.ForbiddenException("Hanya super admin yang dapat mengubah pengaturan bisnis"));
 
-        assertThatThrownBy(() -> userService.updateBusiness("bob", new UpdateBusinessRequestDto("X", "Y", "Z")))
+        assertThatThrownBy(() -> userService.updateBusiness("bob", new UpdateBusinessRequestDto("X", "Y")))
                 .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
         assertThatThrownBy(() -> userService.resetBusiness("bob"))
                 .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);

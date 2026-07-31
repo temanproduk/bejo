@@ -312,4 +312,71 @@ class QrisServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("tidak valid");
     }
+
+    // ── the caption must always describe the code actually being served ──
+
+    @Test
+    void uploadStoresTheIdentityParsedFromTheCode() {
+        BusinessQris q = qris(null, null);
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
+
+        qrisService.uploadQris("alice", REAL_QRIS);
+
+        assertThat(q.getQrisMerchantName()).isEqualTo("Susilo");
+        assertThat(q.getNmid()).isEqualTo("ID1026540778978");
+        assertThat(q.getAcquirer()).isEqualTo("ID.CO.ASTRAPAY.WWW");
+    }
+
+    @Test
+    void resetReDerivesTheIdentityFromTheInitialCode() {
+        // A different managed code takes over on reset — the caption must follow it, not keep
+        // describing the code that was just discarded.
+        String initial = "000201" + "5137" + "0014ID.CO.QRIS.WWW0215ID8888888888888"
+                + "5909Toko Awal" + "63041234";
+        BusinessQris q = qris(null, initial);
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
+        qrisService.uploadQris("alice", REAL_QRIS);
+        assertThat(q.getNmid()).isEqualTo("ID1026540778978");   // the uploaded one
+
+        qrisService.resetQris("alice");
+
+        assertThat(q.getQrisPayload()).isNull();
+        assertThat(q.getQrisMerchantName()).isEqualTo("Toko Awal");
+        assertThat(q.getNmid()).isEqualTo("ID8888888888888");
+        assertThat(q.getAcquirer()).isNull();                    // initial has no acquirer template
+    }
+
+    @Test
+    void resetWithNoInitialCodeClearsTheIdentityEntirely() {
+        BusinessQris q = qris(null, null);
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
+        qrisService.uploadQris("alice", REAL_QRIS);
+
+        qrisService.resetQris("alice");
+
+        // Empty state: no code and therefore nothing to caption it with
+        assertThat(q.getQrisPayload()).isNull();
+        assertThat(q.getQrisMerchantName()).isNull();
+        assertThat(q.getNmid()).isNull();
+        assertThat(q.getAcquirer()).isNull();
+    }
+
+    @Test
+    void theServedResponseCarriesTheParsedIdentityNotTheBusinessName() {
+        BusinessQris q = qris(REAL_QRIS, null);
+        q.setQrisMerchantName("Susilo");
+        q.setNmid("ID1026540778978");
+        q.setAcquirer("ID.CO.ASTRAPAY.WWW");
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
+
+        QrisResponseDto data = qrisService.getQrisData("alice");
+
+        // Field order matters on a record of same-typed fields — assert each explicitly
+        assertThat(data.qrisMerchantName()).isEqualTo("Susilo");
+        assertThat(data.nmid()).isEqualTo("ID1026540778978");
+        assertThat(data.acquirer()).isEqualTo("ID.CO.ASTRAPAY.WWW");
+        assertThat(data.businessName()).isEqualTo("Warung Alice");    // the manually-typed one
+        assertThat(data.businessAddress()).isEqualTo("Jakarta");
+    }
 }

@@ -139,6 +139,11 @@ public class DataSeeder implements ApplicationRunner {
             qris.setBusinessId(businessId);
             qris.setInitialQrisPayload(seedQrisCode);
             qris.setQrisPayload(seedQrisCode);
+            // Same identity the upload path would derive, so the seed account looks like a real one
+            var identity = com.bejo.core.service.QrisCodeParser.parse(seedQrisCode);
+            qris.setQrisMerchantName(identity.merchantName());
+            qris.setNmid(identity.nmid());
+            qris.setAcquirer(identity.acquirer());
             businessQrisRepository.save(qris);
 
             log.info("[SEED] Created default business '{}' + super admin '{}'", seedBusinessName, seedUsername);

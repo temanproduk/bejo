@@ -69,10 +69,12 @@ public class UserQrisService {
                     return created;
                 });
         qris.setTerminalId(terminalId);
-        qris.setQrisPayload(qrisCode);
+        QrisService.applyCode(qris::setQrisPayload, qris::setQrisMerchantName, qris::setNmid,
+                qris::setAcquirer, qrisCode);
         userQrisRepository.save(qris);
-        log.info("[USER-QRIS] Set QRIS for userId={} username={} terminalId={} in businessId={} by {}",
-                targetUserId, targetUsername, terminalId, businessId, callerUsername);
+        log.info("[USER-QRIS] Set QRIS for userId={} username={} terminalId={} merchantName='{}' nmid={} acquirer={} in businessId={} by {}",
+                targetUserId, targetUsername, terminalId, qris.getQrisMerchantName(), qris.getNmid(),
+                qris.getAcquirer(), businessId, callerUsername);
         return toDto(qris, target.getId(), true);
     }
 
@@ -119,6 +121,7 @@ public class UserQrisService {
 
     private UserQrisResponseDto toDto(UserQris q, Long userId, boolean withCode) {
         return new UserQrisResponseDto(userId, q.getUsername(), q.getTerminalId(),
-                withCode ? q.getQrisPayload() : null, q.getCreatedAt(), q.getUpdatedAt());
+                withCode ? q.getQrisPayload() : null, q.getQrisMerchantName(), q.getNmid(),
+                q.getAcquirer(), q.getCreatedAt(), q.getUpdatedAt());
     }
 }

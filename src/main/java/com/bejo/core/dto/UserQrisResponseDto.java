@@ -14,6 +14,10 @@ public record UserQrisResponseDto(
         String username,
         String terminalId,
         String qrisCode,
+        // Parsed from the code — the identity the app captions this terminal's QR with
+        String qrisMerchantName,
+        String nmid,
+        String acquirer,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {}

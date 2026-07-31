@@ -24,7 +24,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"nmid\": \"ID1026540778978\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\",\n  \"merchantPan\": \"9360082232606290012\"\n}",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\",\n  \"merchantPan\": \"9360082232606290012\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -828,7 +828,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"businessName\": \"Alice Shop New\",\n  \"businessAddress\": \"Jl. Baru No. 2\",\n  \"nmid\": \"ID1026540778978\"\n}",
+              "raw": "{\n  \"businessName\": \"Alice Shop New\",\n  \"businessAddress\": \"Jl. Baru No. 2\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -847,7 +847,7 @@
                 "business"
               ]
             },
-            "description": "Updates the business name, address, and NMID (shared by all of the business's users). businessName is required; businessAddress and nmid are optional.\n\nDoes NOT change the initial (regulatory) values. Use Reset Business Info to revert."
+            "description": "Updates the business name and address (shared by all of the business's users). businessName is required; businessAddress is optional.\n\nNMID is NOT editable here — it belongs to the QRIS and is parsed from the QRIS code on upload, so read it from GET /api/qris.\n\nDoes NOT change the initial (regulatory) values. Use Reset Business Info to revert."
           }
         },
         {
@@ -877,7 +877,7 @@
                 "reset"
               ]
             },
-            "description": "Reverts businessName, businessAddress, and nmid to the values recorded at registration.\n\nNo request body needed."
+            "description": "Reverts businessName and businessAddress to the values recorded at registration. NMID is untouched — it comes from the QRIS code.\n\nNo request body needed."
           }
         },
         {
@@ -2057,7 +2057,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"qrisCode\": \"00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234\"\n}",
+              "raw": "{\n  \"qrisCode\": \"00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI51440014ID.CO.QRIS.WWW0215ID10265407789780303UMI5204581453033605802ID5906Susilo6007TANGSEL61051541362080704A00163042C15\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2075,7 +2075,7 @@
                 "upload"
               ]
             },
-            "description": "Sets the business QRIS as a CODE (the EMV payload the app decoded from the merchant's QR) — not an image. GET /api/qris then returns it as qrisCode with type=UPLOADED, and the app renders the QR locally.\n\nReset QRIS reverts to the initial/managed value.\n\nqrisCode: max 1024 chars, printable ASCII. NOTE: super admin only — a plain member gets 403."
+            "description": "Sets the business QRIS as a CODE (the EMV payload the app decoded from the merchant's QR) — not an image. GET /api/qris then returns it as qrisCode with type=UPLOADED, and the app renders the QR locally.\n\nThe server parses the code and stores the merchant identity with it, returning qrisMerchantName (EMV tag 59), nmid (sub-tag 02 of the ID.CO.QRIS.WWW template) and acquirer (the other template's GUID, e.g. ID.CO.ASTRAPAY.WWW). Caption the QR with those — NOT businessName, which is the separately-typed business info.\n\nReset QRIS reverts to the initial/managed value and re-derives the caption from it.\n\nqrisCode: max 1024 chars, no control characters. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
@@ -2126,7 +2126,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"terminalId\": \"A001\",\n  \"qrisCode\": \"00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234\"\n}",
+              "raw": "{\n  \"terminalId\": \"A001\",\n  \"qrisCode\": \"00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI51440014ID.CO.QRIS.WWW0215ID10265407789780303UMI5204581453033605802ID5906Susilo6007TANGSEL61051541362080704A00163042C15\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -32,6 +32,18 @@ public class UserQris {
     @Column(name = "qris_image", columnDefinition = "TEXT", nullable = false)
     private String qrisPayload;
 
+    // Merchant identity parsed out of the QRIS code at upload time, so the caption the app
+    // shows above the QR always describes the QR itself (see QrisCodeParser).
+    @Column(name = "qris_merchant_name", length = 255)
+    private String qrisMerchantName;
+
+    @Column(name = "nmid", length = 50)
+    private String nmid;
+
+    // The acquirer's reverse-domain GUID from the code, e.g. ID.CO.ASTRAPAY.WWW
+    @Column(name = "acquirer", length = 100)
+    private String acquirer;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -62,4 +74,10 @@ public class UserQris {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public String getQrisMerchantName() { return qrisMerchantName; }
+    public void setQrisMerchantName(String qrisMerchantName) { this.qrisMerchantName = qrisMerchantName; }
+    public String getNmid() { return nmid; }
+    public void setNmid(String nmid) { this.nmid = nmid; }
+    public String getAcquirer() { return acquirer; }
+    public void setAcquirer(String acquirer) { this.acquirer = acquirer; }
 }

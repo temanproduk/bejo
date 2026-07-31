@@ -744,7 +744,6 @@ Self-service registration. Creates a **new business** and its first user as the 
 | `phone` | yes | International format e.g. `+628123456789` |
 | `businessName` | yes | Max 255 chars |
 | `businessAddress` | no | Free text |
-| `nmid` | no | Max 50 chars |
 | `merchantPan` | no | Max 50 chars — QRIS merchant PAN; the payment callback carries this (not the NMID), so it's how a callback routes to this business |
 | `bankName` | no | Max 100 chars |
 | `bankNumber` | no | Digits only, 6–20 digits |
@@ -872,7 +871,6 @@ Super-admin-only (the business info is shared) — a plain member gets `403 Hany
 |---|---|---|
 | `businessName` | yes | Max 255 chars |
 | `businessAddress` | no | Free text |
-| `nmid` | no | Max 50 chars |
 
 **Success — HTTP 200:** `{ "status": 1, "message": "Informasi bisnis berhasil diperbarui" }`
 
@@ -1446,6 +1444,8 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
 >
 > The server additionally checks the EMV checksum and **logs a warning without rejecting** if it fails, so an unfamiliar acquirer is never blocked. To mirror it, the algorithm is **CRC-16/CCITT-FALSE** (polynomial `0x1021`, init `0xFFFF`, no reflection, no final XOR) over everything up to *and including* the trailing `6304`, compared against the last 4 hex digits. Verified against a real AstraPay payload ending `63042C15`.
 
+**Two names, deliberately.** `businessName` is what the merchant typed into business info; **`qrisMerchantName`, `nmid` and `acquirer` are parsed out of the QRIS code itself** at upload — EMV tag `59`, sub-tag `02` of the `ID.CO.QRIS.WWW` template, and the GUID of the other merchant-account template (e.g. `ID.CO.ASTRAPAY.WWW`) respectively. `acquirer` is the raw reverse-domain identifier; map it to a brand name in the app if you want to display one. Caption the QR with the parsed pair, not the business name — a sub-account with its own QRIS has its own merchant identity, and the caption must match the QR on screen. Both are also returned per assignment by `GET /api/qris/users/{id}`.
+
 **QRIS is stored and served as a _code_, not an image.** The app decodes the merchant's QR once and sends the **EMV payload string**; the server stores that and returns it, and the app renders the QR locally. A few hundred bytes travel instead of a multi-MB base64 image.
 
 **QRIS is optional.** A freshly registered merchant has no QRIS record at all, so `GET /api/qris` returns **`404 QRIS data not found`** until they supply one via `POST /api/qris/upload` (which creates the record on first upload). Once a record exists, `qrisCode` **may still be `null`** — e.g. after a reset, the response is `type: MANAGED` with `qrisCode: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to add their QRIS.
@@ -1457,7 +1457,10 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
   "status": 1,
   "data": {
     "type": "UPLOADED",
-    "qrisCode": "00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234",
+    "qrisCode": "00020101021126640018ID.CO.ASTRAPAY.WWW…63042C15",
+    "qrisMerchantName": "Susilo",
+    "nmid": "ID1026540778978",
+    "acquirer": "ID.CO.ASTRAPAY.WWW",
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
     "nmid": "ID1026540778978"

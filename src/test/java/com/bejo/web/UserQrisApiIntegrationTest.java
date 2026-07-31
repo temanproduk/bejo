@@ -31,6 +31,16 @@ class UserQrisApiIntegrationTest {
     // Sample EMV payloads — a QRIS is stored/served as a code now, not a base64 image
     private static final String QR_A =
             "00020101021126610014COM.BEJO.WWW0118936008220000000A0152045812530336054081000580ID5906Term A63041111";
+    /** A real QRIS payload decoded from an actual AstraPay merchant QR. */
+    private static final String REAL_QRIS =
+            "00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI"
+            + "51440014ID.CO.QRIS.WWW0215ID10265407789780303UMI5204581453033605802ID"
+            + "5906Susilo6007TANGSEL61051541362080704A00163042C15";
+    /** A second merchant identity, for the sub-account's own terminal. */
+    private static final String OTHER_QRIS =
+            "000201" + "5137" + "0014ID.CO.QRIS.WWW0215ID7777777777777"
+            + "5911Toko Cabang" + "63041234";
+
     private static final String QR_BIZ =
             "00020101021126610014COM.BEJO.WWW0118936008220000000BIZ52045812530336054081000580ID5908Business63042222";
 
@@ -175,6 +185,51 @@ class UserQrisApiIntegrationTest {
         mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + memberToken))
                 .andExpect(jsonPath("$.data.hasOwnQris").value(false));   // shares the business QRIS again
+    }
+
+    // The QR caption must describe the QR on screen: a sub-account with its own QRIS shows its
+    // own merchant identity, parsed from its own code — not the business's.
+    @Test
+    void eachQrisReportsTheMerchantIdentityParsedFromItsOwnCode() throws Exception {
+        String adminToken = login(regTeam("uq_ident_admin"), "d-ident-a");
+        String memberId = addMember(adminToken, "uq_ident_member");
+        String memberToken = login("uq_ident_member", "d-ident-m");
+
+        // Business QRIS — a real AstraPay payload
+        mockMvc.perform(post("/api/qris/upload").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("qrisCode", REAL_QRIS))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qrisMerchantName").value("Susilo"))
+                .andExpect(jsonPath("$.data.nmid").value("ID1026540778978"))
+                .andExpect(jsonPath("$.data.acquirer").value("ID.CO.ASTRAPAY.WWW"))
+                // businessName stays the manually-entered one, distinct from the QRIS name
+                .andExpect(jsonPath("$.data.businessName").value("Warung uq_ident_admin"));
+
+        // The member gets their own terminal with a DIFFERENT merchant identity
+        mockMvc.perform(put("/api/qris/users/" + memberId).header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "terminalId", "IDENT01", "qrisCode", OTHER_QRIS))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qrisMerchantName").value("Toko Cabang"))
+                .andExpect(jsonPath("$.data.nmid").value("ID7777777777777"));
+
+        // ...and sees it, not the business's
+        mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qrisMerchantName").value("Toko Cabang"))
+                .andExpect(jsonPath("$.data.nmid").value("ID7777777777777"));
+
+        // The admin's own QRIS is unaffected by the member's assignment
+        mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(jsonPath("$.data.nmid").value("ID1026540778978"));
     }
 
     @Test

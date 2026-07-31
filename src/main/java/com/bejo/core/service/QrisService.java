@@ -82,7 +82,8 @@ public class QrisService {
         UserQris own = userQrisRepository.findByBusinessIdAndUsername(businessId, username).orElse(null);
         if (own != null) {
             log.debug("[QRIS] Serving per-user QRIS for username={} terminalId={}", username, own.getTerminalId());
-            return response(QrisType.UPLOADED, own.getQrisPayload(), business);
+            return response(QrisType.UPLOADED, own.getQrisPayload(),
+                    own.getQrisMerchantName(), own.getNmid(), own.getAcquirer(), business);
         }
 
         BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
@@ -90,7 +91,8 @@ public class QrisService {
 
         if (qris.getQrisPayload() != null) {
             log.debug("[QRIS] Serving UPLOADED QRIS for businessId={}", businessId);
-            return response(QrisType.UPLOADED, qris.getQrisPayload(), business);
+            return response(QrisType.UPLOADED, qris.getQrisPayload(),
+                    qris.getQrisMerchantName(), qris.getNmid(), qris.getAcquirer(), business);
         }
 
         // Nothing uploaded — serve the managed/initial value as-is. It may be null (a freshly
@@ -98,12 +100,14 @@ public class QrisService {
         // empty state rather than a placeholder.
         String initial = qris.getInitialQrisPayload();
         log.debug("[QRIS] Serving MANAGED QRIS (present={}) for businessId={}", initial != null, businessId);
-        return response(QrisType.MANAGED, initial, business);
+        return response(QrisType.MANAGED, initial,
+                qris.getQrisMerchantName(), qris.getNmid(), qris.getAcquirer(), business);
     }
 
-    private QrisResponseDto response(String type, String qrisCode, Business business) {
-        return new QrisResponseDto(type, qrisCode,
-                business.getName(), business.getAddress(), business.getNmid());
+    private QrisResponseDto response(String type, String qrisCode, String qrisMerchantName,
+                                     String nmid, String acquirer, Business business) {
+        return new QrisResponseDto(type, qrisCode, qrisMerchantName, nmid, acquirer,
+                business.getName(), business.getAddress());
     }
 
     @Transactional
@@ -121,9 +125,10 @@ public class QrisService {
                     return created;
                 });
 
-        qris.setQrisPayload(code);
+        applyCode(qris::setQrisPayload, qris::setQrisMerchantName, qris::setNmid, qris::setAcquirer, code);
         businessQrisRepository.save(qris);
-        log.info("[QRIS] Stored QRIS code ({} chars) for businessId={}", code.length(), businessId);
+        log.info("[QRIS] Stored QRIS code ({} chars) merchantName='{}' nmid={} acquirer={} for businessId={}",
+                code.length(), qris.getQrisMerchantName(), qris.getNmid(), qris.getAcquirer(), businessId);
     }
 
     @Transactional
@@ -133,8 +138,11 @@ public class QrisService {
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
         // Clear the merchant's own code; fall back to whatever initial/managed value exists
-        // (may be null → empty state). No placeholder is generated.
+        // (may be null → empty state). No placeholder is generated. The caption has to follow the
+        // code now being served, so re-derive it from the initial one.
         qris.setQrisPayload(null);
+        applyIdentity(qris::setQrisMerchantName, qris::setNmid, qris::setAcquirer,
+                qris.getInitialQrisPayload());
         businessQrisRepository.save(qris);
         log.info("[QRIS] Reset to MANAGED QRIS for businessId={}", businessId);
     }
@@ -192,6 +200,35 @@ public class QrisService {
         String body = code.substring(0, code.length() - 4);
         String stated = code.substring(code.length() - 4);
         return stated.equalsIgnoreCase(crc16CcittFalse(body));
+    }
+
+    /**
+     * Stores a code together with the merchant identity read out of it. Kept in one place so the
+     * business QRIS and a per-user QRIS can never diverge in how they derive their caption.
+     */
+    static void applyCode(java.util.function.Consumer<String> setCode,
+                          java.util.function.Consumer<String> setMerchantName,
+                          java.util.function.Consumer<String> setNmid,
+                          java.util.function.Consumer<String> setAcquirer,
+                          String code) {
+        setCode.accept(code);
+        applyIdentity(setMerchantName, setNmid, setAcquirer, code);
+    }
+
+    /**
+     * Re-derives the stored merchant identity from {@code code}. Called whenever the code being
+     * <em>served</em> changes — including a reset, where the served code reverts to the initial
+     * one and the caption must follow it. Leaving the old identity behind would caption a QR with
+     * the merchant name and NMID of a code that is no longer shown.
+     */
+    static void applyIdentity(java.util.function.Consumer<String> setMerchantName,
+                              java.util.function.Consumer<String> setNmid,
+                              java.util.function.Consumer<String> setAcquirer,
+                              String code) {
+        QrisCodeParser.QrisIdentity identity = QrisCodeParser.parse(code);
+        setMerchantName.accept(identity.merchantName());
+        setNmid.accept(identity.nmid());
+        setAcquirer.accept(identity.acquirer());
     }
 
     /** CRC-16/CCITT-FALSE of {@code data}, as four uppercase hex digits. */

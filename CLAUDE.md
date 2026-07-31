@@ -133,7 +133,7 @@ Controllers resolve the username via Spring's `Authentication` principal.
 | `GET`/`PUT`/`DELETE` | `/api/business/picture` | JWT (GET: any member · PUT/DELETE: super admin) | Get/set/remove the **business** picture (base64, ≤1 MB, shared by all members). Response field is `profilePicture` |
 | `PATCH` | `/api/users/me/bank` | JWT (super admin) | Update bank info |
 | `POST` | `/api/users/me/bank/reset` | JWT (super admin) | Reset bank info to initial values |
-| `PATCH` | `/api/users/me/business` | JWT (super admin) | Update business name/address/NMID |
+| `PATCH` | `/api/users/me/business` | JWT (super admin) | Update business name/address (**NMID is not editable — it comes from the QRIS code**) |
 | `POST` | `/api/users/me/business/reset` | JWT (super admin) | Reset business info to initial values |
 | `POST` | `/api/users/me/upgrade` | JWT (super admin) | Upgrade a self-service account to **MANAGED** (requires `merchantPan` + `nmid`; both mandatory); sets the routing credentials + flips `account_type`. Returns the refreshed `/me` bundle |
 | `POST` | `/api/categories` | JWT | Create a product category |
@@ -286,6 +286,8 @@ Transaction push copy renders the amount through `shared/util/Rupiah.format` —
 ### QRIS model
 
 **QRIS is a code, not an image.** The app decodes the merchant's QR once and sends the **EMV payload string**; the server stores and serves that, and the app re-renders the QR — a few hundred bytes instead of a multi-MB base64 image on every read.
+
+**Merchant identity comes from the code, not from business info.** `QrisCodeParser` reads three things out of the code at upload — the merchant name (tag `59`), the **NMID** (sub-tag `02` of the merchant-account template whose GUID is `ID.CO.QRIS.WWW` — found by GUID, not by assuming tag 51), and the **acquirer** (the GUID of the *other* merchant-account template, e.g. `ID.CO.ASTRAPAY.WWW`, kept raw since mapping GUIDs to brand names is presentation) — and all three are stored on `business_qris` / `user_qris` alongside the code. The app captions the QR with them, so the caption always describes the QR on screen: a sub-account with its own QRIS shows its own identity, not the business's. NMID is therefore **per-QRIS, not per-business** — `PATCH /api/users/me/business` no longer accepts or resets `nmid` (`businesses.nmid` remains, still set at registration/upgrade for callback routing, but is no longer user-editable). Parsing is lenient and never throws, since a code with a failing CRC is still accepted.
 
 **The code is opaque to the server** — stored and served verbatim, never parsed or normalised, so the app's re-encoded QR scans identically to the merchant's original. `QrisService.validateQrisCode` rejects only blank, over-1024-char, or control-character input. It deliberately **allows non-ASCII** (EMVCo tag `64` carries name/city in a local script; the earlier ASCII-only check would have locked out such a merchant). It also verifies the EMV checksum via `crcMatches`/`crc16CcittFalse` — **CRC-16/CCITT-FALSE** over everything up to and including the trailing `6304` — but only **logs** a mismatch rather than rejecting, so an unfamiliar acquirer isn't blocked. `QrisServiceTest` pins all of this against a real AstraPay payload (`…63042C15`).
 
