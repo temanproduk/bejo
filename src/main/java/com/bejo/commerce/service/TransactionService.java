@@ -247,7 +247,7 @@ public class TransactionService {
             long subtotal = unitPrice * line.quantity;
             total += subtotal;
             TransactionItem ti = new TransactionItem();
-            ti.setHistoryId(t.getId());
+            ti.setTransactionId(t.getId());
             ti.setProductId(line.product.getId());
             ti.setSku(line.product.getSku());
             ti.setName(line.product.getName());
@@ -279,7 +279,7 @@ public class TransactionService {
     }
 
     private List<TransactionItemResponseDto> itemDtos(Long historyId) {
-        return transactionItemRepository.findByHistoryIdOrderByIdAsc(historyId).stream()
+        return transactionItemRepository.findByTransactionIdOrderByIdAsc(historyId).stream()
                 .map(i -> new TransactionItemResponseDto(
                         i.getProductId(), i.getSku(), i.getName(),
                         i.getQuantity(), i.getUnitPrice(), i.getSubtotal()))
@@ -429,7 +429,7 @@ public class TransactionService {
     private void reconcileItems(Long businessId, Transaction t, List<TransactionItemRequestDto> newItems) {
         // Old quantities per product (from the current line items)
         Map<Long, Integer> oldQty = new LinkedHashMap<>();
-        List<TransactionItem> existing = transactionItemRepository.findByHistoryIdOrderByIdAsc(t.getId());
+        List<TransactionItem> existing = transactionItemRepository.findByTransactionIdOrderByIdAsc(t.getId());
         for (TransactionItem it : existing) oldQty.merge(it.getProductId(), it.getQuantity(), Integer::sum);
 
         // New quantities per product (reject duplicate product lines)
@@ -497,7 +497,7 @@ public class TransactionService {
             long subtotal = unitPrice * item.quantity();
             total += subtotal;
             TransactionItem ti = new TransactionItem();
-            ti.setHistoryId(t.getId());
+            ti.setTransactionId(t.getId());
             ti.setProductId(product.getId());
             ti.setSku(product.getSku());
             ti.setName(product.getName());
@@ -535,7 +535,7 @@ public class TransactionService {
     // Credits each line item's quantity back to its product's stock (best-effort per product —
     // a product deleted since the sale is skipped) and records one SALE reversal mutation.
     private void restoreStockFromItems(Long businessId, Transaction t) {
-        List<TransactionItem> items = transactionItemRepository.findByHistoryIdOrderByIdAsc(t.getId());
+        List<TransactionItem> items = transactionItemRepository.findByTransactionIdOrderByIdAsc(t.getId());
         if (items.isEmpty()) return;
         List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
         Map<Long, Product> restored = new LinkedHashMap<>();

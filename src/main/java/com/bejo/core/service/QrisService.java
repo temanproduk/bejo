@@ -1,6 +1,5 @@
 package com.bejo.core.service;
 
-import com.bejo.core.domain.QrisType;
 import com.bejo.core.dto.QrisResponseDto;
 import com.bejo.core.domain.Business;
 import com.bejo.core.domain.BusinessQris;
@@ -73,40 +72,30 @@ public class QrisService {
      * <p>Serves the <b>QRIS code</b> (EMV payload) — the app renders the QR from it, so nothing
      * image-sized crosses the wire.
      */
-    @Transactional
+    @Transactional(readOnly = true)
     public QrisResponseDto getQrisData(String username) {
         Long businessId = businessContext.requireBusinessId(username);
         Business business = businessRepository.findById(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
 
+        // The caller's own QRIS if the super admin assigned them one, else the shared business QRIS.
         UserQris own = userQrisRepository.findByBusinessIdAndUsername(businessId, username).orElse(null);
         if (own != null) {
             log.debug("[QRIS] Serving per-user QRIS for username={} terminalId={}", username, own.getTerminalId());
-            return response(QrisType.UPLOADED, own.getQrisPayload(),
-                    own.getQrisMerchantName(), own.getNmid(), own.getAcquirer(), business);
+            return response(own.getQrisCode(), own.getMerchantName(), own.getNmid(), own.getAcquirer(),
+                    own.getTerminalId(), business);
         }
 
         BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
-
-        if (qris.getQrisPayload() != null) {
-            log.debug("[QRIS] Serving UPLOADED QRIS for businessId={}", businessId);
-            return response(QrisType.UPLOADED, qris.getQrisPayload(),
-                    qris.getQrisMerchantName(), qris.getNmid(), qris.getAcquirer(), business);
-        }
-
-        // Nothing uploaded — serve the managed/initial value as-is. It may be null (a freshly
-        // registered business that hasn't supplied a QRIS), in which case the client renders an
-        // empty state rather than a placeholder.
-        String initial = qris.getInitialQrisPayload();
-        log.debug("[QRIS] Serving MANAGED QRIS (present={}) for businessId={}", initial != null, businessId);
-        return response(QrisType.MANAGED, initial,
-                qris.getQrisMerchantName(), qris.getNmid(), qris.getAcquirer(), business);
+        log.debug("[QRIS] Serving business QRIS for businessId={}", businessId);
+        return response(qris.getQrisCode(), qris.getMerchantName(), qris.getNmid(), qris.getAcquirer(),
+                qris.getTerminalId(), business);
     }
 
-    private QrisResponseDto response(String type, String qrisCode, String qrisMerchantName,
-                                     String nmid, String acquirer, Business business) {
-        return new QrisResponseDto(type, qrisCode, qrisMerchantName, nmid, acquirer,
+    private QrisResponseDto response(String qrisCode, String merchantName, String nmid,
+                                     String acquirer, String terminalId, Business business) {
+        return new QrisResponseDto(qrisCode, merchantName, nmid, acquirer, terminalId,
                 business.getName(), business.getAddress());
     }
 
@@ -125,27 +114,13 @@ public class QrisService {
                     return created;
                 });
 
-        applyCode(qris::setQrisPayload, qris::setQrisMerchantName, qris::setNmid, qris::setAcquirer, code);
+        applyCode(qris::setQrisCode, qris::setMerchantName, qris::setNmid, qris::setAcquirer,
+                qris::setTerminalId, code);
         businessQrisRepository.save(qris);
-        log.info("[QRIS] Stored QRIS code ({} chars) merchantName='{}' nmid={} acquirer={} for businessId={}",
-                code.length(), qris.getQrisMerchantName(), qris.getNmid(), qris.getAcquirer(), businessId);
+        log.info("[QRIS] Stored QRIS code ({} chars) merchantName='{}' nmid={} acquirer={} terminalId={} for businessId={}",
+                code.length(), qris.getMerchantName(), qris.getNmid(), qris.getAcquirer(), qris.getTerminalId(), businessId);
     }
 
-    @Transactional
-    public void resetQris(String username) {
-        Long businessId = businessContext.requireSuperAdminBusinessId(username);  // super-admin only
-        BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
-                .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
-
-        // Clear the merchant's own code; fall back to whatever initial/managed value exists
-        // (may be null → empty state). No placeholder is generated. The caption has to follow the
-        // code now being served, so re-derive it from the initial one.
-        qris.setQrisPayload(null);
-        applyIdentity(qris::setQrisMerchantName, qris::setNmid, qris::setAcquirer,
-                qris.getInitialQrisPayload());
-        businessQrisRepository.save(qris);
-        log.info("[QRIS] Reset to MANAGED QRIS for businessId={}", businessId);
-    }
 
     /**
      * Validates a QRIS code — the EMV payload the app decoded from the merchant's QR.
@@ -210,9 +185,10 @@ public class QrisService {
                           java.util.function.Consumer<String> setMerchantName,
                           java.util.function.Consumer<String> setNmid,
                           java.util.function.Consumer<String> setAcquirer,
+                          java.util.function.Consumer<String> setTerminalId,
                           String code) {
         setCode.accept(code);
-        applyIdentity(setMerchantName, setNmid, setAcquirer, code);
+        applyIdentity(setMerchantName, setNmid, setAcquirer, setTerminalId, code);
     }
 
     /**
@@ -224,11 +200,13 @@ public class QrisService {
     static void applyIdentity(java.util.function.Consumer<String> setMerchantName,
                               java.util.function.Consumer<String> setNmid,
                               java.util.function.Consumer<String> setAcquirer,
+                              java.util.function.Consumer<String> setTerminalId,
                               String code) {
         QrisCodeParser.QrisIdentity identity = QrisCodeParser.parse(code);
         setMerchantName.accept(identity.merchantName());
         setNmid.accept(identity.nmid());
         setAcquirer.accept(identity.acquirer());
+        setTerminalId.accept(identity.terminalId());
     }
 
     /** CRC-16/CCITT-FALSE of {@code data}, as four uppercase hex digits. */

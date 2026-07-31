@@ -37,10 +37,16 @@ public class DataSeeder implements ApplicationRunner {
      * shaped EMV sample for local/dev use — its CRC is not computed, so it is not meant to be
      * scanned by a real payment app. Seed data backs the seed user only.
      */
+    /**
+     * QRIS for the seed account, stored as a code. This is a real, CRC-valid EMV payload (the one
+     * the project's own sample QR decoded to), so the seeded account parses to a proper merchant
+     * name / NMID / acquirer exactly as a real upload would. A hand-built payload is easy to get
+     * wrong — bad TLV lengths parse to garbage rather than failing loudly.
+     */
     private static final String SEED_QRIS_CODE =
-            "00020101021126610014COM.BEJO.WWW011893600822SEED00000002150000000000000000303UMI"
-            + "51440014ID.CO.QRIS.WWW0215ID10200000000000303UMI5204581253033605802ID"
-            + "5909Bejo Seed6007Jakarta61051021062070703A0163040000";
+            "00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI"
+            + "51440014ID.CO.QRIS.WWW0215ID10265407789780303UMI5204581453033605802ID"
+            + "5906Susilo6007TANGSEL61051541362080704A00163042C15";
 
     @Value("${app.seed.username:admin}")
     private String seedUsername;
@@ -56,9 +62,6 @@ public class DataSeeder implements ApplicationRunner {
 
     @Value("${app.seed.business-address:}")
     private String seedBusinessAddress;
-
-    @Value("${app.seed.nmid:}")
-    private String seedNmid;
 
     @Value("${app.seed.merchant-pan:}")
     private String seedMerchantPan;
@@ -100,16 +103,10 @@ public class DataSeeder implements ApplicationRunner {
         } else {
             Business business = new Business();
             business.setName(seedBusinessName);
-            business.setInitialName(seedBusinessName);
-            String addr = seedBusinessAddress.isBlank() ? null : seedBusinessAddress;
-            business.setAddress(addr);
-            business.setInitialAddress(addr);
-            String nmid = seedNmid.isBlank() ? null : seedNmid;
-            business.setNmid(nmid);
+            business.setAddress(seedBusinessAddress.isBlank() ? null : seedBusinessAddress);
             business.setMerchantPan(seedMerchantPan.isBlank() ? null : seedMerchantPan);
             business.setSize(businessOptions.resolveSize(null));          // configured default
             business.setIndustry(businessOptions.resolveIndustry(null));  // configured default
-            business.setInitialNmid(nmid);
             businessRepository.save(business);
             businessId = business.getId();
 
@@ -129,21 +126,18 @@ public class DataSeeder implements ApplicationRunner {
             bank.setBankName("Bank Central Asia");
             bank.setBankNumber("1234567890");
             bank.setBankAccountName("Admin Bejo");
-            bank.setInitialBankName("Bank Central Asia");
-            bank.setInitialBankNumber("1234567890");
-            bank.setInitialBankAccountName("Admin Bejo");
             businessBankRepository.save(bank);
 
             String seedQrisCode = SEED_QRIS_CODE;
             BusinessQris qris = new BusinessQris();
             qris.setBusinessId(businessId);
-            qris.setInitialQrisPayload(seedQrisCode);
-            qris.setQrisPayload(seedQrisCode);
+            qris.setQrisCode(seedQrisCode);
             // Same identity the upload path would derive, so the seed account looks like a real one
             var identity = com.bejo.core.service.QrisCodeParser.parse(seedQrisCode);
-            qris.setQrisMerchantName(identity.merchantName());
+            qris.setMerchantName(identity.merchantName());
             qris.setNmid(identity.nmid());
             qris.setAcquirer(identity.acquirer());
+            qris.setTerminalId(identity.terminalId());
             businessQrisRepository.save(qris);
 
             log.info("[SEED] Created default business '{}' + super admin '{}'", seedBusinessName, seedUsername);

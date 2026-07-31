@@ -7,7 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Core's adapter for the notification module's {@link StaleTokenHandler} port: when FCM rejects a
- * token, clears it from the owning {@code bejo_sessions} row. The {@code recipientRef} the
+ * token, clears it from the owning {@code sessions} row. The {@code recipientRef} the
  * notification module hands back is the session id it originally supplied via {@link
  * com.bejo.notification.PushRecipient} (see {@link SessionPushRecipientDirectory}).
  *

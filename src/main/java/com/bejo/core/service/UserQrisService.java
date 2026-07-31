@@ -54,13 +54,6 @@ public class UserQrisService {
         String targetUsername = target.getUsername();
         String qrisCode = QrisService.validateQrisCode(request.qrisCode());
 
-        String terminalId = request.terminalId().trim();
-        // Friendly duplicate-terminal check (the DB partial-unique index is the backstop)
-        userQrisRepository.findByBusinessId(businessId).stream()
-                .filter(q -> !q.getUsername().equals(targetUsername) && q.getTerminalId().equals(terminalId))
-                .findAny()
-                .ifPresent(q -> { throw new IllegalArgumentException("Terminal ID sudah digunakan"); });
-
         UserQris qris = userQrisRepository.findByBusinessIdAndUsername(businessId, targetUsername)
                 .orElseGet(() -> {
                     UserQris created = new UserQris();
@@ -68,12 +61,24 @@ public class UserQrisService {
                     created.setUsername(targetUsername);
                     return created;
                 });
-        qris.setTerminalId(terminalId);
-        QrisService.applyCode(qris::setQrisPayload, qris::setQrisMerchantName, qris::setNmid,
-                qris::setAcquirer, qrisCode);
+        // Everything — terminal id included — comes from the code, so it can't drift from the QR.
+        QrisService.applyCode(qris::setQrisCode, qris::setMerchantName, qris::setNmid,
+                qris::setAcquirer, qris::setTerminalId, qrisCode);
+
+        // Friendly duplicate-terminal check (the unique index is the backstop). A code with no
+        // terminal label stores null, and several users may sit at null — they just aren't
+        // terminal-routed, so nulls are not treated as clashing.
+        String terminalId = qris.getTerminalId();
+        if (terminalId != null) {
+            userQrisRepository.findByBusinessId(businessId).stream()
+                    .filter(q -> !q.getUsername().equals(targetUsername) && terminalId.equals(q.getTerminalId()))
+                    .findAny()
+                    .ifPresent(q -> { throw new IllegalArgumentException("Terminal ID sudah digunakan"); });
+        }
+
         userQrisRepository.save(qris);
         log.info("[USER-QRIS] Set QRIS for userId={} username={} terminalId={} merchantName='{}' nmid={} acquirer={} in businessId={} by {}",
-                targetUserId, targetUsername, terminalId, qris.getQrisMerchantName(), qris.getNmid(),
+                targetUserId, targetUsername, terminalId, qris.getMerchantName(), qris.getNmid(),
                 qris.getAcquirer(), businessId, callerUsername);
         return toDto(qris, target.getId(), true);
     }
@@ -121,7 +126,7 @@ public class UserQrisService {
 
     private UserQrisResponseDto toDto(UserQris q, Long userId, boolean withCode) {
         return new UserQrisResponseDto(userId, q.getUsername(), q.getTerminalId(),
-                withCode ? q.getQrisPayload() : null, q.getQrisMerchantName(), q.getNmid(),
+                withCode ? q.getQrisCode() : null, q.getMerchantName(), q.getNmid(),
                 q.getAcquirer(), q.getCreatedAt(), q.getUpdatedAt());
     }
 }

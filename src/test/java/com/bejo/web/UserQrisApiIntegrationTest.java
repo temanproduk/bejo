@@ -30,7 +30,7 @@ class UserQrisApiIntegrationTest {
     private static final String API_TOKEN = "test-api-token";
     // Sample EMV payloads — a QRIS is stored/served as a code now, not a base64 image
     private static final String QR_A =
-            "00020101021126610014COM.BEJO.WWW0118936008220000000A0152045812530336054081000580ID5906Term A63041111";
+            "00020101021126440018ID.CO.ASTRAPAY.WWW011893600822000000000151440014ID.CO.QRIS.WWW0215ID11111111111110303UMI5204581453033605802ID5908Cabang A6007JAKARTA62110707TERMA0163040000";
     /** A real QRIS payload decoded from an actual AstraPay merchant QR. */
     private static final String REAL_QRIS =
             "00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI"
@@ -42,7 +42,7 @@ class UserQrisApiIntegrationTest {
             + "5911Toko Cabang" + "63041234";
 
     private static final String QR_BIZ =
-            "00020101021126610014COM.BEJO.WWW0118936008220000000BIZ52045812530336054081000580ID5908Business63042222";
+            "00020101021126440018ID.CO.ASTRAPAY.WWW011893600822000000000151440014ID.CO.QRIS.WWW0215ID22222222222220303UMI5204581453033605802ID5912Warung Pusat6007JAKARTA62110707TERMBIZ63040000";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
@@ -86,10 +86,10 @@ class UserQrisApiIntegrationTest {
         return objectMapper.readTree(r.getResponse().getContentAsString()).at("/data/id").asText();
     }
 
-    private void setUserQris(String token, String targetId, String terminalId, int expectedStatus) throws Exception {
+    private void setUserQris(String token, String targetId, int expectedStatus) throws Exception {
         mockMvc.perform(put("/api/qris/users/" + targetId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("terminalId", terminalId, "qrisCode", QR_A))))
+                        .content(objectMapper.writeValueAsString(Map.of("qrisCode", QR_A))))
                 .andExpect(status().is(expectedStatus));
     }
 
@@ -106,7 +106,7 @@ class UserQrisApiIntegrationTest {
                 .andExpect(status().isOk());
 
         // Main account gives the member their own QRIS + terminal (keyed by user id)
-        setUserQris(adminToken, memberId, "A001", 200);
+        setUserQris(adminToken, memberId, 200);
 
         // Listed for the main account (userId + terminal shown, image omitted)
         mockMvc.perform(get("/api/qris/users").header("X-API-TOKEN", API_TOKEN)
@@ -115,7 +115,7 @@ class UserQrisApiIntegrationTest {
                 .andExpect(jsonPath("$.count").value(1))
                 .andExpect(jsonPath("$.data[0].userId").value(Integer.parseInt(memberId)))
                 .andExpect(jsonPath("$.data[0].username").value("uq_member1"))
-                .andExpect(jsonPath("$.data[0].terminalId").value("A001"))
+                .andExpect(jsonPath("$.data[0].terminalId").value("TERMA01"))
                 .andExpect(jsonPath("$.data[0].qrisCode").doesNotExist());
 
         // The member's GET /api/qris now returns THEIR image, not the business one
@@ -148,7 +148,7 @@ class UserQrisApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.hasOwnQris").value(false));
 
-        setUserQris(adminToken, memberId, "F001", 200);
+        setUserQris(adminToken, memberId, 200);
 
         // After assignment: both login and /me report it
         MvcResult relogin = mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
@@ -204,7 +204,7 @@ class UserQrisApiIntegrationTest {
         mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.qrisMerchantName").value("Susilo"))
+                .andExpect(jsonPath("$.data.merchantName").value("Susilo"))
                 .andExpect(jsonPath("$.data.nmid").value("ID1026540778978"))
                 .andExpect(jsonPath("$.data.acquirer").value("ID.CO.ASTRAPAY.WWW"))
                 // businessName stays the manually-entered one, distinct from the QRIS name
@@ -214,16 +214,16 @@ class UserQrisApiIntegrationTest {
         mockMvc.perform(put("/api/qris/users/" + memberId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
-                                "terminalId", "IDENT01", "qrisCode", OTHER_QRIS))))
+                                "qrisCode", OTHER_QRIS))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.qrisMerchantName").value("Toko Cabang"))
+                .andExpect(jsonPath("$.data.merchantName").value("Toko Cabang"))
                 .andExpect(jsonPath("$.data.nmid").value("ID7777777777777"));
 
         // ...and sees it, not the business's
         mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.qrisMerchantName").value("Toko Cabang"))
+                .andExpect(jsonPath("$.data.merchantName").value("Toko Cabang"))
                 .andExpect(jsonPath("$.data.nmid").value("ID7777777777777"));
 
         // The admin's own QRIS is unaffected by the member's assignment
@@ -238,7 +238,7 @@ class UserQrisApiIntegrationTest {
         String memberId = addMember(adminToken, "uq_member2");
         String memberToken = login("uq_member2", "d-m2");
 
-        setUserQris(memberToken, memberId, "B001", 403);   // member → forbidden
+        setUserQris(memberToken, memberId, 403);   // member → forbidden
     }
 
     @Test
@@ -247,14 +247,14 @@ class UserQrisApiIntegrationTest {
         String m3a = addMember(adminToken, "uq_m3a");
         String m3b = addMember(adminToken, "uq_m3b");
 
-        setUserQris(adminToken, m3a, "T100", 200);
-        setUserQris(adminToken, m3b, "T100", 400);   // same terminal → 400
+        setUserQris(adminToken, m3a, 200);
+        setUserQris(adminToken, m3b, 400);   // same terminal → 400
     }
 
     @Test
     void unknownTargetUserIsRejected() throws Exception {
         String adminToken = login(regTeam("uq_admin4"), "d-a4");
-        setUserQris(adminToken, "999999", "T200", 400);   // no such user id
+        setUserQris(adminToken, "999999", 400);   // no such user id
     }
 
     @Test
@@ -267,7 +267,7 @@ class UserQrisApiIntegrationTest {
         // team off → assigning a per-user QRIS (even to self) is gated
         mockMvc.perform(put("/api/qris/users/" + soloId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("terminalId", "S1", "qrisCode", QR_A))))
+                        .content(objectMapper.writeValueAsString(Map.of("qrisCode", QR_A))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("Fitur manajemen tim belum diaktifkan"));
     }

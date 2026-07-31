@@ -81,7 +81,6 @@ class AuthServiceTest {
         Business b = new Business();
         b.setName("Warung Alice");
         b.setAddress("Jakarta");
-        b.setNmid("ID123");
         b.setSize("Mikro");
         b.setIndustry("Makanan & Minuman");
         return b;

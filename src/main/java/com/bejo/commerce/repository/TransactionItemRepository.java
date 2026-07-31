@@ -8,5 +8,5 @@ import java.util.List;
 
 @Repository
 public interface TransactionItemRepository extends JpaRepository<TransactionItem, Long> {
-    List<TransactionItem> findByHistoryIdOrderByIdAsc(Long historyId);
+    List<TransactionItem> findByTransactionIdOrderByIdAsc(Long transactionId);
 }

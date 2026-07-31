@@ -851,36 +851,6 @@
           }
         },
         {
-          "name": "Reset Business Info",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-API-TOKEN",
-                "value": "{{apiToken}}"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/users/me/business/reset",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "users",
-                "me",
-                "business",
-                "reset"
-              ]
-            },
-            "description": "Reverts businessName and businessAddress to the values recorded at registration. NMID is untouched — it comes from the QRIS code.\n\nNo request body needed."
-          }
-        },
-        {
           "name": "Update Bank Info",
           "request": {
             "method": "PATCH",
@@ -920,36 +890,6 @@
               ]
             },
             "description": "Updates bank account information (shared by all of the business's users). All three fields are required.\n\nbankNumber must be digits only, 6–20 digits.\n\nDoes NOT change the initial (regulatory) values. Use Reset Bank Info to revert."
-          }
-        },
-        {
-          "name": "Reset Bank Info",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-API-TOKEN",
-                "value": "{{apiToken}}"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/users/me/bank/reset",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "users",
-                "me",
-                "bank",
-                "reset"
-              ]
-            },
-            "description": "Reverts bankName, bankNumber, and bankAccountName to the values recorded at registration (initialBankName / initialBankNumber / initialBankAccountName).\n\nNo request body needed."
           }
         },
         {
@@ -2034,7 +1974,7 @@
                 "qris"
               ]
             },
-            "description": "Returns the QRIS image as base64 and business info for the authenticated user.\n\nResponse includes: type (MANAGED or UPLOADED), image (base64-encoded PNG), businessName, businessAddress, nmid.\n\nIf no image has been generated yet, one is created and stored on the first call.\n\ntype=MANAGED means the Bejo-generated QRIS. type=UPLOADED means the user has uploaded their own QRIS image which takes precedence."
+            "description": "Returns the caller's effective QRIS: their own if the super admin assigned them one, otherwise the shared business QRIS.\n\nResponse: qrisCode (the EMV payload — render the QR from it locally), plus merchantName, nmid, acquirer and terminalId, all parsed from that same code so the caption always matches the QR on screen. businessName/businessAddress are the separately-typed business info — do NOT caption with those.\n\n404 until the business supplies a QRIS via POST /api/qris/upload."
           }
         },
         {
@@ -2075,35 +2015,7 @@
                 "upload"
               ]
             },
-            "description": "Sets the business QRIS as a CODE (the EMV payload the app decoded from the merchant's QR) — not an image. GET /api/qris then returns it as qrisCode with type=UPLOADED, and the app renders the QR locally.\n\nThe server parses the code and stores the merchant identity with it, returning qrisMerchantName (EMV tag 59), nmid (sub-tag 02 of the ID.CO.QRIS.WWW template) and acquirer (the other template's GUID, e.g. ID.CO.ASTRAPAY.WWW). Caption the QR with those — NOT businessName, which is the separately-typed business info.\n\nReset QRIS reverts to the initial/managed value and re-derives the caption from it.\n\nqrisCode: max 1024 chars, no control characters. NOTE: super admin only — a plain member gets 403."
-          }
-        },
-        {
-          "name": "Reset QRIS",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-API-TOKEN",
-                "value": "{{apiToken}}"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{token}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/qris/reset",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "api",
-                "qris",
-                "reset"
-              ]
-            },
-            "description": "Clears the uploaded QRIS image and reverts to the Bejo-generated one (type=MANAGED).\n\nNo request body needed. NOTE: super admin only — a plain member gets 403."
+            "description": "Sets the business QRIS as a CODE (the EMV payload the app decoded from the merchant's QR) — not an image. GET /api/qris then returns it as qrisCode and the app renders the QR locally.\n\nThe server parses the code and stores the merchant identity with it, returning merchantName (EMV tag 59), nmid (sub-tag 02 of the ID.CO.QRIS.WWW template), acquirer (the other template's GUID, e.g. ID.CO.ASTRAPAY.WWW) and terminalId (tag 62 sub-tag 07, null if absent). Caption the QR with those — NOT businessName, which is the separately-typed business info.\n\nRe-uploading replaces both the code and the identity parsed from it. There is no reset.\n\nqrisCode: max 1024 chars, no control characters. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
@@ -2126,7 +2038,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"terminalId\": \"A001\",\n  \"qrisCode\": \"00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI51440014ID.CO.QRIS.WWW0215ID10265407789780303UMI5204581453033605802ID5906Susilo6007TANGSEL61051541362080704A00163042C15\"\n}",
+              "raw": "{\n  \"qrisCode\": \"00020101021126640018ID.CO.ASTRAPAY.WWW011893600822326062900102092606290010303UMI51440014ID.CO.QRIS.WWW0215ID10265407789780303UMI5204581453033605802ID5906Susilo6007TANGSEL61051541362080704A00163042C15\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

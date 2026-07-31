@@ -125,7 +125,7 @@ public class AuthService {
                 bank.getBankName(),
                 bank.getBankNumber(),
                 bank.getBankAccountName(),
-                business.getPicture(),
+                business.getProfilePicture(),
                 accountSettings,
                 token, "Bearer",
                 jwtService.getExpiresInSeconds());

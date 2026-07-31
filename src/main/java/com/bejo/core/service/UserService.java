@@ -8,8 +8,6 @@ import com.bejo.core.dto.UpdateBankRequestDto;
 import com.bejo.core.dto.UpdateBusinessRequestDto;
 import com.bejo.core.dto.UpdateProfileRequestDto;
 import com.bejo.core.dto.UpgradeAccountRequestDto;
-import com.bejo.core.dto.BankResponseDto;
-import com.bejo.core.dto.BusinessResponseDto;
 import com.bejo.core.dto.MeResponseDto;
 import com.bejo.core.dto.ProfilePictureResponseDto;
 import com.bejo.core.domain.Business;
@@ -90,7 +88,7 @@ public class UserService {
                 qrisService.hasOwnQris(user),
                 business.getName(), business.getAddress(),
                 bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName(),
-                business.getPicture(), accountSettingsService.getSettings(username));
+                business.getProfilePicture(), accountSettingsService.getSettings(username));
     }
 
     /**
@@ -108,11 +106,7 @@ public class UserService {
         Business business = new Business();
         business.setName(request.businessName());
         business.setAddress(request.businessAddress());
-        business.setNmid(request.nmid());
         business.setMerchantPan(trimToNull(request.merchantPan()));
-        business.setInitialName(request.businessName());
-        business.setInitialAddress(request.businessAddress());
-        business.setInitialNmid(request.nmid());
         // Set once at registration, immutable afterwards. size/industry validated + defaulted
         // against the configurable option lists; store photo is optional (same spec as picture).
         business.setSize(businessOptions.resolveSize(request.size()));
@@ -144,9 +138,6 @@ public class UserService {
         bank.setBankName(bankName);
         bank.setBankNumber(bankNumber);
         bank.setBankAccountName(bankAccountName);
-        bank.setInitialBankName(bankName);
-        bank.setInitialBankNumber(bankNumber);
-        bank.setInitialBankAccountName(bankAccountName);
         businessBankRepository.save(bank);
 
         log.info("[REGISTER] Created business id={} + super admin username={}", business.getId(), request.username());
@@ -191,10 +182,7 @@ public class UserService {
         }
         Business business = businessRepository.findById(user.getBusinessId())
                 .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
-        String nmid = request.nmid().trim();
         String merchantPan = request.merchantPan().trim();
-        business.setNmid(nmid);
-        business.setInitialNmid(nmid);
         business.setMerchantPan(merchantPan);
         businessRepository.save(business);
         user.setAccountType(AccountType.MANAGED);
@@ -203,19 +191,7 @@ public class UserService {
         return getMe(username);
     }
 
-    @Transactional
-    public BusinessResponseDto resetBusiness(String username) {
-        Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
-        if (business.getInitialName() == null) {
-            throw new IllegalArgumentException("Data bisnis awal tidak tersedia untuk direset");
-        }
-        business.setName(business.getInitialName());
-        business.setAddress(business.getInitialAddress());
-        businessRepository.save(business);
-        log.info("[BUSINESS RESET] Reverted businessId={} by username={}", business.getId(), username);
-        return new BusinessResponseDto(business.getName(), business.getAddress());
-    }
-
+    
     @Transactional
     public void updateBank(String username, UpdateBankRequestDto request) {
         BusinessBank bank = requireBankAsSuperAdmin(username);  // super-admin only
@@ -226,20 +202,7 @@ public class UserService {
         log.info("[BANK] Updated businessId={} by username={}", bank.getBusinessId(), username);
     }
 
-    @Transactional
-    public BankResponseDto resetBank(String username) {
-        BusinessBank bank = requireBankAsSuperAdmin(username);  // super-admin only
-        if (bank.getInitialBankName() == null) {
-            throw new IllegalArgumentException("Data rekening awal tidak tersedia untuk direset");
-        }
-        bank.setBankName(bank.getInitialBankName());
-        bank.setBankNumber(bank.getInitialBankNumber());
-        bank.setBankAccountName(bank.getInitialBankAccountName());
-        businessBankRepository.save(bank);
-        log.info("[BANK RESET] Reverted businessId={} by username={}", bank.getBusinessId(), username);
-        return new BankResponseDto(bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName());
-    }
-
+    
     @Transactional
     public void changePassword(String username, ChangePasswordRequestDto request) {
         log.info("[PASSWORD] username={}", username);
@@ -257,23 +220,23 @@ public class UserService {
     @Transactional(readOnly = true)
     public ProfilePictureResponseDto getProfilePicture(String username) {
         Business business = requireBusiness(username);
-        return new ProfilePictureResponseDto(business.getPicture());
+        return new ProfilePictureResponseDto(business.getProfilePicture());
     }
 
     @Transactional
     public ProfilePictureResponseDto updateProfilePicture(String username, String base64Image) {
         Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
         validateImage(base64Image, "profilePicture");
-        business.setPicture(base64Image);
+        business.setProfilePicture(base64Image);
         businessRepository.save(business);
         log.info("[PICTURE] Updated ({} base64 chars) for businessId={}", base64Image.length(), business.getId());
-        return new ProfilePictureResponseDto(business.getPicture());
+        return new ProfilePictureResponseDto(business.getProfilePicture());
     }
 
     @Transactional
     public void deleteProfilePicture(String username) {
         Business business = requireBusinessAsSuperAdmin(username);  // super-admin only
-        business.setPicture(null);
+        business.setProfilePicture(null);
         businessRepository.save(business);
         log.info("[PICTURE] Deleted for businessId={}", business.getId());
     }

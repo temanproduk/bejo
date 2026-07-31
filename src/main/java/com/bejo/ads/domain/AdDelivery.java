@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 /**
  * One delivery of an {@link AdCampaign} to one device — the row that carries the campaign's
  * lifecycle state (see {@link AdCampaignState}) and a timestamp for each step it passes through.
- * {@code targetUsername}/{@code targetDeviceId} name the {@code bejo_sessions} device to push
+ * {@code targetUsername}/{@code targetDeviceId} name the {@code sessions} device to push
  * to; there is no FK (see {@code V4__ads.sql}). A campaign has exactly one delivery today; the
  * location-based campaign engine will insert several.
  */

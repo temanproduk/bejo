@@ -957,7 +957,7 @@ class ApiIntegrationTest {
     // ---------- QRIS ----------
 
     @Test
-    void qrisLifecycleSelfServiceOptionalUploadReset() throws Exception {
+    void qrisLifecycleSelfServiceOptionalUpload() throws Exception {
         String token = registerAndLogin("qris_user1");
 
         // Fresh self-service account: QRIS is optional, no row exists yet
@@ -977,21 +977,11 @@ class ApiIntegrationTest {
         mockMvc.perform(get("/api/qris")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
-                .andExpect(jsonPath("$.data.type").value("UPLOADED"))
                 .andExpect(jsonPath("$.data.qrisCode").value("00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234"));
 
         // Reset clears the uploaded code; no placeholder is generated, so the
         // managed QRIS is an empty state (qrisCode omitted)
-        mockMvc.perform(post("/api/qris/reset")
-                        .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
 
-        mockMvc.perform(get("/api/qris")
-                        .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(jsonPath("$.data.type").value("MANAGED"))
-                .andExpect(jsonPath("$.data.qrisCode").doesNotExist());
     }
 
     // ---------- business members (multi-user per business) ----------
@@ -1259,10 +1249,6 @@ class ApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of("qrisCode", "00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234"))))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(post("/api/qris/reset")
-                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
-                .andExpect(status().isForbidden());
-
         // The super admin can still do all of them
         mockMvc.perform(put("/api/account-settings/toggle")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken)
@@ -1313,10 +1299,10 @@ class ApiIntegrationTest {
     void selfServiceAccountUpgradesToManaged() throws Exception {
         String token = registerAndLogin("upg_user1");
 
-        // Both merchantPan and nmid are required
+        // merchantPan is required
         mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
-                        .content("{\"merchantPan\":\"MPAN-UPG1\"}"))
+                        .content("{}"))
                 .andExpect(status().isBadRequest());
 
         // Valid upgrade → 200 and the account becomes MANAGED. The NMID is still recorded on the
@@ -1324,7 +1310,7 @@ class ApiIntegrationTest {
         // belongs to the QRIS now and is read from GET /api/qris.
         mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
-                        .content("{\"merchantPan\":\"MPAN-UPG1\",\"nmid\":\"ID-UPG1\"}"))
+                        .content("{\"merchantPan\":\"MPAN-UPG1\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accountType").value("MANAGED"))
                 .andExpect(jsonPath("$.data.nmid").doesNotExist());
@@ -1332,7 +1318,7 @@ class ApiIntegrationTest {
         // Upgrading again is rejected — the account is already managed
         mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
-                        .content("{\"merchantPan\":\"MPAN-UPG1\",\"nmid\":\"ID-UPG1\"}"))
+                        .content("{\"merchantPan\":\"MPAN-UPG1\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Akun sudah dikelola Bejo"));
     }
@@ -1420,7 +1406,7 @@ class ApiIntegrationTest {
     // ---------- user profile ----------
 
     @Test
-    void profileBankAndBusinessUpdateAndReset() throws Exception {
+    void profileBankAndBusinessUpdate() throws Exception {
         String token = registerAndLogin("prof_user1");
 
         mockMvc.perform(patch("/api/users/me")
@@ -1443,12 +1429,6 @@ class ApiIntegrationTest {
                                 "bankAccountName", "Updated Name"))))
                 .andExpect(status().isOk());
 
-        // Bank reset restores the (empty) initial values from registration
-        mockMvc.perform(post("/api/users/me/bank/reset")
-                        .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
-
         mockMvc.perform(patch("/api/users/me/business")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
@@ -1457,12 +1437,7 @@ class ApiIntegrationTest {
                                 "businessName", "Toko Baru"))))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/users/me/business/reset")
-                        .header("X-API-TOKEN", API_TOKEN)
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
-
-        // Business name restored in the next login response
+        // The edit is reflected in the next login response
         MvcResult result = mockMvc.perform(post("/api/auth/login")
                         .header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON)
@@ -1473,7 +1448,7 @@ class ApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
-        assertThat(json.at("/data/businessName").asText()).isEqualTo("Warung prof_user1");
+        assertThat(json.at("/data/businessName").asText()).isEqualTo("Toko Baru");
     }
 
     @Test
@@ -1494,16 +1469,10 @@ class ApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "bankName", "Mandiri", "bankNumber", "9876543210", "bankAccountName", "Member"))))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(post("/api/users/me/bank/reset")
-                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
-                .andExpect(status().isForbidden());
         mockMvc.perform(patch("/api/users/me/business")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("businessName", "Toko Baru"))))
-                .andExpect(status().isForbidden());
-        mockMvc.perform(post("/api/users/me/business/reset")
-                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isForbidden());
     }
 

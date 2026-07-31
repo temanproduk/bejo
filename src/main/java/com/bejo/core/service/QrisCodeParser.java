@@ -18,6 +18,9 @@ import java.util.Optional;
  *       the merchant-account tag (26–51) whose sub-tag {@code 00} is {@code ID.CO.QRIS.WWW}.
  *       Scanning for that GUID rather than assuming tag 51 keeps it working for an acquirer that
  *       orders its templates differently.</li>
+ *   <li><b>Terminal label</b> — sub-tag {@code 07} of tag {@code 62} (Additional Data Field).
+ *       Identifies which terminal the QR belongs to, which is what an inbound payment callback
+ *       routes on. Many codes omit it, in which case it is null.</li>
  *   <li><b>Acquirer</b> — the GUID of the <em>other</em> merchant-account template, i.e. the
  *       first one that is not the domestic QRIS switch, e.g. {@code ID.CO.ASTRAPAY.WWW}. Kept as
  *       the raw reverse-domain identifier rather than a prettified name, since mapping GUIDs to
@@ -39,6 +42,8 @@ public final class QrisCodeParser {
     private static final String QRIS_DOMESTIC_GUID = "ID.CO.QRIS.WWW";
     private static final String TAG_MERCHANT_NAME = "59";
     private static final String TAG_MERCHANT_CITY = "60";
+    private static final String TAG_ADDITIONAL_DATA = "62";
+    private static final String SUBTAG_TERMINAL_LABEL = "07";
     private static final String SUBTAG_GUID = "00";
     private static final String SUBTAG_NMID = "02";
 
@@ -50,13 +55,15 @@ public final class QrisCodeParser {
     private static final int MAX_MERCHANT_NAME = 255;
     private static final int MAX_NMID = 50;
     private static final int MAX_ACQUIRER = 100;
+    private static final int MAX_TERMINAL_ID = 50;
 
     private QrisCodeParser() {}
 
     /** What the app needs to caption the QR. Any field may be null if the code doesn't carry it. */
-    public record QrisIdentity(String merchantName, String nmid, String acquirer, String merchantCity) {
+    public record QrisIdentity(String merchantName, String nmid, String acquirer,
+                               String terminalId, String merchantCity) {
         static QrisIdentity empty() {
-            return new QrisIdentity(null, null, null, null);
+            return new QrisIdentity(null, null, null, null, null);
         }
     }
 
@@ -69,6 +76,7 @@ public final class QrisCodeParser {
                 withinWidth(trimToNull(top.get(TAG_MERCHANT_NAME)), MAX_MERCHANT_NAME),
                 withinWidth(findNmid(top), MAX_NMID),
                 withinWidth(findAcquirer(top), MAX_ACQUIRER),
+                withinWidth(findTerminalId(top), MAX_TERMINAL_ID),
                 withinWidth(trimToNull(top.get(TAG_MERCHANT_CITY)), MAX_MERCHANT_NAME));
     }
 
@@ -85,6 +93,12 @@ public final class QrisCodeParser {
             }
         }
         return null;
+    }
+
+    /** The terminal label, if the code carries one — many don't, and then this is null. */
+    private static String findTerminalId(Map<String, String> top) {
+        String additionalData = top.get(TAG_ADDITIONAL_DATA);
+        return additionalData == null ? null : trimToNull(readTlv(additionalData).get(SUBTAG_TERMINAL_LABEL));
     }
 
     /** The GUID of the first merchant-account template that is not the domestic QRIS switch. */

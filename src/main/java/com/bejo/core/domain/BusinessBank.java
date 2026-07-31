@@ -23,15 +23,6 @@ public class BusinessBank {
     @Column(name = "bank_account_name", nullable = false)
     private String bankAccountName = "";
 
-    @Column(name = "initial_bank_name")
-    private String initialBankName;
-
-    @Column(name = "initial_bank_number")
-    private String initialBankNumber;
-
-    @Column(name = "initial_bank_account_name")
-    private String initialBankAccountName;
-
     public Long getId() { return id; }
     public Long getBusinessId() { return businessId; }
     public void setBusinessId(Long businessId) { this.businessId = businessId; }
@@ -41,10 +32,4 @@ public class BusinessBank {
     public void setBankNumber(String bankNumber) { this.bankNumber = bankNumber; }
     public String getBankAccountName() { return bankAccountName; }
     public void setBankAccountName(String bankAccountName) { this.bankAccountName = bankAccountName; }
-    public String getInitialBankName() { return initialBankName; }
-    public void setInitialBankName(String initialBankName) { this.initialBankName = initialBankName; }
-    public String getInitialBankNumber() { return initialBankNumber; }
-    public void setInitialBankNumber(String initialBankNumber) { this.initialBankNumber = initialBankNumber; }
-    public String getInitialBankAccountName() { return initialBankAccountName; }
-    public void setInitialBankAccountName(String v) { this.initialBankAccountName = v; }
 }

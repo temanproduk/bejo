@@ -5,15 +5,11 @@ import jakarta.validation.constraints.Size;
 
 /**
  * Body of {@code POST /api/users/me/upgrade} — upgrades a self-service account to be managed by
- * Bejo. Both the merchant PAN and the NMID are <b>required</b> (they wire up QRIS callback
- * routing); a missing/blank value is rejected.
+ * Bejo. The merchant PAN is <b>required</b> — it is the key an inbound QRIS
+ * callback routes on. NMID is not here: it belongs to the QRIS, parsed from the code on upload.
  */
 public record UpgradeAccountRequestDto(
         @NotBlank(message = "merchantPan wajib diisi")
         @Size(max = 50, message = "merchantPan maksimal 50 karakter")
-        String merchantPan,
-
-        @NotBlank(message = "nmid wajib diisi")
-        @Size(max = 50, message = "nmid maksimal 50 karakter")
-        String nmid
+        String merchantPan
 ) {}

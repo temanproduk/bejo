@@ -42,11 +42,6 @@ public class QrisController {
         return ResponseEntity.ok(ApiResponseDto.success("QRIS berhasil diunggah", null));
     }
 
-    @PostMapping("/reset")
-    public ResponseEntity<ApiResponseDto<Void>> resetQris(Authentication authentication) {
-        qrisService.resetQris(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("QRIS dikembalikan ke bawaan", null));
-    }
 
     // ── Per-user QRIS (main account only) ────────────────────────────────────
     // The main account assigns a user their own QRIS + terminal id so payment callbacks route

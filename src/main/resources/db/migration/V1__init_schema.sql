@@ -22,22 +22,17 @@ CREATE SCHEMA IF NOT EXISTS ads;
 
 CREATE TABLE IF NOT EXISTS core.businesses (
     id             BIGSERIAL     PRIMARY KEY,
-    name           VARCHAR(255)  NOT NULL,
-    address        TEXT,
-    nmid           VARCHAR(50),
-    merchant_pan   VARCHAR(50),                       -- QRIS merchant PAN; routes inbound callbacks (no NMID in the payload)
-    initial_name   VARCHAR(255),
-    initial_address TEXT,
-    initial_nmid   VARCHAR(50),
-    size           VARCHAR(30)   NOT NULL DEFAULT 'Mikro',                -- set once at registration, immutable
-    industry       VARCHAR(100)  NOT NULL DEFAULT 'Makanan & Minuman',    -- set once at registration, immutable
-    store_photo    TEXT,                              -- optional store photo, base64, <= 1 MB decoded
-    picture        TEXT,                              -- shared business picture, base64, <= 1 MB decoded
-    created_at     TIMESTAMP     NOT NULL DEFAULT NOW()
+    name            VARCHAR(255)  NOT NULL,
+    address         TEXT,
+    merchant_pan    VARCHAR(50),                      -- QRIS merchant PAN; routes inbound callbacks
+    size            VARCHAR(30)   NOT NULL DEFAULT 'Mikro',                -- set once at registration, immutable
+    industry        VARCHAR(100)  NOT NULL DEFAULT 'Makanan & Minuman',    -- set once at registration, immutable
+    store_photo     TEXT,                             -- optional store photo, base64, <= 1 MB decoded
+    profile_picture TEXT,                             -- shared business picture, base64, <= 1 MB decoded
+    created_at      TIMESTAMP     NOT NULL DEFAULT NOW()
 );
--- NMID / merchant PAN each uniquely route an inbound QRIS callback to a business (nulls allowed).
--- The provider's callback carries merchantPan (not NMID), so merchant_pan is the routing key.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_business_nmid ON core.businesses (nmid) WHERE nmid IS NOT NULL;
+-- The provider's callback carries merchantPan (not NMID), so this is the routing key. NMID is a
+-- property of a QRIS, not of the business, and lives on the qris tables.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_business_merchant_pan ON core.businesses (merchant_pan) WHERE merchant_pan IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS core.users (
@@ -66,50 +61,52 @@ CREATE TABLE IF NOT EXISTS core.business_banks (
     bank_name                 VARCHAR(100)  NOT NULL DEFAULT '',
     bank_number               VARCHAR(20)   NOT NULL DEFAULT '',
     bank_account_name         VARCHAR(100)  NOT NULL DEFAULT '',
-    initial_bank_name         VARCHAR(100),
-    initial_bank_number       VARCHAR(20),
-    initial_bank_account_name VARCHAR(100),
     CONSTRAINT uq_bank_business UNIQUE (business_id),
     CONSTRAINT fk_bank_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 
+-- A QRIS is stored as its CODE: the EMV payload the app decoded from the merchant's QR, which the
+-- app re-renders locally. The merchant identity (name / NMID / acquirer) is parsed out of that
+-- code at upload, so the caption always describes the QR it labels.
+--
+-- business_qris and user_qris are deliberately IDENTICAL in shape — user_qris only adds `username`
+-- — so the shared QRIS and a per-user one behave the same everywhere.
 CREATE TABLE IF NOT EXISTS core.business_qris (
-    id                   BIGSERIAL   PRIMARY KEY,
-    business_id          BIGINT      NOT NULL,
-    qris_code            VARCHAR(36) NOT NULL,   -- internal identifier (UUID), unrelated to the QR payload
-    qris_image           TEXT,                   -- holds the QRIS CODE (EMV payload); legacy column name
-    initial_qris_image   TEXT,                   -- the managed/initial code served when none is supplied
-    qris_merchant_name   VARCHAR(255),           -- parsed from the code: EMV tag 59
-    nmid                 VARCHAR(50),            -- parsed: sub-tag 02 of the ID.CO.QRIS.WWW template
-    acquirer             VARCHAR(100),           -- parsed: GUID of the other merchant-account template
-    CONSTRAINT uq_qris_business UNIQUE (business_id),
-    CONSTRAINT uq_qris_code     UNIQUE (qris_code),
-    CONSTRAINT fk_qris_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
+    id             BIGSERIAL     PRIMARY KEY,
+    business_id    BIGINT        NOT NULL,
+    terminal_id    VARCHAR(50),                -- parsed from the code (tag 62/07); a callback routes on it
+    qris_code      TEXT          NOT NULL,     -- the EMV payload string
+    merchant_name  VARCHAR(255),               -- parsed from the code: EMV tag 59
+    nmid           VARCHAR(50),                -- parsed: sub-tag 02 of the ID.CO.QRIS.WWW template
+    acquirer       VARCHAR(100),               -- parsed: GUID of the other merchant-account template
+    created_at     TIMESTAMP     NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMP,
+    CONSTRAINT uq_business_qris_business UNIQUE (business_id),
+    CONSTRAINT fk_business_qris_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 
--- Per-user QRIS: the main account may give an individual user their OWN QRIS image with a
--- terminal id (same merchant PAN, different terminal). A payment callback carries the terminal id,
--- so a user with a row here is notified ONLY for callbacks matching their terminal; a user without
--- a row falls back to the shared business_qris and is notified for every callback of the merchant.
--- Set only by the super admin. One row per user; terminal id unique within the business.
+-- Per-user QRIS: the super admin may give an individual user their OWN QRIS code and terminal id
+-- (same merchant PAN, different terminal). A payment callback carries the terminal id, so a user
+-- with a row here is notified ONLY for callbacks matching their terminal; a user without one falls
+-- back to the shared business_qris and is notified for every callback of the merchant.
 CREATE TABLE IF NOT EXISTS core.user_qris (
-    id           BIGSERIAL    PRIMARY KEY,
-    business_id  BIGINT       NOT NULL,
-    username     VARCHAR(50)  NOT NULL,   -- same width as users.username (no FK; history-safe)
-    terminal_id  VARCHAR(50)  NOT NULL,
-    qris_image   TEXT         NOT NULL,   -- holds the QRIS CODE (EMV payload); legacy column name
-    qris_merchant_name VARCHAR(255),      -- parsed from the code: EMV tag 59
-    nmid         VARCHAR(50),             -- parsed: sub-tag 02 of the ID.CO.QRIS.WWW template
-    acquirer     VARCHAR(100),            -- parsed: GUID of the other merchant-account template
-    created_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
-    updated_at   TIMESTAMP,
+    id             BIGSERIAL     PRIMARY KEY,
+    business_id    BIGINT        NOT NULL,
+    username       VARCHAR(50)   NOT NULL,     -- same width as users.username (no FK; history-safe)
+    terminal_id    VARCHAR(50),                -- parsed from the code (tag 62/07); null when absent
+    qris_code      TEXT          NOT NULL,     -- the EMV payload string
+    merchant_name  VARCHAR(255),
+    nmid           VARCHAR(50),
+    acquirer       VARCHAR(100),
+    created_at     TIMESTAMP     NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMP,
     CONSTRAINT uq_user_qris_user     UNIQUE (business_id, username),
     CONSTRAINT uq_user_qris_terminal UNIQUE (business_id, terminal_id),
     CONSTRAINT fk_user_qris_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
 );
 CREATE INDEX IF NOT EXISTS idx_user_qris_business ON core.user_qris (business_id);
 
-CREATE TABLE IF NOT EXISTS core.bejo_sessions (
+CREATE TABLE IF NOT EXISTS core.sessions (
     id             BIGSERIAL    PRIMARY KEY,
     username       VARCHAR(50)  NOT NULL,             -- no FK: username uniqueness is partial (active only)
     device_id      VARCHAR(255) NOT NULL,
@@ -122,7 +119,7 @@ CREATE TABLE IF NOT EXISTS core.bejo_sessions (
     CONSTRAINT uq_username_device UNIQUE (username, device_id)
 );
 
-CREATE TABLE IF NOT EXISTS commerce.bejo_history (
+CREATE TABLE IF NOT EXISTS commerce.transactions (
     id               BIGSERIAL    PRIMARY KEY,
     transaction_id   VARCHAR(255) NOT NULL,
     business_id      BIGINT       NOT NULL,
@@ -154,14 +151,14 @@ CREATE TABLE IF NOT EXISTS commerce.bejo_history (
 -- history survives a later product edit/delete; product_id is a plain reference (no FK).
 CREATE TABLE IF NOT EXISTS commerce.transaction_items (
     id         BIGSERIAL    PRIMARY KEY,
-    history_id BIGINT       NOT NULL,                 -- parent bejo_history.id
+    transaction_id BIGINT   NOT NULL,                 -- parent commerce.transactions.id
     product_id BIGINT,
     sku        VARCHAR(64)  NOT NULL,
     name       VARCHAR(255) NOT NULL,
     quantity   INTEGER      NOT NULL,
     unit_price BIGINT       NOT NULL DEFAULT 0,       -- selling price per unit at sale time, IDR
     subtotal   BIGINT       NOT NULL DEFAULT 0,       -- unit_price * quantity, IDR
-    CONSTRAINT fk_transaction_item_history FOREIGN KEY (history_id) REFERENCES commerce.bejo_history (id)
+    CONSTRAINT fk_transaction_item_transaction FOREIGN KEY (transaction_id) REFERENCES commerce.transactions (id)
 );
 
 CREATE TABLE IF NOT EXISTS core.token_blacklist (
@@ -313,13 +310,13 @@ CREATE TABLE IF NOT EXISTS ads.ad_deliveries (
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_bejo_history_business          ON commerce.bejo_history (business_id);
-CREATE INDEX IF NOT EXISTS idx_bejo_history_transaction_date  ON commerce.bejo_history (transaction_date DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_business          ON commerce.transactions (business_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_date  ON commerce.transactions (transaction_date DESC);
 -- Backs GET /api/transactions/summary and the paginated history, which filter by
 -- (business_id, transaction_date) and exclude soft-deleted rows.
-CREATE INDEX IF NOT EXISTS idx_bejo_history_business_date      ON commerce.bejo_history (business_id, transaction_date) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_transaction_items_history      ON commerce.transaction_items (history_id);
-CREATE INDEX IF NOT EXISTS idx_bejo_sessions_device_id        ON core.bejo_sessions (device_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_business_date      ON commerce.transactions (business_id, transaction_date) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction ON commerce.transaction_items (transaction_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_device_id        ON core.sessions (device_id);
 CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at     ON core.token_blacklist (expires_at);
 CREATE INDEX IF NOT EXISTS idx_product_categories_business     ON commerce.product_categories (business_id);
 CREATE INDEX IF NOT EXISTS idx_products_business               ON commerce.products (business_id);

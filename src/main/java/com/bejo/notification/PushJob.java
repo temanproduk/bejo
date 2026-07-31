@@ -12,7 +12,7 @@ import java.util.Map;
  * @param urgent       whether to send at Android priority HIGH ({@link PushPayload#urgent()})
  * @param recipientRef an <b>opaque</b> handle to whoever owns this token, carried back to the
  *                     {@link StaleTokenHandler} if FCM rejects it. Notification never interprets
- *                     it — the core adapter that produced it knows it's a {@code bejo_sessions} row.
+ *                     it — the core adapter that produced it knows it's a {@code sessions} row.
  * @param deviceId     for logging
  * @param scope        for logging (who this fan-out was for)
  */

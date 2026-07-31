@@ -583,7 +583,7 @@ class TransactionServiceTest {
 
     private com.bejo.commerce.domain.TransactionItem existingItem(long historyId, long productId, String name, int qty) {
         var it = new com.bejo.commerce.domain.TransactionItem();
-        it.setHistoryId(historyId);
+        it.setTransactionId(historyId);
         it.setProductId(productId);
         it.setSku("SKU-" + productId);
         it.setName(name);
@@ -606,7 +606,7 @@ class TransactionServiceTest {
         Product coffee = product(1, "Coffee", 5, 15_000L);   // 2 sold earlier, 5 on hand
         var existing = existingItem(42L, 1L, "Coffee", 2);
         // reconcile sees the existing item; the response query then sees the (mock) empty set
-        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L))
+        when(transactionItemRepository.findByTransactionIdOrderByIdAsc(42L))
                 .thenReturn(List.of(existing), List.of());
         when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
 
@@ -630,7 +630,7 @@ class TransactionServiceTest {
                 .thenReturn(Optional.of(t));
         Product coffee = product(1, "Coffee", 2, 15_000L);   // 3 sold earlier, 2 on hand
         var existing = existingItem(42L, 1L, "Coffee", 3);
-        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L))
+        when(transactionItemRepository.findByTransactionIdOrderByIdAsc(42L))
                 .thenReturn(List.of(existing), List.of());
         when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
 
@@ -651,7 +651,7 @@ class TransactionServiceTest {
                 .thenReturn(Optional.of(t));
         Product coffee = product(1, "Coffee", 1, 15_000L);   // only 1 on hand
         var existing = existingItem(42L, 1L, "Coffee", 2);
-        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L)).thenReturn(List.of(existing));
+        when(transactionItemRepository.findByTransactionIdOrderByIdAsc(42L)).thenReturn(List.of(existing));
         when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
 
         // want 4 → +2 needed, only 1 available
@@ -674,7 +674,7 @@ class TransactionServiceTest {
                 .thenReturn(Optional.of(t));
         Product coffee = product(1, "Coffee", 7, 15_000L);   // 3 sold earlier, 7 on hand
         var existing = existingItem(42L, 1L, "Coffee", 3);
-        when(transactionItemRepository.findByHistoryIdOrderByIdAsc(42L)).thenReturn(List.of(existing));
+        when(transactionItemRepository.findByTransactionIdOrderByIdAsc(42L)).thenReturn(List.of(existing));
         when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
 
         transactionService.delete("alice", "TXN-1");

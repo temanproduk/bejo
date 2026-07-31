@@ -49,7 +49,7 @@ class StockConcurrencyTest {
     void concurrentSalesNeverOversellOrLoseAnUpdate() throws Exception {
         userService.register(new RegisterRequestDto(
                 USER, "password1", "Race Tester", USER + "@example.com", "+628123456789",
-                "Warung Race", null, null, null, null, null, null, null, null, null));
+                "Warung Race", null, null, null, null, null, null, null, null));
         Long productId = productService.create(USER, new CreateProductRequestDto(
                 "RACE-SKU", "Kopi", null, null, 10_000L, null, STARTING_STOCK, null)).id();
 

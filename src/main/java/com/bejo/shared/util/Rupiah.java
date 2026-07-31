@@ -14,7 +14,7 @@ import java.util.Locale;
  * to {@code ,00}. When there is one it is shown to two places ({@code Rp 1.000.000,20}), since a
  * single trailing digit reads wrong for money.
  *
- * <p>Note that {@code bejo_history.amount} is a {@code BIGINT} of whole rupiah — the QRIS callback
+ * <p>Note that {@code transactions.amount} is a {@code BIGINT} of whole rupiah — the QRIS callback
  * already rounds the provider's {@code "100.00"} to {@code 100} — so the decimal branch is
  * unreachable for today's transaction pushes. It is implemented and tested so the helper stays
  * correct if a decimal-bearing amount is ever formatted through it.

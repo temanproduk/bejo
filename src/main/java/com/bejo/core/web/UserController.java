@@ -7,8 +7,6 @@ import com.bejo.core.dto.UpdateBusinessRequestDto;
 import com.bejo.core.dto.UpdateProfileRequestDto;
 import com.bejo.core.dto.UpgradeAccountRequestDto;
 import com.bejo.shared.web.ApiResponseDto;
-import com.bejo.core.dto.BankResponseDto;
-import com.bejo.core.dto.BusinessResponseDto;
 import com.bejo.core.dto.MeResponseDto;
 import com.bejo.core.service.UserService;
 import jakarta.validation.Valid;
@@ -60,11 +58,6 @@ public class UserController {
         return ResponseEntity.ok(ApiResponseDto.success("Rekening berhasil diperbarui", null));
     }
 
-    @PostMapping("/me/bank/reset")
-    public ResponseEntity<ApiResponseDto<BankResponseDto>> resetBank(Authentication authentication) {
-        BankResponseDto data = userService.resetBank(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("Rekening dikembalikan ke awal", data));
-    }
 
     @PatchMapping("/me/business")
     public ResponseEntity<ApiResponseDto<Void>> updateBusiness(
@@ -74,11 +67,6 @@ public class UserController {
         return ResponseEntity.ok(ApiResponseDto.success("Info bisnis berhasil diperbarui", null));
     }
 
-    @PostMapping("/me/business/reset")
-    public ResponseEntity<ApiResponseDto<BusinessResponseDto>> resetBusiness(Authentication authentication) {
-        BusinessResponseDto data = userService.resetBusiness(authentication.getName());
-        return ResponseEntity.ok(ApiResponseDto.success("Info bisnis dikembalikan ke awal", data));
-    }
 
     // Upgrade a self-service account to be managed by Bejo — requires merchant PAN + NMID.
     @PostMapping("/me/upgrade")

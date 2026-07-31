@@ -14,7 +14,7 @@ import java.util.List;
 /**
  * Core's adapter for the notification module's {@link PushRecipientDirectory} port: turns a push
  * addressing request (a user / device / business / set of users) into concrete {@link PushRecipient}s
- * by reading {@code bejo_sessions}. This is the session-reading fan-out that used to live inside the
+ * by reading {@code sessions}. This is the session-reading fan-out that used to live inside the
  * push service — moved into core so the notification module owns no session knowledge (Option B).
  *
  * <p>The {@code recipientRef} carried on each recipient is the session's id, so when the notification

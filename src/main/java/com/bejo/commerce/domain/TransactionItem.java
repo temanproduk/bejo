@@ -7,7 +7,7 @@ import jakarta.persistence.*;
  * entry with items). Snapshots the product's {@code sku}/{@code name}/{@code unitPrice}
  * at sale time so history is stable even if the product is later edited or deleted;
  * {@code productId} is a plain reference (no FK). {@code historyId} references
- * {@code bejo_history.id} (the parent transaction row).
+ * {@code transactions.id} (the parent transaction row).
  */
 @Entity
 @Table(name = "transaction_items", schema = "commerce")
@@ -17,8 +17,8 @@ public class TransactionItem {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "history_id", nullable = false)
-    private Long historyId;
+    @Column(name = "transaction_id", nullable = false)
+    private Long transactionId;
 
     @Column(name = "product_id")
     private Long productId;
@@ -41,8 +41,8 @@ public class TransactionItem {
     private long subtotal;
 
     public Long getId() { return id; }
-    public Long getHistoryId() { return historyId; }
-    public void setHistoryId(Long historyId) { this.historyId = historyId; }
+    public Long getTransactionId() { return transactionId; }
+    public void setTransactionId(Long transactionId) { this.transactionId = transactionId; }
     public Long getProductId() { return productId; }
     public void setProductId(Long productId) { this.productId = productId; }
     public String getSku() { return sku; }

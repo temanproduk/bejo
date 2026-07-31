@@ -5,8 +5,8 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.LocalDateTime;
 
 /**
- * One user's assigned QRIS. {@code qrisCode} (the EMV payload) is included on the single-user get
- * and omitted from the list — {@code @JsonInclude(NON_NULL)}.
+ * One user's assigned QRIS. {@code qrisCode} is included on the single-user get and omitted from
+ * the list — {@code @JsonInclude(NON_NULL)}.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record UserQrisResponseDto(
@@ -14,8 +14,7 @@ public record UserQrisResponseDto(
         String username,
         String terminalId,
         String qrisCode,
-        // Parsed from the code — the identity the app captions this terminal's QR with
-        String qrisMerchantName,
+        String merchantName,
         String nmid,
         String acquirer,
         LocalDateTime createdAt,

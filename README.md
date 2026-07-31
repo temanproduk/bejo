@@ -19,7 +19,7 @@ Bejo closes that gap.
 - **Manual & external entries** — record cash sales or log transactions from another acquirer alongside QRIS payments; entries can be edited or removed, and pushed in bulk after offline entry. → [adding & editing transactions](#transactions).
 - **Inventory & catalog** — a per-business product catalog with categories, stock levels, restocks and stock-opname; a sale can carry **line items** that draw the sold products' stock down automatically. → [Products & categories](#products--categories) and the [stock-change history](#stock-mutations).
 - **QRIS management** — display the merchant's managed QRIS or upload their own image (no image is synthesized; accounts without one return `null`). → [QRIS](#qris).
-- **Business & bank profile** — keep merchant name, address, National Merchant ID (NMID), and payout bank details up to date, with one-tap reset back to the officially registered values. → [User profile](#user-profile).
+- **Business & bank profile** — keep the business name, address and payout bank details up to date. NMID belongs to the QRIS and is read from `GET /api/qris`. → [User profile](#user-profile).
 - **Team access** — a business can have several staff users sharing the same data; the creator is the **super admin** who manages access, up to a configurable cap (default 5). → [Businesses & users](#businesses--users) below, and the [member APIs](#business-members).
 - **Staff attendance** — staff clock in and out from the app with their GPS location, and the owner's phone rings each time ("Budi telah absen masuk!"). The owner can also ping the team for a spot-check, which staff acknowledge with one tap, and review everyone's attendance by member and by month. → [Employee presence](#employee-presence).
 
@@ -225,7 +225,7 @@ Null fields are omitted.
 | `phone` | Yes | International format e.g. `+628123456789` |
 | `isPhoneVerified` | System | Always `false` (verification not yet implemented) |
 
-The following are **business-level** (shared by all of the business's users); any member may read them, but **only the `SUPER_ADMIN` may edit or reset them** (a plain member gets `403`):
+The following are **business-level** (shared by all of the business's users); any member may read them, but **only the `SUPER_ADMIN` may edit them** (a plain member gets `403`):
 
 | Field | Description |
 |---|---|
@@ -237,7 +237,6 @@ The following are **business-level** (shared by all of the business's users); an
 
 > `nmid` is **not** here: it belongs to the QRIS, is parsed from the QRIS code on upload, and is read from `GET /api/qris`. It is neither editable via business info nor returned by login / `/me`.
 
-Initial values (`initialName`, `initialAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored on the business and used by the reset endpoints. The initial values themselves are never returned directly, but each reset endpoint returns the resulting (reverted) current values so the client can repopulate its form without a re-login.
 
 ### Account types
 
@@ -877,22 +876,6 @@ Super-admin-only (the business info is shared) — a plain member gets `403 Hany
 
 ---
 
-#### `POST /api/users/me/business/reset` — Reset business info (super admin)
-
-Super-admin-only (a plain member gets `403`). Reverts `businessName` and `businessAddress` to registration values (NMID is untouched — it belongs to the QRIS), and returns the reverted values so the client can repopulate the edit form.
-
-**Success — HTTP 200**
-
-```json
-{
-  "status": 1,
-  "message": "Informasi bisnis berhasil direset ke data awal",
-  "data": {
-    "businessName": "Alice Shop",
-    "businessAddress": "Jl. Contoh No. 1"
-  }
-}
-```
 
 #### `POST /api/users/me/upgrade` — Upgrade to a Bejo-managed account (super admin)
 
@@ -920,25 +903,6 @@ Super-admin-only (the bank/rekening info is shared) — a plain member gets `403
 
 ---
 
-#### `POST /api/users/me/bank/reset` — Reset bank info (super admin)
-
-Super-admin-only (a plain member gets `403`). Reverts `bankName`, `bankNumber`, and `bankAccountName` to registration values, and returns the reverted values so the client can repopulate the edit form.
-
-**Success — HTTP 200**
-
-```json
-{
-  "status": 1,
-  "message": "Informasi rekening berhasil direset ke data awal",
-  "data": {
-    "bankName": "Bank BCA",
-    "bankNumber": "1234567890",
-    "bankAccountName": "Alice"
-  }
-}
-```
-
-**Errors:** `400 Data rekening awal tidak tersedia untuk direset` (no initial values stored)
 
 ---
 
@@ -1431,7 +1395,7 @@ For the keyword endpoint: `400 Tidak ada data yang diubah` (all fields null), `4
 
 ### QRIS
 
-> Any member can read the QRIS (`GET /api/qris`), but **only the super admin changes it** — the shared business image (`POST /api/qris/upload` and `/reset`) and each user's own QRIS (`/api/qris/users/*`); a member gets `403`.
+> Any member can read the QRIS (`GET /api/qris`), but **only the super admin changes it** — the shared business QRIS (`POST /api/qris/upload`) and each user's own QRIS (`/api/qris/users/*`); a member gets `403`.
 
 #### `GET /api/qris` — Get the caller's effective QRIS
 
@@ -1446,7 +1410,7 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
 
 > **NMID is not in the login or `/me` response.** It is a property of the QRIS, not the business, so read it from `GET /api/qris` — that way it always matches the QR being displayed, including for a sub-account with its own terminal.
 
-**Two names, deliberately.** `businessName` is what the merchant typed into business info; **`qrisMerchantName`, `nmid` and `acquirer` are parsed out of the QRIS code itself** at upload — EMV tag `59`, sub-tag `02` of the `ID.CO.QRIS.WWW` template, and the GUID of the other merchant-account template (e.g. `ID.CO.ASTRAPAY.WWW`) respectively. `acquirer` is the raw reverse-domain identifier; map it to a brand name in the app if you want to display one. Caption the QR with the parsed pair, not the business name — a sub-account with its own QRIS has its own merchant identity, and the caption must match the QR on screen. Both are also returned per assignment by `GET /api/qris/users/{id}`.
+**Two names, deliberately.** `businessName` is what the merchant typed into business info; **`merchantName`, `nmid` and `acquirer` are parsed out of the QRIS code itself** at upload — EMV tag `59`, sub-tag `02` of the `ID.CO.QRIS.WWW` template, the GUID of the other merchant-account template (e.g. `ID.CO.ASTRAPAY.WWW`), and sub-tag `07` of tag `62` respectively. `acquirer` is the raw reverse-domain identifier; map it to a brand name in the app if you want to display one. Caption the QR with the parsed pair, not the business name — a sub-account with its own QRIS has its own merchant identity, and the caption must match the QR on screen. Both are also returned per assignment by `GET /api/qris/users/{id}`.
 
 **QRIS is stored and served as a _code_, not an image.** The app decodes the merchant's QR once and sends the **EMV payload string**; the server stores that and returns it, and the app renders the QR locally. A few hundred bytes travel instead of a multi-MB base64 image.
 
@@ -1458,11 +1422,11 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
 {
   "status": 1,
   "data": {
-    "type": "UPLOADED",
     "qrisCode": "00020101021126640018ID.CO.ASTRAPAY.WWW…63042C15",
-    "qrisMerchantName": "Susilo",
+    "merchantName": "Susilo",
     "nmid": "ID1026540778978",
     "acquirer": "ID.CO.ASTRAPAY.WWW",
+    "terminalId": "A001",
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1"
   }
@@ -1488,25 +1452,18 @@ Once uploaded, `GET /api/qris` returns this image with `type: UPLOADED`.
 
 ---
 
-#### `POST /api/qris/reset` — Reset the QRIS
-
-Clears the merchant's own code and reverts to the initial/managed QRIS (which may be `null` → empty state on the client). No placeholder is generated.
-
-**Success — HTTP 200:** `{ "status": 1, "message": "QRIS berhasil direset ke versi generated" }`
-
----
 
 #### `PUT /api/qris/users/{id}` — Assign a user their own QRIS (super admin)
 
-The main account gives one user their own QRIS code + a **terminal id** (same merchant PAN, distinct terminal), so a payment callback routes by terminal. The path `{id}` is the **user id** (the same identifier as `/api/users/members/{id}`). **Super admin only, and team management must be enabled** (`403` otherwise). `terminalId` is unique within the business (`400 Terminal ID sudah digunakan`); the target must be an active user of the caller's business (`400` otherwise).
+The main account gives one user their own QRIS code; the **terminal id is read out of that code** (same merchant PAN, distinct terminal), so a payment callback routes by terminal. The path `{id}` is the **user id** (the same identifier as `/api/users/members/{id}`). **Super admin only, and team management must be enabled** (`403` otherwise). `terminalId` is unique within the business (`400 Terminal ID sudah digunakan`); the target must be an active user of the caller's business (`400` otherwise).
 
-**Request body:** `{ "terminalId": "A001", "qrisCode": "00020101021126610014COM…6304ABCD" }` (max 1024 chars)
+**Request body:** `{ "qrisCode": "00020101021126610014COM…6304ABCD" }` (max 1024 chars). The terminal id is **parsed from the code** (EMV tag `62` → sub-tag `07`), not supplied — so it can never disagree with the QR. A code without a terminal label stores `null`.
 
-**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "terminalId": "A001", "qrisCode": "...", "createdAt": "...", "updatedAt": "..." } }`
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "qrisCode": "...", "merchantName": "Susilo", "nmid": "ID10265...", "acquirer": "ID.CO.ASTRAPAY.WWW", "terminalId": "A001", "createdAt": "...", "updatedAt": "..." } }`
 
 #### `GET /api/qris/users` · `GET /api/qris/users/{id}` · `DELETE /api/qris/users/{id}` (super admin)
 
-List all per-user assignments (`userId` + `username` + `terminalId`, images omitted), fetch one by user id (with image), or remove one by user id (the user reverts to the shared business QRIS). `404 QRIS pengguna tidak ditemukan` if not assigned.
+List all per-user assignments (`userId` + `username` + `terminalId`, code omitted), fetch one by user id (with the code), or remove one by user id (the user reverts to the shared business QRIS). `404 QRIS pengguna tidak ditemukan` if not assigned.
 
 ---
 

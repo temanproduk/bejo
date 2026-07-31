@@ -61,7 +61,7 @@ class UserServiceTest {
 
     private RegisterRequestDto registerRequest() {
         return new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null, null);
+                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -113,7 +113,7 @@ class UserServiceTest {
         user.setBusinessRole(com.bejo.core.domain.BusinessRole.SUPER_ADMIN);
         Business business = new Business();
         business.setName("Warung Alice");
-        business.setPicture("aW1n");
+        business.setProfilePicture("aW1n");
         BusinessBank bank = new BusinessBank();
         bank.setBankName("BCA");
         when(businessContext.requireUser("alice")).thenReturn(user);
@@ -139,7 +139,7 @@ class UserServiceTest {
         when(passwordEncoder.encode("password1")).thenReturn("$encoded");
         String photo = java.util.Base64.getEncoder().encodeToString("img".getBytes());
         var req = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, "Kecil", "Otomotif", photo, null);
+                "+628111111111", "Warung Alice", null, null, null, null, "Kecil", "Otomotif", photo, null);
 
         userService.register(req);
 
@@ -155,7 +155,7 @@ class UserServiceTest {
         when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
         when(passwordEncoder.encode("password1")).thenReturn("$encoded");
         var req = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null, "9360082232606290012");
+                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, "9360082232606290012");
 
         userService.register(req);
 
@@ -168,12 +168,12 @@ class UserServiceTest {
     void registerRejectsInvalidSizeOrIndustry() {
         when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
         var badSize = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, "Raksasa", null, null, null);
+                "+628111111111", "Warung Alice", null, null, null, null, "Raksasa", null, null, null);
         assertThatThrownBy(() -> userService.register(badSize))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("size tidak valid");
 
         var badIndustry = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, null, "Antariksa", null, null);
+                "+628111111111", "Warung Alice", null, null, null, null, null, "Antariksa", null, null);
         assertThatThrownBy(() -> userService.register(badIndustry))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("industry tidak valid");
         verify(businessRepository, never()).save(any());
@@ -240,69 +240,14 @@ class UserServiceTest {
     }
 
     @Test
-    void resetBankRestoresInitialValues() {
-        BusinessBank bank = new BusinessBank();
-        bank.setBankName("Mandiri");
-        bank.setInitialBankName("BCA");
-        bank.setInitialBankNumber("1234567890");
-        bank.setInitialBankAccountName("Alice");
-        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
-
-        userService.resetBank("alice");
-
-        assertThat(bank.getBankName()).isEqualTo("BCA");
-        assertThat(bank.getBankNumber()).isEqualTo("1234567890");
-        assertThat(bank.getBankAccountName()).isEqualTo("Alice");
-    }
-
-    @Test
-    void resetBankWithoutInitialDataThrows() {
-        BusinessBank bank = new BusinessBank();
-        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank));
-
-        assertThatThrownBy(() -> userService.resetBank("alice"))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
     void updateBusinessOverwritesFields() {
         Business business = new Business();
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
-        business.setNmid("ID-FROM-QRIS");
         userService.updateBusiness("alice", new UpdateBusinessRequestDto("Toko Baru", "Bandung"));
 
         assertThat(business.getName()).isEqualTo("Toko Baru");
         assertThat(business.getAddress()).isEqualTo("Bandung");
-        // NMID belongs to the QRIS now — editing business info must leave it alone
-        assertThat(business.getNmid()).isEqualTo("ID-FROM-QRIS");
-    }
-
-    @Test
-    void resetBusinessRestoresInitialValues() {
-        Business business = new Business();
-        business.setName("Toko Baru");
-        business.setInitialName("Warung Alice");
-        business.setInitialAddress("Jakarta");
-        business.setInitialNmid("ID123");
-        business.setNmid("ID-FROM-QRIS");
-        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
-
-        userService.resetBusiness("alice");
-
-        assertThat(business.getName()).isEqualTo("Warung Alice");
-        assertThat(business.getAddress()).isEqualTo("Jakarta");
-        // Reset covers editable business info only; NMID comes from the QRIS and is untouched
-        assertThat(business.getNmid()).isEqualTo("ID-FROM-QRIS");
-    }
-
-    @Test
-    void resetBusinessWithoutInitialDataThrows() {
-        Business business = new Business();
-        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
-
-        assertThatThrownBy(() -> userService.resetBusiness("alice"))
-                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -315,7 +260,7 @@ class UserServiceTest {
     @Test
     void getProfilePictureReturnsStoredValue() {
         Business business = new Business();
-        business.setPicture("aW1hZ2U=");
+        business.setProfilePicture("aW1hZ2U=");
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         assertThat(userService.getProfilePicture("alice").profilePicture()).isEqualTo("aW1hZ2U=");
@@ -328,7 +273,7 @@ class UserServiceTest {
 
         var data = userService.updateProfilePicture("alice", "aW1hZ2UtZGF0YQ==");
 
-        assertThat(business.getPicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
+        assertThat(business.getProfilePicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
         assertThat(data.profilePicture()).isEqualTo("aW1hZ2UtZGF0YQ==");
         verify(businessRepository).save(business);
     }
@@ -376,11 +321,7 @@ class UserServiceTest {
 
         assertThatThrownBy(() -> userService.updateBusiness("bob", new UpdateBusinessRequestDto("X", "Y")))
                 .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
-        assertThatThrownBy(() -> userService.resetBusiness("bob"))
-                .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
         assertThatThrownBy(() -> userService.updateBank("bob", new UpdateBankRequestDto("X", "Y", "Z")))
-                .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
-        assertThatThrownBy(() -> userService.resetBank("bob"))
                 .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
         verify(businessRepository, never()).save(any());
         verify(businessBankRepository, never()).save(any());
@@ -389,12 +330,12 @@ class UserServiceTest {
     @Test
     void deleteProfilePictureClearsValue() {
         Business business = new Business();
-        business.setPicture("aW1hZ2U=");
+        business.setProfilePicture("aW1hZ2U=");
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business));
 
         userService.deleteProfilePicture("alice");
 
-        assertThat(business.getPicture()).isNull();
+        assertThat(business.getProfilePicture()).isNull();
         verify(businessRepository).save(business);
     }
 }

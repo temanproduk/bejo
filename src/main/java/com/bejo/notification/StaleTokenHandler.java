@@ -3,7 +3,7 @@ package com.bejo.notification;
 /**
  * A <b>port</b> the notification module owns and core implements. When FCM rejects a token as dead
  * (app uninstalled / token rotated), {@link PushJobSender} reports it here instead of touching the
- * database itself — the owning module (core) clears the token from its {@code bejo_sessions} row.
+ * database itself — the owning module (core) clears the token from its {@code sessions} row.
  * This keeps the notification module free of session/persistence knowledge.
  *
  * <p>Called from a push worker thread with no ambient transaction; the implementation is responsible

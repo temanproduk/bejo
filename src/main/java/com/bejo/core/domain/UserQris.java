@@ -24,18 +24,17 @@ public class UserQris {
     @Column(nullable = false, length = 50)
     private String username;
 
-    @Column(name = "terminal_id", nullable = false, length = 50)
+    // Parsed from the QRIS code (tag 62 / sub-tag 07); null when the code carries no terminal label.
+    @Column(name = "terminal_id", length = 50)
     private String terminalId;
 
-    // The user's own QRIS code (EMV payload). Column name is legacy — it used to hold a base64
-    // image; it now stores the code the app renders locally. Kept so this needs no migration.
-    @Column(name = "qris_image", columnDefinition = "TEXT", nullable = false)
-    private String qrisPayload;
+    @Column(name = "qris_code", columnDefinition = "TEXT", nullable = false)
+    private String qrisCode;
 
     // Merchant identity parsed out of the QRIS code at upload time, so the caption the app
     // shows above the QR always describes the QR itself (see QrisCodeParser).
-    @Column(name = "qris_merchant_name", length = 255)
-    private String qrisMerchantName;
+    @Column(name = "merchant_name", length = 255)
+    private String merchantName;
 
     @Column(name = "nmid", length = 50)
     private String nmid;
@@ -68,14 +67,14 @@ public class UserQris {
     public void setUsername(String username) { this.username = username; }
     public String getTerminalId() { return terminalId; }
     public void setTerminalId(String terminalId) { this.terminalId = terminalId; }
-    public String getQrisPayload() { return qrisPayload; }
-    public void setQrisPayload(String qrisPayload) { this.qrisPayload = qrisPayload; }
+    public String getQrisCode() { return qrisCode; }
+    public void setQrisCode(String qrisCode) { this.qrisCode = qrisCode; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
-    public String getQrisMerchantName() { return qrisMerchantName; }
-    public void setQrisMerchantName(String qrisMerchantName) { this.qrisMerchantName = qrisMerchantName; }
+    public String getMerchantName() { return merchantName; }
+    public void setMerchantName(String merchantName) { this.merchantName = merchantName; }
     public String getNmid() { return nmid; }
     public void setNmid(String nmid) { this.nmid = nmid; }
     public String getAcquirer() { return acquirer; }
