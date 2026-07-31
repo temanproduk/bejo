@@ -293,7 +293,7 @@ Transaction push copy renders the amount through `shared/util/Rupiah.format` —
 
 **The column was repurposed, not migrated.** `business_qris.qris_image` / `user_qris.qris_image` now hold the code; the column names are legacy so the change needed **no DDL**. In Java the field is `qrisPayload` (`@Column(name = "qris_image")`) and the API field is `qrisCode` — three names for one thing, an accepted cost of avoiding a migration. Unrelated: `business_qris.qris_code` is a vestigial internal `VARCHAR(36)` UUID, nothing to do with the payload.
 
-Pre-switch rows held a base64 image in that column; they were converted to codes in a one-time pass at rollout (`scripts/one-time-convert-qris-images.py`, deleted after use), so the server has a single shape to serve and no legacy fallback.
+Pre-switch rows held a base64 image in that column; they were converted to codes and had their merchant identity backfilled in one-time passes at rollout, so the server has a single shape to serve and no legacy fallback.
 
 QRIS is optional: registration creates no `business_qris` row, so `GET /api/qris` returns `404` until the user supplies one. `POST /api/qris/upload` creates the row on first upload. Once a row exists: payload `NULL` → type `MANAGED` (serves the initial/managed value); non-null → type `UPLOADED`. Reset simply nulls it.
 
