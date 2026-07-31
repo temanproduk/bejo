@@ -1,5 +1,10 @@
--- Full baseline schema. The DB is dropped and recreated from this single baseline (pre-launch,
--- no prod data to preserve), so everything is folded in here rather than migrated across versions.
+-- Full baseline schema. This is the SINGLE migration: the database is dropped and recreated from
+-- it rather than evolved across versions, so every change is folded in here.
+--
+-- Editing this file therefore changes its Flyway checksum, which means the database must be
+-- dropped and recreated for the app to start. That is the deliberate trade: one readable schema
+-- instead of an accumulating chain of ALTERs, at the cost of not preserving data.
+--
 -- Seed data is inserted by DataSeeder at app startup, not here.
 --
 -- Model: a BUSINESS (merchant) owns bank, QRIS, products, categories, transactions, stock
@@ -71,9 +76,12 @@ CREATE TABLE IF NOT EXISTS core.business_banks (
 CREATE TABLE IF NOT EXISTS core.business_qris (
     id                   BIGSERIAL   PRIMARY KEY,
     business_id          BIGINT      NOT NULL,
-    qris_code            VARCHAR(36) NOT NULL,
-    qris_image           TEXT,
-    initial_qris_image   TEXT,
+    qris_code            VARCHAR(36) NOT NULL,   -- internal identifier (UUID), unrelated to the QR payload
+    qris_image           TEXT,                   -- holds the QRIS CODE (EMV payload); legacy column name
+    initial_qris_image   TEXT,                   -- the managed/initial code served when none is supplied
+    qris_merchant_name   VARCHAR(255),           -- parsed from the code: EMV tag 59
+    nmid                 VARCHAR(50),            -- parsed: sub-tag 02 of the ID.CO.QRIS.WWW template
+    acquirer             VARCHAR(100),           -- parsed: GUID of the other merchant-account template
     CONSTRAINT uq_qris_business UNIQUE (business_id),
     CONSTRAINT uq_qris_code     UNIQUE (qris_code),
     CONSTRAINT fk_qris_business FOREIGN KEY (business_id) REFERENCES core.businesses (id)
@@ -89,7 +97,10 @@ CREATE TABLE IF NOT EXISTS core.user_qris (
     business_id  BIGINT       NOT NULL,
     username     VARCHAR(50)  NOT NULL,   -- same width as users.username (no FK; history-safe)
     terminal_id  VARCHAR(50)  NOT NULL,
-    qris_image   TEXT         NOT NULL,   -- base64
+    qris_image   TEXT         NOT NULL,   -- holds the QRIS CODE (EMV payload); legacy column name
+    qris_merchant_name VARCHAR(255),      -- parsed from the code: EMV tag 59
+    nmid         VARCHAR(50),             -- parsed: sub-tag 02 of the ID.CO.QRIS.WWW template
+    acquirer     VARCHAR(100),            -- parsed: GUID of the other merchant-account template
     created_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMP,
     CONSTRAINT uq_user_qris_user     UNIQUE (business_id, username),
@@ -129,6 +140,8 @@ CREATE TABLE IF NOT EXISTS commerce.bejo_history (
     settlement_date  TIMESTAMP,
     customer_name    VARCHAR(255),
     info             TEXT,                       -- general-purpose extra context, e.g. raw QRIS callback payload JSON
+    created_by       VARCHAR(50),                -- username that entered a MANUAL/PARSED row (NULL for MANAGED)
+    updated_by       VARCHAR(50),                -- username that last edited it (NULL until edited)
     deleted_at       TIMESTAMP,
     scrape_date      TIMESTAMP,
     CONSTRAINT uq_transaction_id  UNIQUE (transaction_id),
@@ -302,6 +315,9 @@ CREATE TABLE IF NOT EXISTS ads.ad_deliveries (
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_bejo_history_business          ON commerce.bejo_history (business_id);
 CREATE INDEX IF NOT EXISTS idx_bejo_history_transaction_date  ON commerce.bejo_history (transaction_date DESC);
+-- Backs GET /api/transactions/summary and the paginated history, which filter by
+-- (business_id, transaction_date) and exclude soft-deleted rows.
+CREATE INDEX IF NOT EXISTS idx_bejo_history_business_date      ON commerce.bejo_history (business_id, transaction_date) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_transaction_items_history      ON commerce.transaction_items (history_id);
 CREATE INDEX IF NOT EXISTS idx_bejo_sessions_device_id        ON core.bejo_sessions (device_id);
 CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at     ON core.token_blacklist (expires_at);
