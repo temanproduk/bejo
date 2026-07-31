@@ -24,6 +24,12 @@ import java.util.Optional;
  *       brand names is presentation and belongs in the app.</li>
  * </ul>
  *
+ * <p>Each field is bounded by the width of the column it is stored in. An EMV length prefix is
+ * two digits, so a value can be up to 99 characters — comfortably inside {@code qris_merchant_name}
+ * (255) and {@code acquirer} (100), but beyond {@code nmid} (50). A real NMID is 15 characters, so
+ * anything longer is not one: it is dropped rather than stored truncated, which would otherwise
+ * either break the insert or caption the QR with a wrong identifier.
+ *
  * <p>Parsing is <b>lenient and never throws</b>: a code is accepted even when its CRC fails
  * (see {@link QrisService#validateQrisCode}), so a payload this can't read simply yields empty
  * fields rather than blocking the upload.
@@ -40,6 +46,11 @@ public final class QrisCodeParser {
     private static final int MERCHANT_TEMPLATE_FIRST = 26;
     private static final int MERCHANT_TEMPLATE_LAST = 51;
 
+    // Storage widths — a parsed value longer than its column is not the field it claims to be
+    private static final int MAX_MERCHANT_NAME = 255;
+    private static final int MAX_NMID = 50;
+    private static final int MAX_ACQUIRER = 100;
+
     private QrisCodeParser() {}
 
     /** What the app needs to caption the QR. Any field may be null if the code doesn't carry it. */
@@ -55,10 +66,10 @@ public final class QrisCodeParser {
         }
         Map<String, String> top = readTlv(qrisCode);
         return new QrisIdentity(
-                trimToNull(top.get(TAG_MERCHANT_NAME)),
-                findNmid(top),
-                findAcquirer(top),
-                trimToNull(top.get(TAG_MERCHANT_CITY)));
+                withinWidth(trimToNull(top.get(TAG_MERCHANT_NAME)), MAX_MERCHANT_NAME),
+                withinWidth(findNmid(top), MAX_NMID),
+                withinWidth(findAcquirer(top), MAX_ACQUIRER),
+                withinWidth(trimToNull(top.get(TAG_MERCHANT_CITY)), MAX_MERCHANT_NAME));
     }
 
     /** The NMID from whichever merchant-account template carries the QRIS domestic GUID. */
@@ -115,6 +126,11 @@ public final class QrisCodeParser {
             i = valueEnd;
         }
         return out;
+    }
+
+    /** The value, or null when it exceeds the width of the column it would be stored in. */
+    private static String withinWidth(String value, int max) {
+        return value != null && value.length() <= max ? value : null;
     }
 
     private static String trimToNull(String value) {

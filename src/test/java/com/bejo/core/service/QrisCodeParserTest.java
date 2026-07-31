@@ -90,4 +90,27 @@ class QrisCodeParserTest {
         assertThat(identity.merchantName()).isNull();
         assertThat(identity.nmid()).isNull();
     }
+
+    @Test
+    void aValueTooLongForItsColumnIsDroppedNotStored() {
+        // An EMV length prefix is 2 digits, so a value can reach 99 chars — longer than the
+        // nmid column (50). A real NMID is 15 chars, so an over-long one is not an NMID: storing
+        // it would fail the insert, and truncating it would caption the QR with a wrong id.
+        String longNmid = "N".repeat(70);
+        String tmpl = "0014ID.CO.QRIS.WWW" + "02" + String.format("%02d", longNmid.length()) + longNmid;
+        String code = "000201" + "51" + String.format("%02d", tmpl.length()) + tmpl
+                + "5906Susilo" + "63041234";
+
+        var identity = QrisCodeParser.parse(code);
+
+        assertThat(identity.nmid()).isNull();                    // dropped, not truncated
+        assertThat(identity.merchantName()).isEqualTo("Susilo"); // the rest still parses
+    }
+
+    @Test
+    void aNormalLengthNmidIsKept() {
+        var identity = QrisCodeParser.parse(REAL_QRIS);
+        assertThat(identity.nmid()).isEqualTo("ID1026540778978");
+        assertThat(identity.nmid().length()).isLessThanOrEqualTo(50);
+    }
 }
