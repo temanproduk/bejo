@@ -88,7 +88,7 @@ public class UserService {
                 user.getEmail(), user.isEmailVerified(), user.getPhone(), user.isPhoneVerified(),
                 user.getBusinessRole(),
                 qrisService.hasOwnQris(user),
-                business.getName(), business.getAddress(), business.getNmid(),
+                business.getName(), business.getAddress(),
                 bank.getBankName(), bank.getBankNumber(), bank.getBankAccountName(),
                 business.getPicture(), accountSettingsService.getSettings(username));
     }

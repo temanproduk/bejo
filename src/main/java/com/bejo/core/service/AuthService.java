@@ -119,7 +119,6 @@ public class AuthService {
                 qrisService.hasOwnQris(user),
                 business.getName(),
                 business.getAddress(),
-                business.getNmid(),
                 business.getSize(),
                 business.getIndustry(),
                 business.getStorePhoto(),

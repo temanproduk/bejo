@@ -1319,12 +1319,15 @@ class ApiIntegrationTest {
                         .content("{\"merchantPan\":\"MPAN-UPG1\"}"))
                 .andExpect(status().isBadRequest());
 
-        // Valid upgrade → 200, NMID now set on the business
+        // Valid upgrade → 200 and the account becomes MANAGED. The NMID is still recorded on the
+        // business (the QRIS callback routes on it) but is no longer part of the /me bundle — it
+        // belongs to the QRIS now and is read from GET /api/qris.
         mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
                         .content("{\"merchantPan\":\"MPAN-UPG1\",\"nmid\":\"ID-UPG1\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.nmid").value("ID-UPG1"));
+                .andExpect(jsonPath("$.data.accountType").value("MANAGED"))
+                .andExpect(jsonPath("$.data.nmid").doesNotExist());
 
         // Upgrading again is rejected — the account is already managed
         mockMvc.perform(post("/api/users/me/upgrade").header("X-API-TOKEN", API_TOKEN)

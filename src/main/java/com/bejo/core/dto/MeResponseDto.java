@@ -25,7 +25,6 @@ public record MeResponseDto(
         boolean hasOwnQris,
         String businessName,
         String businessAddress,
-        String nmid,
         String bankName,
         String bankNumber,
         String bankAccountName,

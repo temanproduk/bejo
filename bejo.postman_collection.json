@@ -234,7 +234,7 @@
                 "login"
               ]
             },
-            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse `data` includes: id, username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessRole (SUPER_ADMIN|MEMBER), businessName, businessAddress, nmid, bankName, bankNumber, bankAccountName, profilePicture (business picture, null when unset), appSettings (bundled), token, tokenType, expiresIn.\n\nThe bundled profilePicture + appSettings save the client extra round trips on the home screen; GET /api/users/me returns the same bundle minus the token."
+            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse `data` includes: id, username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessRole (SUPER_ADMIN|MEMBER), hasOwnQris, businessName, businessAddress, bankName, bankNumber, bankAccountName, profilePicture (business picture, null when unset), appSettings (bundled), token, tokenType, expiresIn.\n\nThe bundled profilePicture + appSettings save the client extra round trips on the home screen; GET /api/users/me returns the same bundle minus the token."
           }
         },
         {

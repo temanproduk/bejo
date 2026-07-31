@@ -229,10 +229,11 @@ The following are **business-level** (shared by all of the business's users); an
 |---|---|
 | `businessName` | Current business name |
 | `businessAddress` | Current business address |
-| `nmid` | National Merchant ID from QRIS registration |
 | `bankName` / `bankNumber` / `bankAccountName` | Payout bank details |
 | business picture | Shared image (see `/api/business/picture`) |
 | `size` / `industry` / `storePhoto` | **Immutable** — set once at registration, returned only on login |
+
+> `nmid` is **not** here: it belongs to the QRIS, is parsed from the QRIS code on upload, and is read from `GET /api/qris`. It is neither editable via business info nor returned by login / `/me`.
 
 Initial values (`initialName`, `initialAddress`, `initialNmid`, `initialBankName`, `initialBankNumber`, `initialBankAccountName`) are stored on the business and used by the reset endpoints. The initial values themselves are never returned directly, but each reset endpoint returns the resulting (reverted) current values so the client can repopulate its form without a re-login.
 
@@ -299,7 +300,6 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
     "hasOwnQris": true,
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
-    "nmid": "ID1026540778978",
     "size": "Mikro",
     "industry": "Makanan & Minuman",
     "storePhoto": null,
@@ -763,7 +763,6 @@ Self-service registration. Creates a **new business** and its first user as the 
   "phone": "+628100000000",
   "businessName": "Alice Shop",
   "businessAddress": "Jl. Contoh No. 1",
-  "nmid": "ID1026540778978",
   "size": "Mikro",
   "industry": "Makanan & Minuman"
 }
@@ -878,7 +877,7 @@ Super-admin-only (the business info is shared) — a plain member gets `403 Hany
 
 #### `POST /api/users/me/business/reset` — Reset business info (super admin)
 
-Super-admin-only (a plain member gets `403`). Reverts `businessName`, `businessAddress`, and `nmid` to registration values, and returns the reverted values so the client can repopulate the edit form.
+Super-admin-only (a plain member gets `403`). Reverts `businessName` and `businessAddress` to registration values (NMID is untouched — it belongs to the QRIS), and returns the reverted values so the client can repopulate the edit form.
 
 **Success — HTTP 200**
 
@@ -888,8 +887,7 @@ Super-admin-only (a plain member gets `403`). Reverts `businessName`, `businessA
   "message": "Informasi bisnis berhasil direset ke data awal",
   "data": {
     "businessName": "Alice Shop",
-    "businessAddress": "Jl. Contoh No. 1",
-    "nmid": "ID1026540778978"
+    "businessAddress": "Jl. Contoh No. 1"
   }
 }
 ```
@@ -1444,6 +1442,8 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
 >
 > The server additionally checks the EMV checksum and **logs a warning without rejecting** if it fails, so an unfamiliar acquirer is never blocked. To mirror it, the algorithm is **CRC-16/CCITT-FALSE** (polynomial `0x1021`, init `0xFFFF`, no reflection, no final XOR) over everything up to *and including* the trailing `6304`, compared against the last 4 hex digits. Verified against a real AstraPay payload ending `63042C15`.
 
+> **NMID is not in the login or `/me` response.** It is a property of the QRIS, not the business, so read it from `GET /api/qris` — that way it always matches the QR being displayed, including for a sub-account with its own terminal.
+
 **Two names, deliberately.** `businessName` is what the merchant typed into business info; **`qrisMerchantName`, `nmid` and `acquirer` are parsed out of the QRIS code itself** at upload — EMV tag `59`, sub-tag `02` of the `ID.CO.QRIS.WWW` template, and the GUID of the other merchant-account template (e.g. `ID.CO.ASTRAPAY.WWW`) respectively. `acquirer` is the raw reverse-domain identifier; map it to a brand name in the app if you want to display one. Caption the QR with the parsed pair, not the business name — a sub-account with its own QRIS has its own merchant identity, and the caption must match the QR on screen. Both are also returned per assignment by `GET /api/qris/users/{id}`.
 
 **QRIS is stored and served as a _code_, not an image.** The app decodes the merchant's QR once and sends the **EMV payload string**; the server stores that and returns it, and the app renders the QR locally. A few hundred bytes travel instead of a multi-MB base64 image.
@@ -1462,8 +1462,7 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
     "nmid": "ID1026540778978",
     "acquirer": "ID.CO.ASTRAPAY.WWW",
     "businessName": "Alice Shop",
-    "businessAddress": "Jl. Contoh No. 1",
-    "nmid": "ID1026540778978"
+    "businessAddress": "Jl. Contoh No. 1"
   }
 }
 ```

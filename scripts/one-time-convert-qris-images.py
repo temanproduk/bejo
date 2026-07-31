@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-ONE-TIME migration: turn stored QRIS *images* into QRIS *codes*.
+ONE-TIME migration: turn stored QRIS *images* into QRIS *codes*, and backfill the merchant
+identity (merchant name, NMID, acquirer) that is now parsed from the code at upload.
 
 QRIS used to be stored as a base64 image in core.business_qris.qris_image and
 core.user_qris.qris_image. Those columns now hold the EMV payload string (the "QRIS code")
 instead, which the app renders locally. Rows written before that switch still contain base64
 and have to be decoded once — the server has no QR decoder, so this cannot be done in SQL.
+
+Two passes, both idempotent:
+  1. decode any row still holding a base64 image into its EMV payload;
+  2. parse qris_merchant_name / nmid / acquirer out of every row whose identity is missing.
+
+A row that already has both a code and its identity is skipped, so re-running changes nothing.
 
 Run once, then delete this file. It is deliberately not wired into the app or Flyway.
 
@@ -95,6 +102,70 @@ def decode_qris(b64_value):
     return payload, None
 
 
+QRIS_DOMESTIC_GUID = "ID.CO.QRIS.WWW"
+
+
+def read_tlv(data):
+    """Split tag(2) length(2) value(length) triplets, stopping at the first malformed one."""
+    out, i = {}, 0
+    while i + 4 <= len(data):
+        tag = data[i:i + 2]
+        try:
+            length = int(data[i + 2:i + 4])
+        except ValueError:
+            break
+        start, end = i + 4, i + 4 + length
+        if end > len(data):
+            break
+        out.setdefault(tag, data[start:end])
+        i = end
+    return out
+
+
+def parse_identity(code):
+    """
+    (merchant_name, nmid, acquirer) — mirrors QrisCodeParser on the server so a backfilled row is
+    indistinguishable from one uploaded after the change. Any field may be None.
+    """
+    top = read_tlv(code)
+    name = (top.get("59") or "").strip() or None
+    nmid = acquirer = None
+    for tag in range(26, 52):
+        value = top.get("%02d" % tag)
+        if value is None:
+            continue
+        sub = read_tlv(value)
+        guid = (sub.get("00") or "").strip() or None
+        if guid is None:
+            continue
+        if guid.upper() == QRIS_DOMESTIC_GUID:
+            nmid = nmid or ((sub.get("02") or "").strip() or None)
+        elif acquirer is None:
+            acquirer = guid
+    return name, nmid, acquirer
+
+
+def fetch_missing_identity(db_url, table):
+    """(id, code) for rows that hold a code but no parsed identity yet."""
+    rows = psql(db_url, (
+        f"SELECT id, qris_image FROM {table} "
+        f"WHERE qris_image IS NOT NULL AND length(qris_image) <= {MAX_QRIS_CODE_LENGTH} "
+        f"  AND (qris_merchant_name IS NULL AND nmid IS NULL AND acquirer IS NULL) "
+        f"ORDER BY id"
+    ))
+    out = []
+    for line in rows.splitlines():
+        if not line.strip():
+            continue
+        row_id, _, code = line.partition("|")
+        out.append((int(row_id), code))
+    return out
+
+
+def sql_literal(value):
+    return "NULL" if value is None else "'" + value.replace("'", "''") + "'"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert stored QRIS images to QRIS codes (one-time).")
     parser.add_argument("--db", required=True, help="libpq URL, e.g. postgresql://user:pass@host:5432/bejo")
@@ -122,26 +193,52 @@ def main():
         for table, row_id, reason in failures:
             print(f"  {table} id={row_id}: {reason}")
 
-    if not updates:
-        print("\nNothing to write.")
-        return
-
     if not args.apply:
         print("\nDry run — nothing written. Re-run with --apply to commit these changes.")
         return
 
     # One transaction: either every decodable row is converted or none is.
-    statements = ["BEGIN;"]
-    for table, row_id, payload in updates:
-        escaped = payload.replace("'", "''")
-        statements.append(f"UPDATE {table} SET qris_image = '{escaped}' WHERE id = {row_id};")
-    statements.append("COMMIT;")
-    psql(args.db, "\n".join(statements), capture=True)
-    print(f"\nApplied {len(updates)} update(s).")
+    if updates:
+        statements = ["BEGIN;"]
+        for table, row_id, payload in updates:
+            statements.append(
+                f"UPDATE {table} SET qris_image = {sql_literal(payload)} WHERE id = {row_id};")
+        statements.append("COMMIT;")
+        psql(args.db, "\n".join(statements))
+        print(f"\nApplied {len(updates)} image->code conversion(s).")
+
+    # Pass 2 — backfill the merchant identity now parsed at upload, for every row that lacks it
+    # (both the rows just converted and any that already held a code).
+    print("\n--- pass 2: merchant identity ---")
+    identity_updates = []
+    for table in TABLES:
+        pending = fetch_missing_identity(args.db, table)
+        print(f"{table}: {len(pending)} row(s) missing merchant name / NMID / acquirer")
+        for row_id, code in pending:
+            name, nmid, acquirer = parse_identity(code)
+            if name is None and nmid is None and acquirer is None:
+                print(f"  id={row_id:<6} nothing parseable - left as is")
+                continue
+            identity_updates.append((table, row_id, name, nmid, acquirer))
+            print(f"  id={row_id:<6} name={name!r} nmid={nmid!r} acquirer={acquirer!r}")
+
+    if identity_updates:
+        statements = ["BEGIN;"]
+        for table, row_id, name, nmid, acquirer in identity_updates:
+            statements.append(
+                f"UPDATE {table} SET qris_merchant_name = {sql_literal(name)}, "
+                f"nmid = {sql_literal(nmid)}, acquirer = {sql_literal(acquirer)} "
+                f"WHERE id = {row_id};")
+        statements.append("COMMIT;")
+        psql(args.db, "\n".join(statements))
+        print(f"\nApplied {len(identity_updates)} identity backfill(s).")
+    else:
+        print("\nNo identity backfill needed.")
 
     remaining = sum(len(fetch_pending(args.db, t)) for t in TABLES)
-    print(f"Verification: {remaining} row(s) still holding an image "
-          f"({'only the undecodable ones' if remaining == len(failures) else 'UNEXPECTED — investigate'}).")
+    missing = sum(len(fetch_missing_identity(args.db, t)) for t in TABLES)
+    print(f"\nVerification: {remaining} row(s) still holding an image, "
+          f"{missing} row(s) still without an identity.")
 
 
 if __name__ == "__main__":

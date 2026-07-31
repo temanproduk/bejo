@@ -19,7 +19,6 @@ public record LoginResponseDto(
         boolean hasOwnQris,
         String businessName,
         String businessAddress,
-        String nmid,
         // Set once at registration, immutable — only on login (not on /me), so the app caches
         // them from the login response.
         String size,
