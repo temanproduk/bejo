@@ -14,9 +14,6 @@ public record UserQrisResponseDto(
         String username,
         String terminalId,
         String qrisCode,
-        // Only for assignments made before the switch, whose stored value is still a base64
-        // image the server cannot decode into a code. Null otherwise.
-        String legacyQrisImage,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {}

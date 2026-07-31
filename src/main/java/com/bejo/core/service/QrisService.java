@@ -22,8 +22,7 @@ public class QrisService {
     private static final Logger log = LoggerFactory.getLogger(QrisService.class);
 
     /**
-     * Longest accepted QRIS code. Real EMV payloads run a few hundred characters; this also
-     * separates a code from a pre-switch base64 image, which is orders of magnitude longer.
+     * Longest accepted QRIS code. Real EMV payloads run a few hundred characters.
      */
     static final int MAX_QRIS_CODE_LENGTH = 1024;
 
@@ -70,10 +69,7 @@ public class QrisService {
      * terminal, otherwise the shared business QRIS.
      *
      * <p>Serves the <b>QRIS code</b> (EMV payload) — the app renders the QR from it, so nothing
-     * image-sized crosses the wire. Merchants onboarded before the switch still have a base64
-     * image in that column and no code; the server has no QR decoder, so it cannot convert them.
-     * Their value is returned as {@code legacyQrisImage} instead, and disappears once they
-     * re-upload.
+     * image-sized crosses the wire.
      */
     @Transactional
     public QrisResponseDto getQrisData(String username) {
@@ -103,17 +99,8 @@ public class QrisService {
         return response(QrisType.MANAGED, initial, business);
     }
 
-    /**
-     * Splits a stored value into the right response field. A QRIS code is a few hundred
-     * characters of EMV payload; anything longer is a base64 image from before the switch, which
-     * the app has to render as an image rather than encode into a QR.
-     */
-    private QrisResponseDto response(String type, String stored, Business business) {
-        boolean legacyImage = isLegacyImage(stored);
-        return new QrisResponseDto(
-                type,
-                legacyImage ? null : stored,
-                legacyImage ? stored : null,
+    private QrisResponseDto response(String type, String qrisCode, Business business) {
+        return new QrisResponseDto(type, qrisCode,
                 business.getName(), business.getAddress(), business.getNmid());
     }
 
@@ -155,14 +142,6 @@ public class QrisService {
      * deliberately light — length and printability — because rejecting an unusual but valid
      * payload would block a real merchant, and the app has already parsed it once.
      */
-    /**
-     * True when a stored value is a pre-switch base64 image rather than a QRIS code. Codes are
-     * capped at {@link #MAX_QRIS_CODE_LENGTH}; a base64 image is orders of magnitude longer.
-     */
-    static boolean isLegacyImage(String stored) {
-        return stored != null && stored.length() > MAX_QRIS_CODE_LENGTH;
-    }
-
     static String validateQrisCode(String value) {
         String code = value.trim();
         if (code.isEmpty()) {

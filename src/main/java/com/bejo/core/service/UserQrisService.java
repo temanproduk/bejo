@@ -118,9 +118,7 @@ public class UserQrisService {
     }
 
     private UserQrisResponseDto toDto(UserQris q, Long userId, boolean withCode) {
-        String stored = withCode ? q.getQrisPayload() : null;
-        boolean legacy = QrisService.isLegacyImage(stored);
         return new UserQrisResponseDto(userId, q.getUsername(), q.getTerminalId(),
-                legacy ? null : stored, legacy ? stored : null, q.getCreatedAt(), q.getUpdatedAt());
+                withCode ? q.getQrisPayload() : null, q.getCreatedAt(), q.getUpdatedAt());
     }
 }

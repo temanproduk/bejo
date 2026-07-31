@@ -75,7 +75,6 @@ class QrisServiceTest {
 
         assertThat(data.type()).isEqualTo("UPLOADED");
         assertThat(data.qrisCode()).isEqualTo(CODE);
-        assertThat(data.legacyQrisImage()).isNull();
         assertThat(data.businessName()).isEqualTo("Warung Alice");
     }
 
@@ -232,8 +231,6 @@ class QrisServiceTest {
         verify(businessQrisRepository, never()).existsByBusinessId(any());
     }
 
-    // ── legacy split: a pre-switch base64 image must never be served as a "code" ──
-
     @Test
     void aStoredCodeIsServedAsTheCode() {
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
@@ -242,29 +239,5 @@ class QrisServiceTest {
         QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.qrisCode()).isEqualTo(CODE);
-        assertThat(data.legacyQrisImage()).isNull();
-    }
-
-    @Test
-    void aPreSwitchBase64ImageIsServedAsLegacyNotAsACode() {
-        // What a merchant onboarded before the switch still has stored: a base64 PNG, far longer
-        // than any EMV payload. Returning it as qrisCode would make the app render a QR from
-        // image bytes; the server has no decoder, so it hands it back as an image instead.
-        String legacyImage = "iVBORw0KGgo" + "A".repeat(5000);
-        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
-        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris(legacyImage, null)));
-
-        QrisResponseDto data = qrisService.getQrisData("alice");
-
-        assertThat(data.qrisCode()).isNull();
-        assertThat(data.legacyQrisImage()).isEqualTo(legacyImage);
-        assertThat(data.type()).isEqualTo("UPLOADED");
-    }
-
-    @Test
-    void legacyDetectionIsSharedWithThePerUserReads() {
-        assertThat(QrisService.isLegacyImage(CODE)).isFalse();
-        assertThat(QrisService.isLegacyImage(null)).isFalse();
-        assertThat(QrisService.isLegacyImage("A".repeat(QrisService.MAX_QRIS_CODE_LENGTH + 1))).isTrue();
     }
 }

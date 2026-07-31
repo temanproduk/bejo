@@ -1441,8 +1441,6 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
 
 **QRIS is stored and served as a _code_, not an image.** The app decodes the merchant's QR once and sends the **EMV payload string**; the server stores that and returns it, and the app renders the QR locally. A few hundred bytes travel instead of a multi-MB base64 image.
 
-> **Legacy rows.** Merchants onboarded before this change still have a base64 image stored and no code, and the server has no QR decoder to convert them. Their value comes back as **`legacyQrisImage`** instead of `qrisCode` — render it as an image and prompt them to re-upload. It is `null` for everyone else and disappears once they do.
-
 **QRIS is optional.** A freshly registered merchant has no QRIS record at all, so `GET /api/qris` returns **`404 QRIS data not found`** until they supply one via `POST /api/qris/upload` (which creates the record on first upload). Once a record exists, `qrisCode` **may still be `null`** — e.g. after a reset, the response is `type: MANAGED` with `qrisCode: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to add their QRIS.
 
 **Success — HTTP 200**
@@ -1493,7 +1491,7 @@ The main account gives one user their own QRIS code + a **terminal id** (same me
 
 **Request body:** `{ "terminalId": "A001", "qrisCode": "00020101021126610014COM…6304ABCD" }` (max 1024 chars)
 
-**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "terminalId": "A001", "qrisCode": "...", "createdAt": "...", "updatedAt": "..." } }` (an un-migrated assignment returns `legacyQrisImage` instead of `qrisCode`)
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "terminalId": "A001", "qrisCode": "...", "createdAt": "...", "updatedAt": "..." } }`
 
 #### `GET /api/qris/users` · `GET /api/qris/users/{id}` · `DELETE /api/qris/users/{id}` (super admin)
 
