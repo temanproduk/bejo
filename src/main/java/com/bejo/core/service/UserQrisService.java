@@ -12,7 +12,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -53,7 +52,7 @@ public class UserQrisService {
         accountSettingsService.requireTeamManagementEnabled(businessId);
         User target = requireActiveUserInBusiness(businessId, targetUserId);
         String targetUsername = target.getUsername();
-        validateBase64Image(request.qrisImage());
+        String qrisCode = QrisService.validateQrisCode(request.qrisCode());
 
         String terminalId = request.terminalId().trim();
         // Friendly duplicate-terminal check (the DB partial-unique index is the backstop)
@@ -70,7 +69,7 @@ public class UserQrisService {
                     return created;
                 });
         qris.setTerminalId(terminalId);
-        qris.setQrisImage(request.qrisImage());
+        qris.setQrisPayload(qrisCode);
         userQrisRepository.save(qris);
         log.info("[USER-QRIS] Set QRIS for userId={} username={} terminalId={} in businessId={} by {}",
                 targetUserId, targetUsername, terminalId, businessId, callerUsername);
@@ -118,16 +117,10 @@ public class UserQrisService {
                 .orElseThrow(() -> new IllegalArgumentException("Pengguna tidak ditemukan: " + userId));
     }
 
-    private void validateBase64Image(String value) {
-        try {
-            Base64.getDecoder().decode(value);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Format gambar QRIS tidak valid");
-        }
-    }
-
-    private UserQrisResponseDto toDto(UserQris q, Long userId, boolean withImage) {
+    private UserQrisResponseDto toDto(UserQris q, Long userId, boolean withCode) {
+        String stored = withCode ? q.getQrisPayload() : null;
+        boolean legacy = QrisService.isLegacyImage(stored);
         return new UserQrisResponseDto(userId, q.getUsername(), q.getTerminalId(),
-                withImage ? q.getQrisImage() : null, q.getCreatedAt(), q.getUpdatedAt());
+                legacy ? null : stored, legacy ? stored : null, q.getCreatedAt(), q.getUpdatedAt());
     }
 }

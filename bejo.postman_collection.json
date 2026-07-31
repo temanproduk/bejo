@@ -2057,7 +2057,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"qrisImage\": \"<base64-encoded image string>\"\n}",
+              "raw": "{\n  \"qrisCode\": \"00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2075,7 +2075,7 @@
                 "upload"
               ]
             },
-            "description": "Uploads a custom QRIS image. After uploading, GET /api/qris returns this image with type=UPLOADED.\n\nThe generated QRIS is preserved and can be restored with Reset QRIS.\n\nqrisImage must be a valid base64-encoded string. NOTE: super admin only — a plain member gets 403."
+            "description": "Sets the business QRIS as a CODE (the EMV payload the app decoded from the merchant's QR) — not an image. GET /api/qris then returns it as qrisCode with type=UPLOADED, and the app renders the QR locally.\n\nReset QRIS reverts to the initial/managed value.\n\nqrisCode: max 1024 chars, printable ASCII. NOTE: super admin only — a plain member gets 403."
           }
         },
         {
@@ -2126,7 +2126,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"terminalId\": \"A001\",\n  \"qrisImage\": \"cXJpcy10ZXJtaW5hbC1B\"\n}",
+              "raw": "{\n  \"terminalId\": \"A001\",\n  \"qrisCode\": \"00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

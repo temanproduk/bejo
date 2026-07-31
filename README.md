@@ -58,7 +58,7 @@ The rest of this document is the developer/operator reference for the REST API �
 
 <br />
 
-REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT), transaction history and manual entry, QRIS image management, bank/business profile management, FCM token management, and push notification delivery.
+REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT), transaction history and manual entry, QRIS management, bank/business profile management, FCM token management, and push notification delivery.
 
 **Production:** `https://api.bejo.temanproduk.com`
 
@@ -1439,7 +1439,11 @@ For the keyword endpoint: `400 Tidak ada data yang diubah` (all fields null), `4
 
 Returns the caller's **effective** QRIS: if the main account [assigned this user their own QRIS](#put-apiqrisusersusername--assign-a-user-their-own-qris-super-admin), that image (with its terminal); otherwise the shared business QRIS. `type` indicates whether the image is Bejo-managed or user-uploaded.
 
-**QRIS is optional.** A freshly registered merchant has no QRIS record at all, so `GET /api/qris` returns **`404 QRIS data not found`** until they upload one via `POST /api/qris/upload` (which creates the record on first upload). Once a record exists, `qrisImage` **may still be `null`** — e.g. after an upload is reset, the response is `type: MANAGED` with `qrisImage: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to upload their QRIS.
+**QRIS is stored and served as a _code_, not an image.** The app decodes the merchant's QR once and sends the **EMV payload string**; the server stores that and returns it, and the app renders the QR locally. A few hundred bytes travel instead of a multi-MB base64 image.
+
+> **Legacy rows.** Merchants onboarded before this change still have a base64 image stored and no code, and the server has no QR decoder to convert them. Their value comes back as **`legacyQrisImage`** instead of `qrisCode` — render it as an image and prompt them to re-upload. It is `null` for everyone else and disappears once they do.
+
+**QRIS is optional.** A freshly registered merchant has no QRIS record at all, so `GET /api/qris` returns **`404 QRIS data not found`** until they supply one via `POST /api/qris/upload` (which creates the record on first upload). Once a record exists, `qrisCode` **may still be `null`** — e.g. after a reset, the response is `type: MANAGED` with `qrisCode: null`. The server does **not** synthesize a placeholder; the client renders an empty state and prompts the merchant to add their QRIS.
 
 **Success — HTTP 200**
 
@@ -1448,7 +1452,7 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
   "status": 1,
   "data": {
     "type": "UPLOADED",
-    "qrisImage": "<base64-encoded PNG>",
+    "qrisCode": "00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234",
     "businessName": "Alice Shop",
     "businessAddress": "Jl. Contoh No. 1",
     "nmid": "ID1026540778978"
@@ -1463,21 +1467,21 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
 
 ---
 
-#### `POST /api/qris/upload` — Upload custom QRIS image
+#### `POST /api/qris/upload` — Set the business QRIS code
 
 Once uploaded, `GET /api/qris` returns this image with `type: UPLOADED`.
 
-**Request body:** `{ "qrisImage": "<base64-encoded image>" }` — max ±5 MB
+**Request body:** `{ "qrisCode": "00020101021126610014COM…6304ABCD" }` — the EMV payload the app decoded from the merchant's QR, max 1024 chars
 
 **Success — HTTP 200:** `{ "status": 1, "message": "QRIS berhasil diupload" }`
 
-**Errors:** `400 qrisImage wajib diisi`, `400 qrisImage bukan format base64 yang valid`, `400 qrisImage terlalu besar (maksimal ±5MB)`
+**Errors:** `400 qrisCode wajib diisi`, `400 Kode QRIS wajib diisi` (blank), `400 Format kode QRIS tidak valid` (contains control characters), `400 qrisCode terlalu panjang (maksimal 1024 karakter)`
 
 ---
 
-#### `POST /api/qris/reset` — Reset QRIS image
+#### `POST /api/qris/reset` — Reset the QRIS
 
-Clears the uploaded image and reverts to the initial/managed QRIS image (which may be `null` → empty state on the client). No placeholder is generated.
+Clears the merchant's own code and reverts to the initial/managed QRIS (which may be `null` → empty state on the client). No placeholder is generated.
 
 **Success — HTTP 200:** `{ "status": 1, "message": "QRIS berhasil direset ke versi generated" }`
 
@@ -1485,11 +1489,11 @@ Clears the uploaded image and reverts to the initial/managed QRIS image (which m
 
 #### `PUT /api/qris/users/{id}` — Assign a user their own QRIS (super admin)
 
-The main account gives one user their own QRIS image + a **terminal id** (same merchant PAN, distinct terminal), so a payment callback routes by terminal. The path `{id}` is the **user id** (the same identifier as `/api/users/members/{id}`). **Super admin only, and team management must be enabled** (`403` otherwise). `terminalId` is unique within the business (`400 Terminal ID sudah digunakan`); the target must be an active user of the caller's business (`400` otherwise).
+The main account gives one user their own QRIS code + a **terminal id** (same merchant PAN, distinct terminal), so a payment callback routes by terminal. The path `{id}` is the **user id** (the same identifier as `/api/users/members/{id}`). **Super admin only, and team management must be enabled** (`403` otherwise). `terminalId` is unique within the business (`400 Terminal ID sudah digunakan`); the target must be an active user of the caller's business (`400` otherwise).
 
-**Request body:** `{ "terminalId": "A001", "qrisImage": "<base64, ≤±5 MB>" }`
+**Request body:** `{ "terminalId": "A001", "qrisCode": "00020101021126610014COM…6304ABCD" }` (max 1024 chars)
 
-**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "terminalId": "A001", "qrisImage": "...", "createdAt": "...", "updatedAt": "..." } }`
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "terminalId": "A001", "qrisCode": "...", "createdAt": "...", "updatedAt": "..." } }` (an un-migrated assignment returns `legacyQrisImage` instead of `qrisCode`)
 
 #### `GET /api/qris/users` · `GET /api/qris/users/{id}` · `DELETE /api/qris/users/{id}` (super admin)
 
@@ -1702,7 +1706,7 @@ Errors shared across all endpoints:
 | 401 | `Missing or invalid X-API-TOKEN` | Wrong or absent API token |
 | 401 | `Unauthorized — include Authorization: Bearer <token> header` | Missing, expired, or logged-out (blacklisted) JWT |
 | 403 | `Hanya super admin yang dapat mengelola pengguna` / `Super admin tidak dapat dihapus` | Non–super-admin managing users, or acting on a super admin |
-| 403 | `Hanya super admin yang dapat mengubah pengaturan bisnis` | Non–super-admin changing app config, business picture, or QRIS image |
+| 403 | `Hanya super admin yang dapat mengubah pengaturan bisnis` | Non–super-admin changing app config, business picture, or the QRIS |
 | 404 | `Route not found` | Unknown path |
 | 405 | `Method not allowed: <METHOD>` | Wrong HTTP method |
 | 409 | `Username sudah digunakan` | Username already registered |

@@ -27,8 +27,10 @@ public class UserQris {
     @Column(name = "terminal_id", nullable = false, length = 50)
     private String terminalId;
 
+    // The user's own QRIS code (EMV payload). Column name is legacy — it used to hold a base64
+    // image; it now stores the code the app renders locally. Kept so this needs no migration.
     @Column(name = "qris_image", columnDefinition = "TEXT", nullable = false)
-    private String qrisImage;
+    private String qrisPayload;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -54,8 +56,8 @@ public class UserQris {
     public void setUsername(String username) { this.username = username; }
     public String getTerminalId() { return terminalId; }
     public void setTerminalId(String terminalId) { this.terminalId = terminalId; }
-    public String getQrisImage() { return qrisImage; }
-    public void setQrisImage(String qrisImage) { this.qrisImage = qrisImage; }
+    public String getQrisPayload() { return qrisPayload; }
+    public void setQrisPayload(String qrisPayload) { this.qrisPayload = qrisPayload; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

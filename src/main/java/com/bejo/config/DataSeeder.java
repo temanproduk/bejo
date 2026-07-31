@@ -23,8 +23,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -33,6 +31,16 @@ import java.util.UUID;
 public class DataSeeder implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DataSeeder.class);
+
+    /**
+     * QRIS for the seed account, stored as a code (the app renders the QR from it). A structurally
+     * shaped EMV sample for local/dev use — its CRC is not computed, so it is not meant to be
+     * scanned by a real payment app. Seed data backs the seed user only.
+     */
+    private static final String SEED_QRIS_CODE =
+            "00020101021126610014COM.BEJO.WWW011893600822SEED00000002150000000000000000303UMI"
+            + "51440014ID.CO.QRIS.WWW0215ID10200000000000303UMI5204581253033605802ID"
+            + "5909Bejo Seed6007Jakarta61051021062070703A0163040000";
 
     @Value("${app.seed.username:admin}")
     private String seedUsername;
@@ -126,11 +134,11 @@ public class DataSeeder implements ApplicationRunner {
             bank.setInitialBankAccountName("Admin Bejo");
             businessBankRepository.save(bank);
 
-            String seedQrisImage = loadSeedQrisImage();
+            String seedQrisCode = SEED_QRIS_CODE;
             BusinessQris qris = new BusinessQris();
             qris.setBusinessId(businessId);
-            qris.setInitialQrisImage(seedQrisImage);
-            qris.setQrisImage(seedQrisImage);
+            qris.setInitialQrisPayload(seedQrisCode);
+            qris.setQrisPayload(seedQrisCode);
             businessQrisRepository.save(qris);
 
             log.info("[SEED] Created default business '{}' + super admin '{}'", seedBusinessName, seedUsername);
@@ -139,18 +147,6 @@ public class DataSeeder implements ApplicationRunner {
         seedTransactions(businessId);
     }
 
-    private String loadSeedQrisImage() {
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("seed-qris.b64")) {
-            if (is == null) {
-                log.warn("[SEED] seed-qris.b64 not found in classpath — skipping QRIS image");
-                return null;
-            }
-            return new String(is.readAllBytes());
-        } catch (IOException e) {
-            log.warn("[SEED] Failed to load seed-qris.b64: {}", e.getMessage());
-            return null;
-        }
-    }
 
     private void seedTransactions(Long businessId) {
         if (transactionRepository.existsByBusinessId(businessId)) return;

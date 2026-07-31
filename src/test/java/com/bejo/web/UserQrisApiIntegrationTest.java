@@ -10,7 +10,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -29,8 +28,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class UserQrisApiIntegrationTest {
 
     private static final String API_TOKEN = "test-api-token";
-    private static final String QR_A = Base64.getEncoder().encodeToString("qris-terminal-A".getBytes());
-    private static final String QR_BIZ = Base64.getEncoder().encodeToString("qris-business".getBytes());
+    // Sample EMV payloads — a QRIS is stored/served as a code now, not a base64 image
+    private static final String QR_A =
+            "00020101021126610014COM.BEJO.WWW0118936008220000000A0152045812530336054081000580ID5906Term A63041111";
+    private static final String QR_BIZ =
+            "00020101021126610014COM.BEJO.WWW0118936008220000000BIZ52045812530336054081000580ID5908Business63042222";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
@@ -77,7 +79,7 @@ class UserQrisApiIntegrationTest {
     private void setUserQris(String token, String targetId, String terminalId, int expectedStatus) throws Exception {
         mockMvc.perform(put("/api/qris/users/" + targetId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token).contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("terminalId", terminalId, "qrisImage", QR_A))))
+                        .content(objectMapper.writeValueAsString(Map.of("terminalId", terminalId, "qrisCode", QR_A))))
                 .andExpect(status().is(expectedStatus));
     }
 
@@ -90,7 +92,7 @@ class UserQrisApiIntegrationTest {
         // Business QRIS uploaded by the main account (the fallback for users without their own)
         mockMvc.perform(post("/api/qris/upload").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("qrisImage", QR_BIZ))))
+                        .content(objectMapper.writeValueAsString(Map.of("qrisCode", QR_BIZ))))
                 .andExpect(status().isOk());
 
         // Main account gives the member their own QRIS + terminal (keyed by user id)
@@ -104,13 +106,13 @@ class UserQrisApiIntegrationTest {
                 .andExpect(jsonPath("$.data[0].userId").value(Integer.parseInt(memberId)))
                 .andExpect(jsonPath("$.data[0].username").value("uq_member1"))
                 .andExpect(jsonPath("$.data[0].terminalId").value("A001"))
-                .andExpect(jsonPath("$.data[0].qrisImage").doesNotExist());
+                .andExpect(jsonPath("$.data[0].qrisCode").doesNotExist());
 
         // The member's GET /api/qris now returns THEIR image, not the business one
         mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.qrisImage").value(QR_A));
+                .andExpect(jsonPath("$.data.qrisCode").value(QR_A));
 
         // Remove it → the member reverts to the shared business QRIS
         mockMvc.perform(delete("/api/qris/users/" + memberId).header("X-API-TOKEN", API_TOKEN)
@@ -119,7 +121,7 @@ class UserQrisApiIntegrationTest {
         mockMvc.perform(get("/api/qris").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.qrisImage").value(QR_BIZ));
+                .andExpect(jsonPath("$.data.qrisCode").value(QR_BIZ));
     }
 
     // The app gates its "Bunyi Uang Masuk dari Aplikasi" toggle on this flag: a member with
@@ -160,7 +162,7 @@ class UserQrisApiIntegrationTest {
         // ...and true once one is uploaded — the shared business QRIS is the admin's to monitor
         mockMvc.perform(post("/api/qris/upload").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("qrisImage", QR_BIZ))))
+                        .content(objectMapper.writeValueAsString(Map.of("qrisCode", QR_BIZ))))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken))
@@ -210,7 +212,7 @@ class UserQrisApiIntegrationTest {
         // team off → assigning a per-user QRIS (even to self) is gated
         mockMvc.perform(put("/api/qris/users/" + soloId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("terminalId", "S1", "qrisImage", QR_A))))
+                        .content(objectMapper.writeValueAsString(Map.of("terminalId", "S1", "qrisCode", QR_A))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("Fitur manajemen tim belum diaktifkan"));
     }

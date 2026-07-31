@@ -52,29 +52,35 @@ class QrisServiceTest {
         return b;
     }
 
-    private BusinessQris qris(String uploadedImage, String initialImage) {
+    // Sample EMV payloads — a QRIS is stored as a code now, not a base64 image
+    private static final String CODE = "00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234";
+    private static final String OTHER_CODE = "00020101021126610014COM.BEJO.WWW0118936008229999999995204581253033605802ID5909Toko Baru6007Jakarta6304ABCD";
+    private static final String INITIAL_CODE = "00020101021126610014COM.BEJO.WWW0118936008221111111115204581253033605802ID5909Managed QR6007Jakarta6304EEEE";
+
+    private BusinessQris qris(String ownCode, String initialCode) {
         BusinessQris q = new BusinessQris();
         q.setBusinessId(BIZ);
-        q.setQrisCode("11111111-2222-3333-4444-555555555555");
-        q.setQrisImage(uploadedImage);
-        q.setInitialQrisImage(initialImage);
+        q.setQrisCode("11111111-2222-3333-4444-555555555555");   // vestigial internal UUID
+        q.setQrisPayload(ownCode);
+        q.setInitialQrisPayload(initialCode);
         return q;
     }
 
     @Test
-    void uploadedImageYieldsUploadedType() {
+    void uploadedCodeYieldsUploadedType() {
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
-        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris("dXBsb2FkZWQ=", null)));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris(CODE, null)));
 
         QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("UPLOADED");
-        assertThat(data.qrisImage()).isEqualTo("dXBsb2FkZWQ=");
+        assertThat(data.qrisCode()).isEqualTo(CODE);
+        assertThat(data.legacyQrisImage()).isNull();
         assertThat(data.businessName()).isEqualTo("Warung Alice");
     }
 
     @Test
-    void managedTypeWithoutImageServesEmptyState() {
+    void managedTypeWithoutCodeServesEmptyState() {
         BusinessQris q = qris(null, null);
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
         when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
@@ -82,20 +88,20 @@ class QrisServiceTest {
         QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("MANAGED");
-        // No placeholder is generated — the initial image (null here) is served as-is
-        assertThat(data.qrisImage()).isNull();
+        // No placeholder is generated — the initial code (null here) is served as-is
+        assertThat(data.qrisCode()).isNull();
         verify(businessQrisRepository, never()).save(q);
     }
 
     @Test
-    void managedTypeReusesExistingInitialImage() {
+    void managedTypeReusesExistingInitialCode() {
         when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
-        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris(null, "aW5pdGlhbA==")));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris(null, INITIAL_CODE)));
 
         QrisResponseDto data = qrisService.getQrisData("alice");
 
         assertThat(data.type()).isEqualTo("MANAGED");
-        assertThat(data.qrisImage()).isEqualTo("aW5pdGlhbA==");
+        assertThat(data.qrisCode()).isEqualTo(INITIAL_CODE);
         verify(businessQrisRepository, never()).save(org.mockito.ArgumentMatchers.any());
     }
 
@@ -109,22 +115,30 @@ class QrisServiceTest {
     }
 
     @Test
-    void uploadStoresBase64Image() {
-        BusinessQris q = qris(null, "aW5pdGlhbA==");
+    void uploadStoresTheQrisCode() {
+        BusinessQris q = qris(null, INITIAL_CODE);
         when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
 
-        qrisService.uploadQris("alice", "bmV3LWltYWdl");
+        qrisService.uploadQris("alice", OTHER_CODE);
 
-        assertThat(q.getQrisImage()).isEqualTo("bmV3LWltYWdl");
+        assertThat(q.getQrisPayload()).isEqualTo(OTHER_CODE);
         verify(businessQrisRepository).save(q);
     }
 
     @Test
-    void uploadRejectsInvalidBase64() {
+    void uploadRejectsAnUnusableCode() {
         // Validation runs before any repository lookup, so no stubbing is needed
-        assertThatThrownBy(() -> qrisService.uploadQris("alice", "not base64 !!!"))
+        assertThatThrownBy(() -> qrisService.uploadQris("alice", "   "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("wajib diisi");
+        // Control characters aren't a QR payload
+        assertThatThrownBy(() -> qrisService.uploadQris("alice", "0002\u0000BAD"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("tidak valid");
+        // A base64 image is orders of magnitude longer than any EMV payload
+        assertThatThrownBy(() -> qrisService.uploadQris("alice", "A".repeat(2000)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("terlalu panjang");
     }
 
     @Test
@@ -132,12 +146,12 @@ class QrisServiceTest {
         // A business has no business_qris row until its first upload
         when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
 
-        qrisService.uploadQris("alice", "bmV3LWltYWdl");
+        qrisService.uploadQris("alice", OTHER_CODE);
 
         ArgumentCaptor<BusinessQris> captor = ArgumentCaptor.forClass(BusinessQris.class);
         verify(businessQrisRepository).save(captor.capture());
         assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
-        assertThat(captor.getValue().getQrisImage()).isEqualTo("bmV3LWltYWdl");
+        assertThat(captor.getValue().getQrisPayload()).isEqualTo(OTHER_CODE);
     }
 
     @Test
@@ -145,7 +159,7 @@ class QrisServiceTest {
         when(businessContext.requireSuperAdminBusinessId("bob"))
                 .thenThrow(new com.bejo.shared.exception.ForbiddenException("Hanya super admin yang dapat mengubah pengaturan bisnis"));
 
-        assertThatThrownBy(() -> qrisService.uploadQris("bob", "bmV3LWltYWdl"))
+        assertThatThrownBy(() -> qrisService.uploadQris("bob", OTHER_CODE))
                 .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
         assertThatThrownBy(() -> qrisService.resetQris("bob"))
                 .isInstanceOf(com.bejo.shared.exception.ForbiddenException.class);
@@ -153,27 +167,27 @@ class QrisServiceTest {
     }
 
     @Test
-    void resetClearsUploadedImage() {
-        BusinessQris q = qris("dXBsb2FkZWQ=", "aW5pdGlhbA==");
+    void resetClearsUploadedCode() {
+        BusinessQris q = qris(CODE, INITIAL_CODE);
         when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
 
         qrisService.resetQris("alice");
 
-        assertThat(q.getQrisImage()).isNull();
-        assertThat(q.getInitialQrisImage()).isEqualTo("aW5pdGlhbA==");
+        assertThat(q.getQrisPayload()).isNull();
+        assertThat(q.getInitialQrisPayload()).isEqualTo(INITIAL_CODE);
         verify(businessQrisRepository).save(q);
     }
 
     @Test
-    void resetClearsUploadedImageWithoutGenerating() {
-        BusinessQris q = qris("dXBsb2FkZWQ=", null);
+    void resetClearsUploadedCodeWithoutGenerating() {
+        BusinessQris q = qris(CODE, null);
         when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(q));
 
         qrisService.resetQris("alice");
 
-        assertThat(q.getQrisImage()).isNull();
-        // No initial image is generated — stays null (empty state)
-        assertThat(q.getInitialQrisImage()).isNull();
+        assertThat(q.getQrisPayload()).isNull();
+        // No initial code is generated — stays null (empty state)
+        assertThat(q.getInitialQrisPayload()).isNull();
         verify(businessQrisRepository).save(q);
     }
 
@@ -216,5 +230,41 @@ class QrisServiceTest {
         // Even though the business has a QRIS — it is the super admin who monitors it
         assertThat(qrisService.hasOwnQris(asUser("emp", com.bejo.core.domain.BusinessRole.MEMBER))).isFalse();
         verify(businessQrisRepository, never()).existsByBusinessId(any());
+    }
+
+    // ── legacy split: a pre-switch base64 image must never be served as a "code" ──
+
+    @Test
+    void aStoredCodeIsServedAsTheCode() {
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris(CODE, null)));
+
+        QrisResponseDto data = qrisService.getQrisData("alice");
+
+        assertThat(data.qrisCode()).isEqualTo(CODE);
+        assertThat(data.legacyQrisImage()).isNull();
+    }
+
+    @Test
+    void aPreSwitchBase64ImageIsServedAsLegacyNotAsACode() {
+        // What a merchant onboarded before the switch still has stored: a base64 PNG, far longer
+        // than any EMV payload. Returning it as qrisCode would make the app render a QR from
+        // image bytes; the server has no decoder, so it hands it back as an image instead.
+        String legacyImage = "iVBORw0KGgo" + "A".repeat(5000);
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessQrisRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(qris(legacyImage, null)));
+
+        QrisResponseDto data = qrisService.getQrisData("alice");
+
+        assertThat(data.qrisCode()).isNull();
+        assertThat(data.legacyQrisImage()).isEqualTo(legacyImage);
+        assertThat(data.type()).isEqualTo("UPLOADED");
+    }
+
+    @Test
+    void legacyDetectionIsSharedWithThePerUserReads() {
+        assertThat(QrisService.isLegacyImage(CODE)).isFalse();
+        assertThat(QrisService.isLegacyImage(null)).isFalse();
+        assertThat(QrisService.isLegacyImage("A".repeat(QrisService.MAX_QRIS_CODE_LENGTH + 1))).isTrue();
     }
 }

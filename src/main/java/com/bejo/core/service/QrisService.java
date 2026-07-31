@@ -15,12 +15,17 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Base64;
 
 @Service
 public class QrisService {
 
     private static final Logger log = LoggerFactory.getLogger(QrisService.class);
+
+    /**
+     * Longest accepted QRIS code. Real EMV payloads run a few hundred characters; this also
+     * separates a code from a pre-switch base64 image, which is orders of magnitude longer.
+     */
+    static final int MAX_QRIS_CODE_LENGTH = 1024;
 
     private final BusinessRepository businessRepository;
     private final BusinessQrisRepository businessQrisRepository;
@@ -60,46 +65,65 @@ public class QrisService {
         return user.isSuperAdmin() && businessQrisRepository.existsByBusinessId(businessId);
     }
 
+    /**
+     * The caller's effective QRIS: their own assigned one if the main account gave them a
+     * terminal, otherwise the shared business QRIS.
+     *
+     * <p>Serves the <b>QRIS code</b> (EMV payload) — the app renders the QR from it, so nothing
+     * image-sized crosses the wire. Merchants onboarded before the switch still have a base64
+     * image in that column and no code; the server has no QR decoder, so it cannot convert them.
+     * Their value is returned as {@code legacyQrisImage} instead, and disappears once they
+     * re-upload.
+     */
     @Transactional
     public QrisResponseDto getQrisData(String username) {
         Long businessId = businessContext.requireBusinessId(username);
         Business business = businessRepository.findById(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
 
-        // If the main account assigned this user their own QRIS, serve that (their terminal's image);
-        // otherwise fall back to the shared business QRIS below.
         UserQris own = userQrisRepository.findByBusinessIdAndUsername(businessId, username).orElse(null);
         if (own != null) {
             log.debug("[QRIS] Serving per-user QRIS for username={} terminalId={}", username, own.getTerminalId());
-            return new QrisResponseDto(QrisType.UPLOADED, own.getQrisImage(),
-                    business.getName(), business.getAddress(), business.getNmid());
+            return response(QrisType.UPLOADED, own.getQrisPayload(), business);
         }
 
         BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
-        if (qris.getQrisImage() != null) {
-            log.debug("[QRIS] Serving UPLOADED image for businessId={}", businessId);
-            return new QrisResponseDto(QrisType.UPLOADED, qris.getQrisImage(),
-                    business.getName(), business.getAddress(), business.getNmid());
+        if (qris.getQrisPayload() != null) {
+            log.debug("[QRIS] Serving UPLOADED QRIS for businessId={}", businessId);
+            return response(QrisType.UPLOADED, qris.getQrisPayload(), business);
         }
 
-        // No uploaded image — serve the managed/initial image as-is. It may be null
-        // (e.g. a freshly registered business that hasn't uploaded a QRIS yet), in
-        // which case the client renders an empty state instead of a placeholder.
-        String initialImage = qris.getInitialQrisImage();
-        log.debug("[QRIS] Serving MANAGED image (present={}) for businessId={}", initialImage != null, businessId);
-        return new QrisResponseDto(QrisType.MANAGED, initialImage,
+        // Nothing uploaded — serve the managed/initial value as-is. It may be null (a freshly
+        // registered business that hasn't supplied a QRIS), in which case the client renders an
+        // empty state rather than a placeholder.
+        String initial = qris.getInitialQrisPayload();
+        log.debug("[QRIS] Serving MANAGED QRIS (present={}) for businessId={}", initial != null, businessId);
+        return response(QrisType.MANAGED, initial, business);
+    }
+
+    /**
+     * Splits a stored value into the right response field. A QRIS code is a few hundred
+     * characters of EMV payload; anything longer is a base64 image from before the switch, which
+     * the app has to render as an image rather than encode into a QR.
+     */
+    private QrisResponseDto response(String type, String stored, Business business) {
+        boolean legacyImage = isLegacyImage(stored);
+        return new QrisResponseDto(
+                type,
+                legacyImage ? null : stored,
+                legacyImage ? stored : null,
                 business.getName(), business.getAddress(), business.getNmid());
     }
 
     @Transactional
-    public void uploadQris(String username, String base64Image) {
+    public void uploadQris(String username, String qrisCode) {
         Long businessId = businessContext.requireSuperAdminBusinessId(username);  // super-admin only
-        validateBase64Image(base64Image);
+        String code = validateQrisCode(qrisCode);
 
-        // QRIS is optional: a business has no business_qris row until it uploads one,
-        // so create it on first upload (qris_code auto-generated).
+        // QRIS is optional: a business has no business_qris row until it supplies one,
+        // so create it on first upload (the internal qris_code UUID is auto-generated).
         BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseGet(() -> {
                     BusinessQris created = new BusinessQris();
@@ -108,9 +132,9 @@ public class QrisService {
                     return created;
                 });
 
-        qris.setQrisImage(base64Image);
+        qris.setQrisPayload(code);
         businessQrisRepository.save(qris);
-        log.info("[QRIS] Uploaded custom image ({} chars) for businessId={}", base64Image.length(), businessId);
+        log.info("[QRIS] Stored QRIS code ({} chars) for businessId={}", code.length(), businessId);
     }
 
     @Transactional
@@ -119,18 +143,38 @@ public class QrisService {
         BusinessQris qris = businessQrisRepository.findByBusinessId(businessId)
                 .orElseThrow(() -> new ResourceNotFoundException("QRIS data not found"));
 
-        // Clear the uploaded image; fall back to whatever initial/managed image
-        // exists (may be null → empty state). No placeholder is generated.
-        qris.setQrisImage(null);
+        // Clear the merchant's own code; fall back to whatever initial/managed value exists
+        // (may be null → empty state). No placeholder is generated.
+        qris.setQrisPayload(null);
         businessQrisRepository.save(qris);
-        log.info("[QRIS] Reset to MANAGED image for businessId={}", businessId);
+        log.info("[QRIS] Reset to MANAGED QRIS for businessId={}", businessId);
     }
 
-    private void validateBase64Image(String value) {
-        try {
-            Base64.getDecoder().decode(value);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Format gambar QRIS tidak valid");
+    /**
+     * A QRIS code is the EMV payload the app decoded from the merchant's QR. Validation is
+     * deliberately light — length and printability — because rejecting an unusual but valid
+     * payload would block a real merchant, and the app has already parsed it once.
+     */
+    /**
+     * True when a stored value is a pre-switch base64 image rather than a QRIS code. Codes are
+     * capped at {@link #MAX_QRIS_CODE_LENGTH}; a base64 image is orders of magnitude longer.
+     */
+    static boolean isLegacyImage(String stored) {
+        return stored != null && stored.length() > MAX_QRIS_CODE_LENGTH;
+    }
+
+    static String validateQrisCode(String value) {
+        String code = value.trim();
+        if (code.isEmpty()) {
+            throw new IllegalArgumentException("Kode QRIS wajib diisi");
         }
+        if (code.length() > MAX_QRIS_CODE_LENGTH) {
+            throw new IllegalArgumentException("Kode QRIS terlalu panjang (maksimal "
+                    + MAX_QRIS_CODE_LENGTH + " karakter)");
+        }
+        if (code.chars().anyMatch(c -> c < 0x20 || c > 0x7E)) {
+            throw new IllegalArgumentException("Format kode QRIS tidak valid");
+        }
+        return code;
     }
 }

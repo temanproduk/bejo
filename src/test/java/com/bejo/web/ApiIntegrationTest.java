@@ -971,17 +971,17 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"qrisImage\":\"dXBsb2FkZWQtaW1hZ2U=\"}"))
+                        .content("{\"qrisCode\":\"00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234\"}"))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/qris")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data.type").value("UPLOADED"))
-                .andExpect(jsonPath("$.data.qrisImage").value("dXBsb2FkZWQtaW1hZ2U="));
+                .andExpect(jsonPath("$.data.qrisCode").value("00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234"));
 
-        // Reset clears the uploaded image; no placeholder is generated, so the
-        // managed image is an empty state (qrisImage omitted)
+        // Reset clears the uploaded code; no placeholder is generated, so the
+        // managed QRIS is an empty state (qrisCode omitted)
         mockMvc.perform(post("/api/qris/reset")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
@@ -991,7 +991,7 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$.data.type").value("MANAGED"))
-                .andExpect(jsonPath("$.data.qrisImage").doesNotExist());
+                .andExpect(jsonPath("$.data.qrisCode").doesNotExist());
     }
 
     // ---------- business members (multi-user per business) ----------
@@ -1256,8 +1256,7 @@ class ApiIntegrationTest {
         mockMvc.perform(post("/api/qris/upload")
                         .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + memberToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("qrisImage",
-                                java.util.Base64.getEncoder().encodeToString("qr".getBytes())))))
+                        .content(objectMapper.writeValueAsString(Map.of("qrisCode", "00020101021126610014COM.BEJO.WWW0118936008220000000001520458125303360540810005802ID5909Toko Test6007Jakarta63041234"))))
                 .andExpect(status().isForbidden());
 
         mockMvc.perform(post("/api/qris/reset")
@@ -1411,7 +1410,7 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"qrisImage\":\"@@ not base64 @@\"}"))
+                        .content("{\"qrisCode\":\"bad\u0000code\"}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -1625,7 +1624,7 @@ class ApiIntegrationTest {
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + token)
                         .contentType(APPLICATION_JSON)
-                        .content("{\"qrisImage\":\"" + huge + "\"}"))
+                        .content("{\"qrisCode\":\"" + huge + "\"}"))
                 .andExpect(status().isPayloadTooLarge());
     }
 
