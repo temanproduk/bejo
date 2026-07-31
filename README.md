@@ -136,6 +136,8 @@ Available at `http://localhost:8080`. Prometheus at `http://localhost:9090`.
 
 Requires a running PostgreSQL instance. Flyway migrations run on startup.
 
+> **Schema changes.** `V1__init_schema.sql` is the deployed baseline and is **frozen** — never edit it (or any applied migration), since Flyway checksums the file against the live database and a mismatch stops the app booting. Add a **new** migration instead (`V2__…`, `V3__…`): additive, forward-only, and safe against a populated table. Keep the JPA entities in step — the test suite builds H2 from the entities, so it cannot catch entity/migration drift; boot once against a fresh Postgres with `--spring.jpa.hibernate.ddl-auto=validate` to prove they agree.
+
 ```bash
 export API_TOKEN=dev-token
 export JWT_SECRET=YmVqby1kZXYtc2VjcmV0LWtleS1tdXN0LWJlLWNoYW5nZWQtaW4tcHJvZHVjdGlvbi1taW4tMjU2Yml0cw==

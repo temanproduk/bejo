@@ -1,9 +1,9 @@
--- Full baseline schema. This is the SINGLE migration: the database is dropped and recreated from
--- it rather than evolved across versions, so every change is folded in here.
+-- Full baseline schema, as deployed. THIS FILE IS FROZEN — do not edit it, not even a comment.
 --
--- Editing this file therefore changes its Flyway checksum, which means the database must be
--- dropped and recreated for the app to start. That is the deliberate trade: one readable schema
--- instead of an accumulating chain of ALTERs, at the cost of not preserving data.
+-- Flyway checksums these bytes against the live database, so any change here breaks startup with
+-- "Validate failed: Migration checksum mismatch". Every schema change from now on is a NEW
+-- versioned migration (V2__..., V3__...): additive, forward-only, and safe to apply to a
+-- populated table. Production data is preserved.
 --
 -- Seed data is inserted by DataSeeder at app startup, not here.
 --
