@@ -187,8 +187,8 @@ public class TransactionService {
         applyItems(businessId, t, request.items());
         log.info("[TXN] Created type={} acquirer={} transactionId={} createdBy={}",
                 t.getType(), t.getAcquirer(), t.getTransactionId(), username);
-        // A PARSED transaction is a real-time payment an app detected — notify the super admin
-        // plus everyone sharing the QRIS it landed on (see notifyParsedTransaction).
+        // A PARSED transaction is a payment this device detected and self-reported — notify the
+        // others sharing that QRIS, but not the reporter itself (see notifyParsedTransaction).
         if (TransactionType.PARSED.equals(t.getType())) {
             notifyParsedTransaction(businessId, t, username);
         }
@@ -562,20 +562,25 @@ public class TransactionService {
     }
 
     /**
-     * Notify the relevant accounts of a newly-recorded PARSED transaction. A PARSED entry is a
-     * real-time payment an app detected off a QRIS merchant notification; the detecting device
-     * ({@code creator}) already played the alert locally before calling the API and the client
-     * dedupes, so the detector is still included here (it won't double-play).
+     * Notify the relevant accounts of a newly-recorded PARSED transaction — a real-time payment an
+     * app detected off a QRIS merchant notification and self-reported here.
      *
-     * <p>Recipients = the business <b>super admin</b> (always — merchant oversight) plus everyone
-     * sharing the QRIS the payment landed on:
+     * <p><b>The reporting device is excluded.</b> It already announced the payment locally before
+     * calling the API, so pushing it back is pure echo. This is the one difference from a MANAGED
+     * callback ({@code QrisCallbackService}), where the server learns of the payment first and so
+     * must tell everyone including the super admin.
+     *
+     * <p>Recipients = the business <b>super admin</b> (merchant oversight) plus everyone sharing
+     * the QRIS the payment landed on, <em>minus the creator</em>:
      * <ul>
      *   <li>created by the super admin (or any account on the <b>shared</b> business QRIS) → the
-     *       super admin + all members <b>without</b> their own {@code user_qris} (the shared-QRIS
-     *       cohort);</li>
-     *   <li>created by a member with their <b>own</b> QRIS (a separate merchant app) → the super
-     *       admin + just that member (no one else shares that QRIS).</li>
+     *       members <b>without</b> their own {@code user_qris} (the shared-QRIS cohort); the super
+     *       admin drops out when they are the reporter, which is the usual case;</li>
+     *   <li>created by a member with their <b>own</b> QRIS (a separate merchant app) → just the
+     *       super admin, since no one else shares that QRIS.</li>
      * </ul>
+     * With a solo super admin reporting their own sale there is nobody left to tell, and no push
+     * is sent.
      * Recipients are resolved now (fast DB reads) but the push is deferred to after the transaction
      * commits so a rollback never buzzes a phone; best-effort — a send failure is logged, never rethrown.
      */
@@ -590,18 +595,22 @@ public class TransactionService {
                 .map(User::getUsername)
                 .ifPresent(recipients::add);
 
-        if (withOwnQris.contains(creator)) {
-            // Payment on the creator's own QRIS — only the creator shares it (besides the admin).
-            recipients.add(creator);
-        } else {
+        if (!withOwnQris.contains(creator)) {
             // Payment on the shared business QRIS — everyone on it (members without their own QRIS).
+            // A member with their own QRIS runs a separate merchant app and sees its own payments.
             userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(businessId, BusinessRole.MEMBER)
                     .stream()
                     .map(User::getUsername)
                     .filter(u -> !withOwnQris.contains(u))
                     .forEach(recipients::add);
         }
-        if (recipients.isEmpty()) return;
+        // The reporter already announced it locally — pushing back would just echo.
+        recipients.remove(creator);
+        if (recipients.isEmpty()) {
+            log.debug("[TXN] PARSED transactionId={} reported by {} — no one else to notify",
+                    t.getTransactionId(), creator);
+            return;
+        }
 
         PushPayload payload = new TransactionPushPayload(t, merchantName(businessId),
                 "Pembayaran Diterima", "Pembayaran " + Rupiah.format(t.getAmount()) + " diterima");
@@ -620,10 +629,10 @@ public class TransactionService {
     private void sendParsedPushQuietly(List<String> recipients, PushPayload payload, String transactionId) {
         try {
             int queued = pushNotificationService.sendToUsernames(recipients, payload);
-            log.info("[TXN] Notified {} shared-QRIS employee(s) of PARSED transactionId={} ({} push job(s) queued)",
+            log.info("[TXN] Notified {} account(s) of PARSED transactionId={}, excluding the reporter ({} push job(s) queued)",
                     recipients.size(), transactionId, queued);
         } catch (RuntimeException e) {
-            log.warn("[TXN] Employee notification failed for PARSED transactionId={} (transaction still recorded): {}",
+            log.warn("[TXN] Notification failed for PARSED transactionId={} (transaction still recorded): {}",
                     transactionId, e.getMessage());
         }
     }

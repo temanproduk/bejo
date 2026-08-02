@@ -169,7 +169,10 @@ class QrisCallbackServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
         verify(pushNotificationService).sendToUsernames(captor.capture(), any());
-        // owner always + kasir1 (terminal match); kasir2 excluded (different terminal)
+        // owner always + kasir1 (terminal match); kasir2 excluded (different terminal).
+        // Deliberately unlike a PARSED transaction, which drops its self-reporting device: here
+        // the server learns of the payment first, so nobody has announced it locally yet and the
+        // super admin must be told.
         assertThat(captor.getValue()).containsExactlyInAnyOrder("owner", "kasir1");
     }
 

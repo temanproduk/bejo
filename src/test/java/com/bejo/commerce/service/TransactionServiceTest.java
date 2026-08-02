@@ -210,9 +210,9 @@ class TransactionServiceTest {
         assertThat(captor.getValue().getUpdatedBy()).isNull();   // never edited yet
     }
 
-    // PARSED detected by the super admin (payment on the shared business QRIS):
-    // notify the super admin (included — its app already played + dedupes) + all members on the
-    // shared QRIS; a member with their own QRIS runs a separate app and is skipped.
+    // PARSED reported by the super admin (payment on the shared business QRIS): notify the
+    // shared-QRIS members. The reporter is NOT notified — its app already announced locally, so a
+    // push back is pure echo. A member with their own QRIS runs a separate app and is skipped.
     @Test
     @SuppressWarnings("unchecked")
     void parsedByAdminNotifiesAdminAndSharedQrisMembers() {
@@ -226,15 +226,15 @@ class TransactionServiceTest {
         when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
                 .thenReturn(List.of(member("emp_with_qris"), member("emp_shared")));
 
-        transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));   // detected by the super admin
+        transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));   // reported by the super admin
 
         ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
         verify(pushNotificationService).sendToUsernames(captor.capture(), any());
-        assertThat(captor.getValue()).containsExactlyInAnyOrder("alice", "emp_shared");
+        assertThat(captor.getValue()).containsExactly("emp_shared");   // alice reported it
     }
 
-    // PARSED detected by a sub-account with its own QRIS (payment on that sub's separate QRIS):
-    // only the super admin (oversight) + that sub-account; no shared-QRIS members.
+    // PARSED reported by a sub-account with its own QRIS: only the super admin (oversight). The
+    // reporting sub-account is excluded, and no shared-QRIS member sees a payment on that terminal.
     @Test
     @SuppressWarnings("unchecked")
     void parsedByOwnQrisMemberNotifiesAdminAndThatMemberOnly() {
@@ -247,17 +247,16 @@ class TransactionServiceTest {
         ownQris.setUsername("emp_own");
         when(userQrisRepository.findByBusinessId(BIZ)).thenReturn(List.of(ownQris));
 
-        transactionService.create("emp_own", "key-1", request("PARSED", "AstraPay"));   // detected by the own-QRIS sub
+        transactionService.create("emp_own", "key-1", request("PARSED", "AstraPay"));   // reported by the own-QRIS sub
 
         ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
         verify(pushNotificationService).sendToUsernames(captor.capture(), any());
-        assertThat(captor.getValue()).containsExactlyInAnyOrder("alice", "emp_own");
+        assertThat(captor.getValue()).containsExactly("alice");   // emp_own reported it
     }
 
-    // Shared-QRIS cohort empty (every member has their own QRIS) → the admin alone is notified.
+    // Shared-QRIS cohort empty and the admin is the reporter → nobody left to tell, no push.
     @Test
-    @SuppressWarnings("unchecked")
-    void parsedByAdminWithNoSharedQrisMembersNotifiesAdminOnly() {
+    void parsedByAdminWithNoSharedQrisMembersNotifiesNobody() {
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
@@ -270,9 +269,7 @@ class TransactionServiceTest {
 
         transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));
 
-        ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
-        verify(pushNotificationService).sendToUsernames(captor.capture(), any());
-        assertThat(captor.getValue()).containsExactly("alice");
+        verify(pushNotificationService, never()).sendToUsernames(any(), any());
     }
 
     // The app renders the push itself (data-only), so the body must arrive already formatted
@@ -284,6 +281,9 @@ class TransactionServiceTest {
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
                 .thenReturn(Optional.of(named("alice")));
         when(userQrisRepository.findByBusinessId(BIZ)).thenReturn(List.of());
+        // alice reports it, so someone else must remain to receive the push
+        when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
+                .thenReturn(List.of(member("emp_shared")));
 
         transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));   // amount 50_000
 

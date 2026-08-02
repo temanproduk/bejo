@@ -114,7 +114,7 @@ Controllers resolve the username via Spring's `Authentication` principal.
 | `GET` | `/api/transactions` | JWT | Transaction history; optional `dateStart`/`dateEnd` (ISO date, inclusive); paginated (`page`/`size`). Each row carries `createdBy`/`updatedBy` (who created/last-edited it) |
 | `GET` | `/api/transactions/summary` | JWT | Dashboard totals (summed amount + count) for today / yesterday / this month; optional `date` = client's local "today" (defaults to server date) |
 | `GET` | `/api/transactions/{transactionId}` | JWT | One transaction **with its sold-product line items** (the history list omits items) |
-| `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header. Optional `items` (product line items) — validates + reduces stock, records a SALE stock mutation. A **PARSED** entry also pushes to the super admin + everyone sharing the QRIS it landed on (routed by the creator; see below) |
+| `POST` | `/api/transactions` | JWT | Add MANUAL/PARSED transaction; requires `Idempotency-Key` header. Optional `items` (product line items) — validates + reduces stock, records a SALE stock mutation. A **PARSED** entry also pushes to everyone sharing the QRIS it landed on **except the reporting device** (see below) |
 | `POST` | `/api/transactions/bulk` | JWT | Bulk-sync MANUAL/PARSED transactions (offline entry); per-item `idempotencyKey`, partial-success result (no line items, no PARSED push) |
 | `PATCH` | `/api/transactions/{transactionId}` | JWT | Edit a MANUAL/PARSED transaction (partial update; MANAGED is immutable). Optional `items` fully replaces the line items, reconciling stock by delta + re-deriving amount. Stamps `updatedBy` |
 | `DELETE` | `/api/transactions/{transactionId}` | JWT (super admin) | Soft-delete a transaction (sets `deleted_at`); returns any sold line items' stock to their products. **Sub-accounts get 403** |
@@ -250,12 +250,16 @@ MANUAL/PARSED transactions snapshot **who touched them**: `transactions.created_
 
 ### PARSED transaction push (routed by who detected it)
 
-When a **PARSED** transaction is created (a real-time payment an app detected off a QRIS merchant notification), `TransactionService.notifyParsedTransaction` pushes a `TransactionPushPayload` (data-only, Android HIGH). The detecting device (the **creator**, `createdBy`) already played the alert locally before calling the API and **the client dedupes**, so the detector is deliberately **included** in the push (it won't double-play). Recipients = the business **super admin (always — merchant oversight)** plus everyone sharing the QRIS the payment landed on:
+When a **PARSED** transaction is created (a real-time payment an app detected off a QRIS merchant notification and self-reported), `TransactionService.notifyParsedTransaction` pushes a `TransactionPushPayload` (data-only, Android HIGH).
 
-- **created by the super admin** (or any account on the shared business QRIS — creator **not** in `user_qris`) → the super admin **+ all `BusinessRole.MEMBER` users without their own `user_qris`** (the shared-QRIS cohort). A member with their own QRIS runs a **separate** merchant app and detects its own payments there, so they're excluded.
-- **created by a member with their own QRIS** (creator **is** in `user_qris`) → the super admin **+ just that member** (no one else shares that QRIS).
+**The reporting device is excluded.** It already announced the payment locally before calling the API, so pushing it back is pure echo. This is the one place that differs from a **MANAGED** callback, where the server learns of the payment first and therefore must tell everyone, super admin included (`QrisCallbackService.resolveRecipients` — unchanged).
 
-So the detector is always in the set (super admin as themselves, or the own-QRIS member as themselves), and the super admin is always included. Recipients are resolved synchronously (fast DB reads) but the send is **deferred to after commit** (`TransactionSynchronization.afterCommit`, the presence/ads pattern) so a rollback never buzzes a phone, and it's **best-effort** — a send failure is logged, never rethrown, and never fails the transaction. **Only the single `POST /api/transactions` path** does this; `bulkCreate` (offline catch-up) deliberately does not — a burst of pushes for stale entries would be wrong.
+Recipients = the business **super admin** (merchant oversight) plus everyone sharing the QRIS the payment landed on, **minus the creator**:
+
+- **reported by the super admin** (or any account on the shared business QRIS — creator **not** in `user_qris`) → **all `BusinessRole.MEMBER` users without their own `user_qris`** (the shared-QRIS cohort). The super admin drops out here, since they are the reporter — the usual case. A member with their own QRIS runs a **separate** merchant app and sees its own payments there, so they're excluded anyway.
+- **reported by a member with their own QRIS** (creator **is** in `user_qris`) → **just the super admin**; nobody else shares that terminal.
+
+A solo super admin reporting their own sale leaves nobody to tell, and no push is sent. Recipients are resolved synchronously (fast DB reads) but the send is **deferred to after commit** (`TransactionSynchronization.afterCommit`, the presence/ads pattern) so a rollback never buzzes a phone, and it's **best-effort** — a send failure is logged, never rethrown, and never fails the transaction. **Only the single `POST /api/transactions` path** does this; `bulkCreate` (offline catch-up) deliberately does not — a burst of pushes for stale entries would be wrong.
 
 ### QRIS payment callback
 

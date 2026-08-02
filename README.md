@@ -438,9 +438,11 @@ When `items` are supplied the sale is atomic: an unknown product, a duplicate pr
 
 The creating account/sub-account is recorded as the transaction's `createdBy` (returned by the list/detail endpoints).
 
-> **PARSED transactions notify by who detected them.** A `PARSED` transaction is a real-time payment an app detected off a QRIS merchant notification. The detecting device (the creator) already played the alert locally before calling the API and the app dedupes, so it is **included** in the push (it won't double-play). The server pushes a data-only transaction notification to the business **super admin (always)** plus everyone sharing the QRIS the payment landed on:
-> - **detected by the super admin** (payment on the shared business QRIS) → the super admin + all sub-accounts **without** their own [per-user QRIS](#per-user-qris). A sub-account with its own QRIS runs a separate merchant app and detects its own payments there, so it's excluded.
-> - **detected by a sub-account with its own QRIS** (payment on that sub's separate QRIS) → the super admin + just that sub-account.
+> **PARSED transactions skip the device that reported them.** A `PARSED` transaction is a real-time payment an app detected off a QRIS merchant notification. That device already announced it locally before calling the API, so it is **not** pushed to — that would just be an echo. Everyone else who should hear about the sale still gets it:
+> - **reported by the super admin** (payment on the shared business QRIS) → the sub-accounts **without** their own [per-user QRIS](#per-user-qris). A sub-account with its own QRIS runs a separate merchant app and sees its own payments there.
+> - **reported by a sub-account with its own QRIS** → the super admin only.
+>
+> A solo super admin reporting their own sale has nobody left to notify, so no push goes out. This differs from a **MANAGED** transaction recorded by the [QRIS callback](#qris-callback): there the server hears about the payment first, nothing has announced locally, so everyone — super admin included — is pushed.
 >
 > The push is best-effort (a delivery failure never fails the transaction) and only fires for the single `POST /api/transactions` path — **not** bulk sync.
 
