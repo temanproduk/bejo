@@ -31,12 +31,21 @@ public class TransactionController {
         this.transactionService = transactionService;
     }
 
+    /**
+     * @param deviceId the device recording the transaction, from {@code X-Device-Id}. Used only to
+     *   leave that one device out of the push fanned out for a PARSED transaction: it detected the
+     *   payment and announced it locally already, while the merchant's other devices and their
+     *   staff still need telling. <b>Optional</b> — an app build that predates the header must keep
+     *   working, and then nobody is excluded (today's behaviour).
+     */
     @PostMapping
     public ResponseEntity<ApiResponseDto<TransactionCreatedResponseDto>> addTransaction(
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(value = "X-Device-Id", required = false) String deviceId,
             @Valid @RequestBody AddTransactionRequestDto request,
             Authentication authentication) {
-        TransactionCreatedResponseDto data = transactionService.create(authentication.getName(), idempotencyKey, request);
+        TransactionCreatedResponseDto data =
+                transactionService.create(authentication.getName(), idempotencyKey, deviceId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponseDto.success("Transaksi berhasil ditambahkan", data));
     }

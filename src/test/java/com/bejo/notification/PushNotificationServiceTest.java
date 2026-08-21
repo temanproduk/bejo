@@ -18,6 +18,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,6 +34,59 @@ class PushNotificationServiceTest {
         // assertions are deterministic.
         PushDeliveryQueue syncQueue = sender::deliver;
         return new PushNotificationService(recipientDirectory, syncQueue, sender);
+    }
+
+    /**
+     * The device that reported a payment must not be pushed about it — it announced the payment
+     * locally already. Crucially the exclusion is <b>per device, not per account</b>: the same
+     * merchant is often signed in on a second phone or a tablet, and those still need telling.
+     * Dropping the username instead silenced every device they own.
+     *
+     * Asserted on the queued jobs rather than the FCM Message, which doesn't expose its token.
+     */
+    @Test
+    void excludesOnlyTheReportingDeviceNotTheWholeAccount() {
+        List<PushJob> queuedJobs = new java.util.ArrayList<>();
+        var service = new PushNotificationService(
+                recipientDirectory, queuedJobs::add,
+                new PushJobSender(staleTokenHandler, new SimpleMeterRegistry()));
+        when(recipientDirectory.forUsernames(List.of("alice"))).thenReturn(List.of(
+                new PushRecipient("token-reporting", 1L, "device-1"),
+                new PushRecipient("token-other", 1L, "device-2")
+        ));
+
+        try (MockedStatic<FirebaseApp> apps = mockStatic(FirebaseApp.class)) {
+            apps.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+
+            int queued = service.sendToUsernames(List.of("alice"),
+                    new SimplePushPayload("TRANSACTION", "t", "b", Map.of(), true), "device-1");
+
+            assertThat(queued).isEqualTo(1);
+            assertThat(queuedJobs).extracting(PushJob::token).containsExactly("token-other");
+        }
+    }
+
+    /** A null exclusion changes nothing — the path the QRIS callback and older callers take. */
+    @Test
+    void nullExclusionKeepsEveryDevice() {
+        List<PushJob> queuedJobs = new java.util.ArrayList<>();
+        var service = new PushNotificationService(
+                recipientDirectory, queuedJobs::add,
+                new PushJobSender(staleTokenHandler, new SimpleMeterRegistry()));
+        when(recipientDirectory.forUsernames(List.of("alice"))).thenReturn(List.of(
+                new PushRecipient("token-a", 1L, "device-1"),
+                new PushRecipient("token-b", 1L, "device-2")
+        ));
+
+        try (MockedStatic<FirebaseApp> apps = mockStatic(FirebaseApp.class)) {
+            apps.when(FirebaseApp::getApps).thenReturn(List.of(mock(FirebaseApp.class)));
+
+            int queued = service.sendToUsernames(List.of("alice"),
+                    new SimplePushPayload("TRANSACTION", "t", "b", Map.of(), true));
+
+            assertThat(queued).isEqualTo(2);
+            assertThat(queuedJobs).extracting(PushJob::token).containsExactly("token-a", "token-b");
+        }
     }
 
     @Test

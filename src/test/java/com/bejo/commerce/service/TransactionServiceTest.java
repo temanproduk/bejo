@@ -136,11 +136,11 @@ class TransactionServiceTest {
 
     @Test
     void createWithoutIdempotencyKeyIsRejected() {
-        assertThatThrownBy(() -> transactionService.create("alice", null, request("MANUAL", null)))
+        assertThatThrownBy(() -> transactionService.create("alice", null, null, request("MANUAL", null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Idempotency-Key");
 
-        assertThatThrownBy(() -> transactionService.create("alice", "  ", request("MANUAL", null)))
+        assertThatThrownBy(() -> transactionService.create("alice", "  ", null, request("MANUAL", null)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -151,7 +151,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.of(existing));
 
-        TransactionCreatedResponseDto data = transactionService.create("alice", "key-1", request("MANUAL", null));
+        TransactionCreatedResponseDto data = transactionService.create("alice", "key-1", null, request("MANUAL", null));
 
         assertThat(data.transactionId()).isEqualTo("TXN-EXISTING");
         verify(transactionRepository, never()).save(any());
@@ -162,7 +162,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> transactionService.create("alice", "key-1", request("PARSED", null)))
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1", null, request("PARSED", null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("pembayaran");
     }
@@ -172,7 +172,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
 
-        transactionService.create("alice", "key-1", request("MANUAL", null));
+        transactionService.create("alice", "key-1", null, request("MANUAL", null));
 
         ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(captor.capture());
@@ -190,7 +190,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
 
-        transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));
+        transactionService.create("alice", "key-1", null, request("PARSED", "AstraPay"));
 
         ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(captor.capture());
@@ -202,7 +202,7 @@ class TransactionServiceTest {
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
 
-        transactionService.create("alice", "key-1", request("MANUAL", null));
+        transactionService.create("alice", "key-1", null, request("MANUAL", null));
 
         ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
         verify(transactionRepository).save(captor.capture());
@@ -226,18 +226,22 @@ class TransactionServiceTest {
         when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
                 .thenReturn(List.of(member("emp_with_qris"), member("emp_shared")));
 
-        transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));   // reported by the super admin
+        transactionService.create("alice", "key-1", "device-1", request("PARSED", "AstraPay"));   // reported by the super admin
 
         ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
-        verify(pushNotificationService).sendToUsernames(captor.capture(), any());
-        assertThat(captor.getValue()).containsExactly("emp_shared");   // alice reported it
+        // alice stays in: she reported it from device-1, but her OTHER devices still need telling.
+        // The reporting device is dropped further down, per-device, not by removing the account.
+        verify(pushNotificationService).sendToUsernames(captor.capture(), any(), eq("device-1"));
+        assertThat(captor.getValue()).containsExactly("alice", "emp_shared");
     }
 
-    // PARSED reported by a sub-account with its own QRIS: only the super admin (oversight). The
-    // reporting sub-account is excluded, and no shared-QRIS member sees a payment on that terminal.
+    // PARSED reported by a sub-account with its own QRIS: the super admin (oversight) AND that
+    // sub-account itself, so their *other* devices announce the sale — only the phone that already
+    // played it is dropped, per-device, at the send. No shared-QRIS member sees a payment that
+    // landed on this member's own terminal.
     @Test
     @SuppressWarnings("unchecked")
-    void parsedByOwnQrisMemberNotifiesAdminAndThatMemberOnly() {
+    void parsedByOwnQrisMemberNotifiesAdminAndTheReportersOtherDevices() {
         lenient().when(businessContext.requireBusinessId("emp_own")).thenReturn(BIZ);
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
@@ -247,16 +251,19 @@ class TransactionServiceTest {
         ownQris.setUsername("emp_own");
         when(userQrisRepository.findByBusinessId(BIZ)).thenReturn(List.of(ownQris));
 
-        transactionService.create("emp_own", "key-1", request("PARSED", "AstraPay"));   // reported by the own-QRIS sub
+        transactionService.create("emp_own", "key-1", "device-9", request("PARSED", "AstraPay"));   // reported by the own-QRIS sub
 
         ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
-        verify(pushNotificationService).sendToUsernames(captor.capture(), any());
-        assertThat(captor.getValue()).containsExactly("alice");   // emp_own reported it
+        verify(pushNotificationService).sendToUsernames(captor.capture(), any(), eq("device-9"));
+        assertThat(captor.getValue()).containsExactlyInAnyOrder("alice", "emp_own");
     }
 
-    // Shared-QRIS cohort empty and the admin is the reporter → nobody left to tell, no push.
+    // Shared-QRIS cohort empty and the admin is the reporter: the admin's account still receives
+    // the push, because they may be signed in on more than one device. Only the device that
+    // reported it is dropped, and that happens per-device inside PushNotificationService.
     @Test
-    void parsedByAdminWithNoSharedQrisMembersNotifiesNobody() {
+    @SuppressWarnings("unchecked")
+    void parsedByAdminWithNoSharedQrisMembersStillNotifiesTheAdminsOtherDevices() {
         when(transactionRepository.findByIdempotencyKeyAndBusinessId("key-1", BIZ))
                 .thenReturn(Optional.empty());
         when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
@@ -267,9 +274,11 @@ class TransactionServiceTest {
         when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
                 .thenReturn(List.of(member("emp_solo")));
 
-        transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));
+        transactionService.create("alice", "key-1", "device-1", request("PARSED", "AstraPay"));
 
-        verify(pushNotificationService, never()).sendToUsernames(any(), any());
+        ArgumentCaptor<Collection<String>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(pushNotificationService).sendToUsernames(captor.capture(), any(), eq("device-1"));
+        assertThat(captor.getValue()).containsExactly("alice");
     }
 
     // The app renders the push itself (data-only), so the body must arrive already formatted
@@ -285,11 +294,11 @@ class TransactionServiceTest {
         when(userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(BIZ, BusinessRole.MEMBER))
                 .thenReturn(List.of(member("emp_shared")));
 
-        transactionService.create("alice", "key-1", request("PARSED", "AstraPay"));   // amount 50_000
+        transactionService.create("alice", "key-1", null, request("PARSED", "AstraPay"));   // amount 50_000
 
         ArgumentCaptor<com.bejo.notification.PushPayload> captor =
                 ArgumentCaptor.forClass(com.bejo.notification.PushPayload.class);
-        verify(pushNotificationService).sendToUsernames(any(), captor.capture());
+        verify(pushNotificationService).sendToUsernames(any(), captor.capture(), any());
         var data = captor.getValue().toData();
 
         assertThat(data.get("body")).isEqualTo("Pembayaran Rp 50.000 diterima");
@@ -323,7 +332,7 @@ class TransactionServiceTest {
         when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
         when(productRepository.findByIdAndBusinessId(2L, BIZ)).thenReturn(Optional.of(tea));
 
-        transactionService.create("alice", "key-1", requestWithItems(List.of(
+        transactionService.create("alice", "key-1", null, requestWithItems(List.of(
                 new TransactionItemRequestDto(1L, 3),
                 new TransactionItemRequestDto(2L, 2))));
 
@@ -362,7 +371,7 @@ class TransactionServiceTest {
         Product coffee = product(1, "Coffee", 2, 15_000L);
         when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
 
-        assertThatThrownBy(() -> transactionService.create("alice", "key-1",
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1", null,
                 requestWithItems(List.of(new TransactionItemRequestDto(1L, 5)))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Stok tidak cukup");
@@ -380,7 +389,7 @@ class TransactionServiceTest {
                 .thenReturn(Optional.empty());
         when(productRepository.findByIdAndBusinessId(99L, BIZ)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> transactionService.create("alice", "key-1",
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1", null,
                 requestWithItems(List.of(new TransactionItemRequestDto(99L, 1)))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("tidak ditemukan");
@@ -393,7 +402,7 @@ class TransactionServiceTest {
         when(productRepository.findByIdAndBusinessId(1L, BIZ))
                 .thenReturn(Optional.of(product(1, "Coffee", 10, 15_000L)));
 
-        assertThatThrownBy(() -> transactionService.create("alice", "key-1",
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1", null,
                 requestWithItems(List.of(
                         new TransactionItemRequestDto(1L, 1),
                         new TransactionItemRequestDto(1L, 2)))))

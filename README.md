@@ -420,6 +420,8 @@ Adds a transaction manually or from an external acquirer. The server generates `
 
 **Required header:** `Idempotency-Key: <uuid>` — resubmitting the same key returns the existing `transactionId` without inserting a duplicate.
 
+**Optional header:** `X-Device-Id: <device id>` — the device recording the transaction (the app's `ANDROID_ID`, the same value it sends as `deviceId` at login). Used only to keep that one device out of the `PARSED` push below. Omit it and nothing is filtered.
+
 **Request body**
 
 | Field | Required | Description |
@@ -438,11 +440,16 @@ When `items` are supplied the sale is atomic: an unknown product, a duplicate pr
 
 The creating account/sub-account is recorded as the transaction's `createdBy` (returned by the list/detail endpoints).
 
-> **PARSED transactions skip the device that reported them.** A `PARSED` transaction is a real-time payment an app detected off a QRIS merchant notification. That device already announced it locally before calling the API, so it is **not** pushed to — that would just be an echo. Everyone else who should hear about the sale still gets it:
-> - **reported by the super admin** (payment on the shared business QRIS) → the sub-accounts **without** their own [per-user QRIS](#per-user-qris). A sub-account with its own QRIS runs a separate merchant app and sees its own payments there.
-> - **reported by a sub-account with its own QRIS** → the super admin only.
+> **PARSED transactions skip the DEVICE that reported them — not the account.** A `PARSED` transaction is a real-time payment an app detected off a QRIS merchant notification. That device already announced it locally before calling the API, so pushing it back is an echo. But a merchant is often signed in on a second phone or a counter tablet, and those have heard nothing — so only the reporting device is dropped, identified by `X-Device-Id`.
 >
-> A solo super admin reporting their own sale has nobody left to notify, so no push goes out. This differs from a **MANAGED** transaction recorded by the [QRIS callback](#qris-callback): there the server hears about the payment first, nothing has announced locally, so everyone — super admin included — is pushed.
+> Who receives it:
+> - the **super admin** — always (oversight of every sale);
+> - every sub-account **without** its own [per-user QRIS](#per-user-qris), whoever reported it. A sub-account with its own QRIS runs a separate merchant app and sees its own payments there, so it is never in that cohort;
+> - **the account that reported it**, whoever they are — so their *other* devices still announce the sale. Only the one device that already played it is dropped.
+>
+> Send `X-Device-Id` and that device is filtered out at delivery; omit it (older app builds) and the reporter receives its own echo, as before. A solo super admin on a single device therefore has nobody left to notify and no push goes out.
+>
+> This differs from a **MANAGED** transaction recorded by the [QRIS callback](#qris-callback): there the server hears about the payment first, nothing has announced locally, so everyone — super admin included, every device — is pushed.
 >
 > The push is best-effort (a delivery failure never fails the transaction) and only fires for the single `POST /api/transactions` path — **not** bulk sync.
 

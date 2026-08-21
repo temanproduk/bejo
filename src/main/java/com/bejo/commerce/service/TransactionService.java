@@ -167,7 +167,8 @@ public class TransactionService {
     }
 
     @Transactional
-    public TransactionCreatedResponseDto create(String username, String idempotencyKey, AddTransactionRequestDto request) {
+    public TransactionCreatedResponseDto create(String username, String idempotencyKey,
+                                                String reportingDeviceId, AddTransactionRequestDto request) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new IllegalArgumentException("Idempotency-Key header wajib diisi");
         }
@@ -188,9 +189,9 @@ public class TransactionService {
         log.info("[TXN] Created type={} acquirer={} transactionId={} createdBy={}",
                 t.getType(), t.getAcquirer(), t.getTransactionId(), username);
         // A PARSED transaction is a payment this device detected and self-reported — notify the
-        // others sharing that QRIS, but not the reporter itself (see notifyParsedTransaction).
+        // others sharing that QRIS, but not the reporting device itself (see notifyParsedTransaction).
         if (TransactionType.PARSED.equals(t.getType())) {
-            notifyParsedTransaction(businessId, t, username);
+            notifyParsedTransaction(businessId, t, username, reportingDeviceId);
         }
         return new TransactionCreatedResponseDto(t.getTransactionId());
     }
@@ -584,28 +585,38 @@ public class TransactionService {
      * Recipients are resolved now (fast DB reads) but the push is deferred to after the transaction
      * commits so a rollback never buzzes a phone; best-effort — a send failure is logged, never rethrown.
      */
-    private void notifyParsedTransaction(Long businessId, Transaction t, String creator) {
+    private void notifyParsedTransaction(Long businessId, Transaction t, String creator,
+                                         String reportingDeviceId) {
         Set<String> withOwnQris = userQrisRepository.findByBusinessId(businessId).stream()
                 .map(UserQris::getUsername)
                 .collect(Collectors.toSet());
 
         Set<String> recipients = new LinkedHashSet<>();
-        // The super admin always gets it (oversight of every sale).
+        // The super admin always gets it (oversight of every sale). Deliberately NOT removed when
+        // they are the reporter: the exclusion below is per-device, so their other phones and
+        // tablets still hear the sale.
         userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(businessId, BusinessRole.SUPER_ADMIN)
                 .map(User::getUsername)
                 .ifPresent(recipients::add);
 
-        if (!withOwnQris.contains(creator)) {
-            // Payment on the shared business QRIS — everyone on it (members without their own QRIS).
-            // A member with their own QRIS runs a separate merchant app and sees its own payments.
-            userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(businessId, BusinessRole.MEMBER)
-                    .stream()
-                    .map(User::getUsername)
-                    .filter(u -> !withOwnQris.contains(u))
-                    .forEach(recipients::add);
-        }
-        // The reporter already announced it locally — pushing back would just echo.
-        recipients.remove(creator);
+        // Everyone on the shared business QRIS — i.e. every member without one of their own.
+        // A member WITH their own QRIS runs a separate merchant app and sees its own payments, so
+        // they stay out. This no longer depends on whether the reporter has their own QRIS: who
+        // detected the payment says nothing about who needs to hear about it.
+        userRepository.findByBusinessIdAndBusinessRoleAndDeletedAtIsNullOrderByCreatedAtAsc(businessId, BusinessRole.MEMBER)
+                .stream()
+                .map(User::getUsername)
+                .filter(u -> !withOwnQris.contains(u))
+                .forEach(recipients::add);
+
+        // The reporter's own account, whoever they are. "It already played the sound" is a fact
+        // about one DEVICE, not an account: the phone that detected the payment announced it
+        // before calling this API, but the merchant's other phones and tablets did not. Without
+        // this line a member with their own QRIS was left out of their own sale entirely, since
+        // they are in neither branch above. A LinkedHashSet, so this is a no-op when they are.
+        // The reporting device itself is dropped per-device at the send below.
+        recipients.add(creator);
+
         if (recipients.isEmpty()) {
             log.debug("[TXN] PARSED transactionId={} reported by {} — no one else to notify",
                     t.getTransactionId(), creator);
@@ -616,21 +627,22 @@ public class TransactionService {
                 "Pembayaran Diterima", "Pembayaran " + Rupiah.format(t.getAmount()) + " diterima");
         List<String> targets = List.copyOf(recipients);
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            sendParsedPushQuietly(targets, payload, t.getTransactionId());
+            sendParsedPushQuietly(targets, payload, t.getTransactionId(), reportingDeviceId);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override public void afterCommit() {
-                sendParsedPushQuietly(targets, payload, t.getTransactionId());
+                sendParsedPushQuietly(targets, payload, t.getTransactionId(), reportingDeviceId);
             }
         });
     }
 
-    private void sendParsedPushQuietly(List<String> recipients, PushPayload payload, String transactionId) {
+    private void sendParsedPushQuietly(List<String> recipients, PushPayload payload, String transactionId,
+                                       String excludeDeviceId) {
         try {
-            int queued = pushNotificationService.sendToUsernames(recipients, payload);
-            log.info("[TXN] Notified {} account(s) of PARSED transactionId={}, excluding the reporter ({} push job(s) queued)",
-                    recipients.size(), transactionId, queued);
+            int queued = pushNotificationService.sendToUsernames(recipients, payload, excludeDeviceId);
+            log.info("[TXN] Notified {} account(s) of PARSED transactionId={}, excluding device {} ({} push job(s) queued)",
+                    recipients.size(), transactionId, excludeDeviceId, queued);
         } catch (RuntimeException e) {
             log.warn("[TXN] Notification failed for PARSED transactionId={} (transaction still recorded): {}",
                     transactionId, e.getMessage());

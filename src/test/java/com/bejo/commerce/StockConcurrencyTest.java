@@ -63,7 +63,7 @@ class StockConcurrencyTest {
             pool.submit(() -> {
                 try {
                     startGun.await();
-                    transactionService.create(USER, idempotencyKey, new AddTransactionRequestDto(
+                    transactionService.create(USER, idempotencyKey, null, new AddTransactionRequestDto(
                             "MANUAL", LocalDateTime.now(), 10_000L, "Cash", null, null, null, null,
                             List.of(new TransactionItemRequestDto(productId, 1))));
                     sold.incrementAndGet();

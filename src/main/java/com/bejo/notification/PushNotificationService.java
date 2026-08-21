@@ -99,6 +99,16 @@ public class PushNotificationService {
      * which computes its recipients (by QRIS terminal id). Never throws. Returns the number queued.
      */
     public int sendToUsernames(Collection<String> usernames, PushPayload payload) {
+        return sendToUsernames(usernames, payload, null);
+    }
+
+    /**
+     * @param excludeDeviceId a single device to leave out, or null for none. Exists because the
+     *   device that reported a payment has already announced it locally — but the same account's
+     *   <em>other</em> devices have not, so the exclusion has to be per-device. Dropping the whole
+     *   username instead silenced every phone the merchant owns.
+     */
+    public int sendToUsernames(Collection<String> usernames, PushPayload payload, String excludeDeviceId) {
         if (!isConfigured()) {
             log.warn("[PUSH] Firebase not configured — skipping push for {} user(s)", usernames.size());
             return 0;
@@ -107,7 +117,13 @@ public class PushNotificationService {
             log.warn("[PUSH] No recipient users — nothing sent");
             return 0;
         }
-        return enqueue(recipientDirectory.forUsernames(usernames), payload, "usernames=" + usernames.size());
+        List<PushRecipient> recipients = recipientDirectory.forUsernames(usernames);
+        if (excludeDeviceId != null && !excludeDeviceId.isBlank()) {
+            recipients = recipients.stream()
+                    .filter(r -> !excludeDeviceId.equals(r.deviceId()))
+                    .toList();
+        }
+        return enqueue(recipients, payload, "usernames=" + usernames.size());
     }
 
     // Build the payload once, then enqueue a job per resolved recipient. Returns how many were
