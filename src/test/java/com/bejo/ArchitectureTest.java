@@ -21,6 +21,7 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
  *   <li><b>core</b> — users, business, auth, presence, QRIS, sessions, settings. The foundation.</li>
  *   <li><b>commerce</b> — transactions, products, stock, the payment callback.</li>
  *   <li><b>ads</b> — voice-ad campaigns.</li>
+ *   <li><b>admin</b> — the admin dashboard's API: reads core and commerce; nothing depends on it.</li>
  *   <li><b>config</b> — the Spring bootstrap / composition root; may wire everything, and nothing
  *       may depend on it.</li>
  * </ul>
@@ -67,6 +68,12 @@ class ArchitectureTest {
             noClasses().that().resideInAPackage("com.bejo.ads..")
                     .should().dependOnClassesThat().resideInAPackage("com.bejo.commerce..")
                     .because("sibling feature modules must not couple to each other");
+
+    @ArchTest
+    static final ArchRule nothing_depends_on_admin =
+            noClasses().that().resideOutsideOfPackages("com.bejo.admin..", "com.bejo.config..")
+                    .should().dependOnClassesThat().resideInAPackage("com.bejo.admin..")
+                    .because("admin is a read-only surface on top of core and commerce; nothing may build on it");
 
     @ArchTest
     static final ArchRule modules_do_not_depend_on_the_bootstrap_layer =

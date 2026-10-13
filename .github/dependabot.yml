@@ -1,0 +1,35 @@
+# Keeps the toolchain current: Maven dependencies, base images (Dockerfile + compose files), and
+# GitHub Actions — which are pinned to commit SHAs in the workflows, so without this they would
+# never move. Weekly; minor/patch updates are grouped into one PR per ecosystem.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-patch:
+        update-types: [minor, patch]
+    ignore:
+      # A Spring Boot major is a migration project, not a routine bump.
+      - dependency-name: org.springframework.boot:spring-boot-starter-parent
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

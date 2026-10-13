@@ -1,0 +1,23 @@
+# Database: key tables
+
+> Moved out of `CLAUDE.md` unchanged to keep that file small — it is loaded into every session.
+> `CLAUDE.md` keeps the rules and gotchas; this is the detail behind them.
+
+The schema rules (frozen V1, forward migrations, schema-per-module) are in `CLAUDE.md`.
+
+Key tables:
+- `businesses` — the merchant; business name/address + **merchant_pan** + `size`/`industry` (NOT NULL, immutable, config-validated) + optional `store_photo` + shared `picture` (base64 TEXT, ≤1 MB decoded); partial-unique `merchant_pan` (`WHERE … IS NOT NULL`). **`merchant_pan`** is the QRIS merchant PAN carried by the payment callback (no NMID in the payload) — it's how a callback routes to a business; set optionally at registration
+- `users` — credentials + profile (name/email/phone); `business_id` FK; `business_role` (`SUPER_ADMIN`/`MEMBER`); `account_type` (`MANAGED`/`SELF_SERVICE`); soft delete via `deleted_at` (username unique only among active users — partial index `uq_users_username_active`)
+- `business_banks` / `business_qris` / `account_settings` — one row per `business_id` (unique FK); account settings = monitored-apps map + keyword filters (JSON) + blacklist/whitelist + toggles (`qris_with_profile_picture`, `inventory_enabled`, `receive_ads`, `team_management_enabled`)
+- `user_qris` — per-user QRIS (main-account-set): `username` + `terminal_id` + `qris_code` + parsed `merchant_name`/`nmid`/`acquirer`, scoped by `business_id`; unique `(business_id, username)` and `(business_id, terminal_id)`; the payment callback routes its push by matching `terminal_id`
+- `sessions` — one row per `(username, device_id)`; holds FCM push token, schedule window (no FK — username uniqueness is partial)
+- `transactions` — the transaction ledger, scoped by `business_id`; unique on `transaction_id` and `idempotency_key`; soft delete via `deleted_at`; `created_by`/`updated_by` (VARCHAR(50)) snapshot the account/sub-account that created/last-edited a MANUAL/PARSED row (null for MANAGED); general-purpose `info` (TEXT, e.g. raw callback JSON — the provider's `additionalInfo` payload is stored here under the shorter name)
+- `transaction_items` — optional line items of a sale; `transaction_id` FK → `transactions(id)`; snapshots `sku`/`name`/`quantity`/`unit_price`/`subtotal`; `product_id` is a plain reference (no FK)
+- `token_blacklist` — logged-out JWT jtis, purged hourly after expiry
+- `product_categories` — per-business categories; name unique per `business_id`
+- `products` — per-business SKUs; `sku` unique per `business_id`; optional `short_description`; nullable `category_id` FK; `stock` (INTEGER), `price`/`cost_price` (BIGINT IDR), optional base64 `photo` (TEXT, ≤500 KB decoded)
+- `stock_mutations` / `stock_mutation_items` — per-business stock-change history (type `PURCHASE`/`ADJUSTMENT`/`UPDATE`/`SALE`); each line snapshots the product + `previous_stock`/`new_stock`/`quantity_change`, with `unit_price`/`subtotal` for purchases; `total_amount` is the purchase sum
+- `ad_campaigns` / `ad_deliveries` — voice-ad campaigns. A campaign is the brand's audio (GCS `audio_object` + `audio_sha256`/`audio_size_bytes` for the integrity check); a delivery is one send to one device (`target_username`/`target_device_id`, no FK — same rationale as `presences`) plus a snapshot of the target at send time — `business_id` (the merchant ad-history scope), `target_user_id` (stable id → resolves `userActive`), and `target_name` — so the history shows who the ad went to and their business even after the member is removed/renamed, carrying the lifecycle `state` (`AdCampaignState`) + a timestamp per step (`prepared_at`/`ready_at`/`started_at`/`played_at`/`finished_at`/`errored_at`) and the reported play location
+- `presences` — employee attendance, scoped by `business_id`; type `CLOCK_IN`/`CLOCK_OUT`/`PING`; `clock_datetime` (the calendar day is derived from it, never stored), `latitude`/`longitude` (where the member clocked in/out — on a PING, **null until they respond**, then where they were when they answered), nullable `response_datetime` (a PING's acknowledgment); `note` = the member's own text — what they typed on a clock-in/out, or their **reply** to a PING (both written by `respond`, not by the admin who sent the ping); `username`/`name` snapshotted and `user_id` unconstrained (no FK) so history survives a member rename/soft-delete; partial unique index `uq_presence_clock_daily` on `(user_id, type, CAST(clock_datetime AS DATE))` caps clock-ins/outs at one per member per day
+
+`username` is **`VARCHAR(50)` everywhere** it's stored (`users`, `sessions`, `presences`) and capped at 50 by the register/add-member DTOs; the entities declare `@Column(length = 50)` so the H2 test schema matches Postgres.

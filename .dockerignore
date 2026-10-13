@@ -1,0 +1,6 @@
+# Deny by default: the image build only needs the POM and the sources (see the Dockerfile). Anything
+# else in the build context — .env files, credential JSONs, target/, .git — has no business being
+# sent to the Docker daemon. Add a line here if the Dockerfile starts to COPY something new.
+*
+!pom.xml
+!src

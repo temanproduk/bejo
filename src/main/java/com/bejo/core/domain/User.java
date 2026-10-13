@@ -48,6 +48,11 @@ public class User {
     @Column(name = "is_phone_verified", nullable = false)
     private boolean isPhoneVerified = false;
 
+    // When the email address last changed (null = never since registration). A password-reset code is
+    // not sent to an address changed recently — see PasswordResetService.
+    @Column(name = "email_changed_at")
+    private LocalDateTime emailChangedAt;
+
     @Column(name = "account_type", nullable = false)
     private String accountType = com.bejo.core.domain.AccountType.MANAGED;
 
@@ -78,6 +83,8 @@ public class User {
     public void setEmail(String email) { this.email = email; }
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
+    public LocalDateTime getEmailChangedAt() { return emailChangedAt; }
+    public void setEmailChangedAt(LocalDateTime emailChangedAt) { this.emailChangedAt = emailChangedAt; }
     public boolean isEmailVerified() { return isEmailVerified; }
     public void setEmailVerified(boolean emailVerified) { isEmailVerified = emailVerified; }
     public boolean isPhoneVerified() { return isPhoneVerified; }

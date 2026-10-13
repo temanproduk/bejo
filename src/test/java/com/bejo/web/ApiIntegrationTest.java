@@ -35,6 +35,7 @@ class ApiIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private com.bejo.commerce.repository.TransactionRepository transactionRepository;
     @Autowired private com.bejo.core.repository.UserRepository userRepository;
+    @Autowired private com.bejo.core.repository.BusinessRepository businessRepository;
     @Autowired private com.bejo.core.repository.SessionRepository sessionRepository;
     @Autowired private com.bejo.core.repository.PresenceRepository presenceRepository;
 
@@ -807,8 +808,11 @@ class ApiIntegrationTest {
 
     // ---------- QRIS callback (snap qr-mpm-notify) ----------
 
-    // Builds a well-formed callback payload. (PoC: the service ignores merchantPan/refs
-    // and records against the seed user regardless.)
+    // Builds a well-formed callback payload. A callback is routed to a business by its
+    // merchantPan, so tests that expect a recording use CB_PAN, which ensureCallbackSeedUser
+    // registers on cb_seed's business.
+    private static final String CB_PAN = "9360082232504524231";
+
     private String callbackBody(String merchantPan, String refNo, String partnerRef, String txnId) {
         return """
                 {
@@ -831,11 +835,17 @@ class ApiIntegrationTest {
                 """.formatted(refNo, partnerRef, merchantPan, merchantPan, txnId);
     }
 
-    // PoC: the callback records against the seed user (app.callback.default-username =
-    // cb_seed in test config). Register it idempotently; count its transactions by delta
-    // so these tests are isolated from the shared H2 state.
+    // The callback records against cb_seed's business, found by CB_PAN. Register it
+    // idempotently; count its transactions by delta so these tests are isolated from the shared
+    // H2 state.
     private void ensureCallbackSeedUser() throws Exception {
         if (userRepository.findByUsernameAndDeletedAtIsNull("cb_seed").isEmpty()) register("cb_seed");
+        Long bizId = userRepository.findBusinessIdByUsername("cb_seed").orElseThrow();
+        var business = businessRepository.findById(bizId).orElseThrow();
+        if (!CB_PAN.equals(business.getMerchantPan())) {
+            business.setMerchantPan(CB_PAN);
+            businessRepository.save(business);
+        }
     }
 
     private long seedTxnCount() {
@@ -848,7 +858,7 @@ class ApiIntegrationTest {
     void qrisCallbackRecordsTransactionForSeedUserWithoutAnyAuth() throws Exception {
         ensureCallbackSeedUser();
         long before = seedTxnCount();
-        String body = callbackBody("9360082232504524231", "XCBS6Z450S", "DEV20250826422460",
+        String body = callbackBody(CB_PAN, "XCBS6Z450S", "DEV20250826422460",
                 "INV/QRM/4542BR/250826/2G4Y6CCZ");
 
         // No X-API-TOKEN, no JWT — external server-to-server callback
@@ -876,7 +886,7 @@ class ApiIntegrationTest {
     void qrisCallbackIsIdempotentOnTheProviderReference() throws Exception {
         ensureCallbackSeedUser();
         long before = seedTxnCount();
-        String body = callbackBody("8888000011112222", "IDEMREF01", "IDEMPART01", "INV-IDEM-01");
+        String body = callbackBody(CB_PAN, "IDEMREF01", "IDEMPART01", "INV-IDEM-01");
 
         // A gateway retries a notification on any timeout or non-2xx. Re-delivering the same
         // payment must acknowledge without recording it twice.
@@ -893,7 +903,7 @@ class ApiIntegrationTest {
         mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
                         .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
                         .contentType(APPLICATION_JSON)
-                        .content(callbackBody("8888000011112222", "IDEMREF02", "IDEMPART02", "INV-IDEM-02")))
+                        .content(callbackBody(CB_PAN, "IDEMREF02", "IDEMPART02", "INV-IDEM-02")))
                 .andExpect(status().isOk());
         assertThat(seedTxnCount()).isEqualTo(before + 2);
     }
@@ -903,16 +913,47 @@ class ApiIntegrationTest {
         ensureCallbackSeedUser();
         long before = seedTxnCount();
 
-        // Buggy minimal payload — no amount; PoC records it with amount 0 (still 200)
+        // Minimal payload — a routable merchantPan but no amount; recorded with amount 0 (still 200)
         mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
                         .header("X-TIMESTAMP", "2020-12-23T08:46:11+07:00")
                         .contentType(APPLICATION_JSON)
                         .content("""
-                                { "latestTransactionStatus": "00", "transactionStatusDesc": "OK" }
-                                """))
+                                { "latestTransactionStatus": "00", "transactionStatusDesc": "OK",
+                                  "additionalInfo": { "merchantPan": "%s" } }
+                                """.formatted(CB_PAN)))
                 .andExpect(status().isOk());
 
         assertThat(seedTxnCount()).isEqualTo(before + 1);
+    }
+
+    @Test
+    void qrisCallbackWithAnUnknownMerchantPanIsRejectedAndNotRecorded() throws Exception {
+        ensureCallbackSeedUser();
+        long before = seedTxnCount();
+
+        // A forged or misrouted callback must not be attributed to the default account
+        mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                        .contentType(APPLICATION_JSON)
+                        .content(callbackBody("1111222233334444", "FORGED01", "FORGED02", "INV-FORGED")))
+                .andExpect(status().isNotFound());
+
+        assertThat(seedTxnCount()).isEqualTo(before);
+    }
+
+    @Test
+    void qrisCallbackWithNoMerchantPanIsRejectedAndNotRecorded() throws Exception {
+        ensureCallbackSeedUser();
+        long before = seedTxnCount();
+
+        mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
+                        .contentType(APPLICATION_JSON)
+                        .content("""
+                                { "latestTransactionStatus": "00", "transactionStatusDesc": "OK",
+                                  "amount": { "value": "100.00", "currency": "IDR" } }
+                                """))
+                .andExpect(status().isNotFound());
+
+        assertThat(seedTxnCount()).isEqualTo(before);
     }
 
     @Test
@@ -922,7 +963,7 @@ class ApiIntegrationTest {
         // X-TIMESTAMP is now optional (PoC) — missing header falls back to now(), still 200
         mockMvc.perform(post("/snap/v1.0/qr/qr-mpm-notify")
                         .contentType(APPLICATION_JSON)
-                        .content(callbackBody("9360082232504524231", "NOTS01", "NOTS02", "INV-NOTS")))
+                        .content(callbackBody(CB_PAN, "NOTS01", "NOTS02", "INV-NOTS")))
                 .andExpect(status().isOk());
     }
 

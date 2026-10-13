@@ -153,6 +153,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(ApiResponseDto.error(ex.getMessage()));
     }
 
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<ApiResponseDto<Void>> handleServiceUnavailable(ServiceUnavailableException ex, HttpServletRequest req) {
+        log.warn("[503] {} — {}", at(req), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponseDto.error(ex.getMessage()));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponseDto<Void>> handleBadRequest(IllegalArgumentException ex, HttpServletRequest req) {
         log.warn("[400] {} — {}", at(req), ex.getMessage());

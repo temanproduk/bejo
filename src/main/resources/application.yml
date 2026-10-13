@@ -8,15 +8,18 @@ spring:
     username: ${DB_USERNAME:bejo}
     password: ${DB_PASSWORD:bejo}
     hikari:
-      maximum-pool-size: 10
+      # Per instance. The database's max_connections must cover pool size x max instances (Cloud Run
+      # max-instances, default 2) plus the DB's own reserved connections: a db-f1-micro allows very few,
+      # so lower this (or raise the tier) before raising max-instances.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
       minimum-idle: 2
       # Max wait to acquire a connection from the pool (not query time). Kept below the
       # 15s Cloud Run request timeout so a starved pool fails fast with a clean 500,
       # rather than the request being severed mid-flight.
       connection-timeout: 10000
-  flyway:
-    baseline-on-migrate: true
-    baseline-version: 0
+  # Flyway runs with its defaults. baseline-on-migrate used to be on, which silently adopts a
+  # non-empty schema that has no history table — i.e. it would mask the app being pointed at the
+  # wrong database. The deployed database already has its flyway_schema_history, so it isn't needed.
   jpa:
     hibernate:
       ddl-auto: none
@@ -28,6 +31,25 @@ spring:
   threads:
     virtual:
       enabled: true
+  # Outgoing email (password-reset codes). Unset = the feature is off and the endpoint answers 503.
+  # Zoho Mail: smtp.zoho.com for FREE accounts, smtppro.zoho.com for PAID ones (the wrong one fails login with
+  # "554 5.7.8 Access Restricted"; .eu/.in/.com.au/.jp for other data centres), 587 + STARTTLS (default) or
+  # 465 + SSL (MAIL_PORT=465 MAIL_SSL=true MAIL_STARTTLS=false). The password is an application-specific
+  # password when the Zoho account has two-factor authentication.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS:true}
+      mail.smtp.starttls.required: ${MAIL_STARTTLS:true}
+      mail.smtp.ssl.enable: ${MAIL_SSL:false}
+      # Bound how long a slow mail server can hold a request thread
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
   jackson:
     default-property-inclusion: non_null
     time-zone: Asia/Jakarta
@@ -42,6 +64,11 @@ server:
   forward-headers-strategy: framework
 
 management:
+  health:
+    mail:
+      # The default indicator opens an SMTP connection on every health probe: slow, rate-limited by
+      # the provider, and it would make /actuator/health (Cloud Run + uptime checks) flap with Zoho.
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -55,9 +82,6 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
-  tracing:
-    sampling:
-      probability: 1.0
 
 app:
   api-token: ${API_TOKEN:change-me-in-production}
@@ -76,6 +100,17 @@ app:
   firebase:
     credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
     credentials-base64: ${FIREBASE_CREDENTIALS_BASE64:}
+  mail:
+    # From address; Zoho requires the authenticated mailbox or one of its aliases (default: the username)
+    from: ${MAIL_FROM:}
+    from-name: ${MAIL_FROM_NAME:Bejo}
+  password-reset:
+    code-ttl-minutes: 15
+    max-attempts: 5               # guesses per code
+    resend-cooldown-seconds: 60   # minimum gap between codes for one user
+    max-requests-per-hour: 5      # codes per user per hour
+    email-change-lockout-hours: 24   # no code is sent to an address changed this recently
+    response-floor-ms: 1500       # pad forgot-password so an ignored request is not visibly faster
   business:
     # Max users per business, INCLUDING the super admin (default 10)
     max-users: ${BUSINESS_MAX_USERS:10}
@@ -87,17 +122,27 @@ app:
     industries: "${BUSINESS_INDUSTRIES:Makanan & Minuman,Otomotif,Event & Hiburan,Alat Tulis/Kantor,Peralatan Rumah Tangga,Pakaian & Aksesoris,Kesehatan & Kecantikan,Layanan Keuangan,SPBU,Pendidikan,Asuransi}"
     default-industry: "${BUSINESS_DEFAULT_INDUSTRY:Makanan & Minuman}"
   callback:
-    # Seed user whose business every (PoC) QRIS callback is attributed to. Defaults to the
-    # seed username so callbacks land on the seeded business (avoids an admin/seed mismatch).
+    # Account (and so business) a callback is attributed to when it can't be routed by merchant
+    # PAN. Only used when fallback-to-default is on. Defaults to the seed username.
     default-username: ${CALLBACK_DEFAULT_USERNAME:${SEED_USERNAME:admin}}
+    # Off (strict): a callback whose merchantPan is missing or matches no business is rejected
+    # (404) and logged, instead of being recorded against the default account and pushed to its
+    # owner — which let any forged callback fabricate a payment. Turn on only if the provider
+    # genuinely sends payloads without a registered merchantPan (the earlier "buggy payload").
+    fallback-to-default: ${CALLBACK_FALLBACK_TO_DEFAULT:false}
+    # Shared secret the provider must send as X-Callback-Secret. Blank = the callback is
+    # unauthenticated (logged as a warning in prod). See CallbackSecretFilter.
+    secret: ${CALLBACK_SECRET:}
   security:
     login:
       # Brute-force brake on /api/auth/login, per username. Deliberately lenient: only
       # consecutive failures count and any success resets them, so typos never lock anyone out.
       max-failures: ${LOGIN_MAX_FAILURES:10}
       lockout-minutes: ${LOGIN_LOCKOUT_MINUTES:15}
-    # Hard ceiling on a request body (413 above it). Just above the largest legitimate
-    # payload — the ~7 MB base64 QRIS image; everything else is far smaller.
+    # Hard ceiling on a request body (413 above it), enforced before the body is read. The largest
+    # legitimate payloads are the base64 business picture (<= 1 MB decoded) and ad audio (<= 2 MB
+    # decoded, ~2.8 MB encoded); QRIS travels as a short code now, so there is generous headroom.
+    # Lower it if you want a tighter ceiling.
     max-request-bytes: ${MAX_REQUEST_BYTES:8388608}
   request-logging:
     # Log the request body on 4xx/5xx (secrets masked, capped). Toggle + cap here.
@@ -108,6 +153,19 @@ app:
     queue:
       threads: ${PUSH_QUEUE_THREADS:4}
       capacity: ${PUSH_QUEUE_CAPACITY:1000}
+  admin:
+    # The admin dashboard (a static site calling /api/admin/**). Whoever is listed here can sign in with
+    # a one-time code emailed to them; comma-separated. Empty = nobody can sign in. Needs MAIL_* set.
+    emails: ${ADMIN_EMAILS:}
+    # Browser origins allowed to call /api/admin/** (CORS), comma-separated.
+    dashboard-origins: ${ADMIN_DASHBOARD_ORIGINS:https://dashboard.bejo.temanproduk.com}
+    session-ttl-hours: 12
+    otp:
+      code-ttl-minutes: 10
+      max-attempts: 5               # guesses per code
+      resend-cooldown-seconds: 60   # minimum gap between codes for one address
+      max-requests-per-hour: 5      # codes per address per hour
+      response-floor-ms: 1500       # pad otp/request so a non-admin address is not visibly faster
   ads:
     # Cloud Storage bucket holding campaign audio (created + locked down by scripts/init-gcp.sh).
     gcs-bucket: ${ADS_GCS_BUCKET:}

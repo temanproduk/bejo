@@ -1,126 +1,241 @@
-name: Deploy to Cloud Run
+name: Deploy
 
+# Where a push to `release` deploys is chosen by the DEPLOY_TARGET repository variable
+# (Settings → Secrets and variables → Actions → Variables):
+#
+#   cloudrun  Cloud Run only            <- the default when the variable is unset
+#   vm        the Docker Compose VM only (scripts/deploy-vm.sh)
+#   both      both of them, in parallel
+#
+# Run it by hand from the Actions tab to pick a target for that one run, or to roll the VM
+# back to its previous release.
 on:
   push:
     branches: [release]
-
-env:
-  GCP_REGION: ${{ vars.GCP_REGION }}
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
-  GCP_SERVICE_NAME: ${{ vars.GCP_SERVICE_NAME }}
-  CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE_CONNECTION_NAME }}
-  CLOUD_SQL_DB_NAME: ${{ vars.CLOUD_SQL_DB_NAME }}
-  CLOUD_SQL_DB_USER: ${{ vars.CLOUD_SQL_DB_USER }}
-  CLOUD_RUN_SA: ${{ vars.CLOUD_RUN_SA }}
-  CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where to deploy ("default" = the DEPLOY_TARGET variable, else cloudrun)
+        type: choice
+        options: [default, cloudrun, vm, both]
+        default: default
+      vm_rollback:
+        description: Roll the VM back to its previous release instead of deploying (VM only)
+        type: boolean
+        default: false
 
 jobs:
-  deploy:
-    name: Build and deploy
+  # The tests are the gate: a failing suite blocks the deploy. Skipped for a VM rollback, which
+  # must stay possible even when the suite is red (that is often exactly when you need it).
+  test:
+    name: Tests
+    if: ${{ inputs.vm_rollback != true }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  plan:
+    name: Choose target
+    runs-on: ubuntu-latest
+    outputs:
+      cloud_run: ${{ steps.t.outputs.cloud_run }}
+      vm: ${{ steps.t.outputs.vm }}
+    steps:
+      - id: t
+        env:
+          INPUT_TARGET: ${{ inputs.target }}
+          INPUT_ROLLBACK: ${{ inputs.vm_rollback }}
+          VAR_TARGET: ${{ vars.DEPLOY_TARGET }}
+        run: |
+          target="$INPUT_TARGET"
+          if [ -z "$target" ] || [ "$target" = default ]; then target="${VAR_TARGET:-cloudrun}"; fi
+          if [ "$INPUT_ROLLBACK" = true ]; then target=vm; fi
+          case "$target" in
+            cloudrun|vm|both) ;;
+            *) echo "::error::DEPLOY_TARGET must be cloudrun, vm or both (got '$target')"; exit 1 ;;
+          esac
+          echo "Deploy target: $target"
+          echo "cloud_run=$([ "$target" != vm ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "vm=$([ "$target" != cloudrun ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  cloud-run:
+    name: Deploy to Cloud Run
+    needs: [plan, test]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.cloud_run == 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write   # lets the job ask GitHub for the OIDC token Workload Identity Federation exchanges
+    # Everything below is forwarded to scripts/deploy-cloud-run.sh, which owns how the service
+    # is configured (env vars, secret mounts, sizing). Unset optional variables arrive as empty
+    # strings and are skipped there, so the app's built-in defaults apply. `--set-env-vars`
+    # replaces the whole environment on each deploy: an override must be set here (as a GitHub
+    # Actions variable) or it is reset by the next release.
+    env:
+      # Required
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_SERVICE_NAME: ${{ vars.GCP_SERVICE_NAME }}
+      ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
+      INSTANCE_CONNECTION_NAME: ${{ vars.CLOUD_SQL_INSTANCE_CONNECTION_NAME }}
+      CLOUD_SQL_DB_NAME: ${{ vars.CLOUD_SQL_DB_NAME }}
+      CLOUD_SQL_DB_USER: ${{ vars.CLOUD_SQL_DB_USER }}
+      CLOUD_RUN_SA: ${{ vars.CLOUD_RUN_SA }}
+      CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN }}
+      # Cloud Run sizing
+      CLOUD_RUN_MIN_INSTANCES: ${{ vars.CLOUD_RUN_MIN_INSTANCES }}
+      CLOUD_RUN_MAX_INSTANCES: ${{ vars.CLOUD_RUN_MAX_INSTANCES }}
+      CLOUD_RUN_MEMORY: ${{ vars.CLOUD_RUN_MEMORY }}
+      CLOUD_RUN_CPU: ${{ vars.CLOUD_RUN_CPU }}
+      CLOUD_RUN_TIMEOUT: ${{ vars.CLOUD_RUN_TIMEOUT }}
+      CLOUD_RUN_CPU_THROTTLING: ${{ vars.CLOUD_RUN_CPU_THROTTLING }}
+      # Seed user / business
+      SEED_USERNAME: ${{ vars.SEED_USERNAME }}
+      SEED_NAME: ${{ vars.SEED_NAME }}
+      SEED_BUSINESS_NAME: ${{ vars.SEED_BUSINESS_NAME }}
+      SEED_BUSINESS_ADDRESS: ${{ vars.SEED_BUSINESS_ADDRESS }}
+      SEED_NMID: ${{ vars.SEED_NMID }}
+      SEED_MERCHANT_PAN: ${{ vars.SEED_MERCHANT_PAN }}
+      # Ad-campaign audio (bucket defaults to <project>-ads, matching init-gcp.sh)
+      ADS_GCS_BUCKET: ${{ vars.ADS_GCS_BUCKET }}
+      ADS_SIGNED_URL_TTL_SECONDS: ${{ vars.ADS_SIGNED_URL_TTL_SECONDS }}
+      ADS_MAX_AUDIO_BYTES: ${{ vars.ADS_MAX_AUDIO_BYTES }}
+      ADS_MAX_AUDIO_SECONDS: ${{ vars.ADS_MAX_AUDIO_SECONDS }}
+      # Set to false when the install has no bejo-ads-admin-token secret (default: true)
+      MOUNT_ADS_ADMIN_TOKEN: ${{ vars.MOUNT_ADS_ADMIN_TOKEN }}
+      # Set to true once bejo-callback-secret exists in Secret Manager (default: false)
+      MOUNT_CALLBACK_SECRET: ${{ vars.MOUNT_CALLBACK_SECRET }}
+      # Outgoing email for password reset. The password is a Secret Manager secret (bejo-mail-password);
+      # set MOUNT_MAIL_PASSWORD=true once it exists (default: false)
+      MOUNT_MAIL_PASSWORD: ${{ vars.MOUNT_MAIL_PASSWORD }}
+      MAIL_HOST: ${{ vars.MAIL_HOST }}
+      MAIL_PORT: ${{ vars.MAIL_PORT }}
+      MAIL_USERNAME: ${{ vars.MAIL_USERNAME }}
+      MAIL_FROM: ${{ vars.MAIL_FROM }}
+      MAIL_FROM_NAME: ${{ vars.MAIL_FROM_NAME }}
+      MAIL_STARTTLS: ${{ vars.MAIL_STARTTLS }}
+      MAIL_SSL: ${{ vars.MAIL_SSL }}
+      # Admin dashboard: who may sign in (comma-separated emails; needs the MAIL_* settings above) and
+      # the browser origin allowed to call /api/admin/** (default https://dashboard.bejo.temanproduk.com)
+      ADMIN_EMAILS: ${{ vars.ADMIN_EMAILS }}
+      ADMIN_DASHBOARD_ORIGINS: ${{ vars.ADMIN_DASHBOARD_ORIGINS }}
+      # Optional app overrides
+      JWT_EXPIRATION_MS: ${{ vars.JWT_EXPIRATION_MS }}
+      CALLBACK_DEFAULT_USERNAME: ${{ vars.CALLBACK_DEFAULT_USERNAME }}
+      CALLBACK_FALLBACK_TO_DEFAULT: ${{ vars.CALLBACK_FALLBACK_TO_DEFAULT }}
+      BUSINESS_MAX_USERS: ${{ vars.BUSINESS_MAX_USERS }}
+      BUSINESS_SIZES: ${{ vars.BUSINESS_SIZES }}
+      BUSINESS_DEFAULT_SIZE: ${{ vars.BUSINESS_DEFAULT_SIZE }}
+      BUSINESS_INDUSTRIES: ${{ vars.BUSINESS_INDUSTRIES }}
+      BUSINESS_DEFAULT_INDUSTRY: ${{ vars.BUSINESS_DEFAULT_INDUSTRY }}
+      LOGIN_MAX_FAILURES: ${{ vars.LOGIN_MAX_FAILURES }}
+      LOGIN_LOCKOUT_MINUTES: ${{ vars.LOGIN_LOCKOUT_MINUTES }}
+      MAX_REQUEST_BYTES: ${{ vars.MAX_REQUEST_BYTES }}
+      DB_POOL_SIZE: ${{ vars.DB_POOL_SIZE }}
+      JAVA_OPTS: ${{ vars.JAVA_OPTS }}
+      PUSH_QUEUE_THREADS: ${{ vars.PUSH_QUEUE_THREADS }}
+      PUSH_QUEUE_CAPACITY: ${{ vars.PUSH_QUEUE_CAPACITY }}
+      REQUEST_LOG_BODY_ON_ERROR: ${{ vars.REQUEST_LOG_BODY_ON_ERROR }}
+      REQUEST_LOG_MAX_BODY_LENGTH: ${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      # Keyless by default: GitHub's OIDC token is exchanged for short-lived credentials (set up by
+      # scripts/init-gcp.sh). Required on organizations that forbid downloadable service-account keys.
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      # Fallback for a project that still allows keys: the GCP_SA_KEY secret (init-gcp.sh --sa-key).
+      - name: Authenticate to Google Cloud (service-account key)
+        if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up Java 25
-        uses: actions/setup-java@v4
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Build JAR
-        run: mvn package -DskipTests -q
-
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
 
-      - name: Build and push Docker image
+      - name: Compute image reference
         id: image
-        run: |
-          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.ARTIFACT_REGISTRY_REPO }}/${{ env.GCP_SERVICE_NAME }}:${{ github.sha }}"
-          docker build --platform=linux/amd64 -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+        run: echo "image=$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPO/$GCP_SERVICE_NAME:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # The Dockerfile compiles the app itself (multi-stage Maven build), so the runner needs no JDK.
+      # Layers are cached in the GitHub Actions cache: the Maven dependency layer is rebuilt only when
+      # pom.xml changes, instead of re-downloading every dependency on every deploy. provenance: false
+      # keeps the pushed image a plain single manifest, which is what Cloud Run expects.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.image.outputs.image }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Deploy to Cloud Run
-        run: |
-          DB_URL="jdbc:postgresql:///${{ env.CLOUD_SQL_DB_NAME }}?cloudSqlInstance=${{ env.CLOUD_SQL_INSTANCE }}&socketFactory=com.google.cloud.sql.postgres.SocketFactory"
-
-          # Single --set-env-vars with gcloud's alternate delimiter (^@^) so
-          # values may contain commas (e.g. "Jl. Contoh No. 1, Jakarta").
-          ENV_VARS="DB_URL=$DB_URL"
-          ENV_VARS="$ENV_VARS@DB_USERNAME=${{ env.CLOUD_SQL_DB_USER }}"
-          ENV_VARS="$ENV_VARS@SPRING_PROFILES_ACTIVE=prod"
-          ENV_VARS="$ENV_VARS@TZ=Asia/Jakarta"
-
-          # Ad-campaign audio bucket. Defaults to <project>-ads to match init-gcp.sh;
-          # override with the ADS_GCS_BUCKET GitHub Actions variable.
-          ADS_BUCKET="${{ vars.ADS_GCS_BUCKET }}"
-          ENV_VARS="$ENV_VARS@ADS_GCS_BUCKET=${ADS_BUCKET:-${{ env.GCP_PROJECT_ID }}-ads}"
-          [ -n "${{ vars.ADS_SIGNED_URL_TTL_SECONDS }}" ] && ENV_VARS="$ENV_VARS@ADS_SIGNED_URL_TTL_SECONDS=${{ vars.ADS_SIGNED_URL_TTL_SECONDS }}"
-          [ -n "${{ vars.ADS_MAX_AUDIO_BYTES }}" ]        && ENV_VARS="$ENV_VARS@ADS_MAX_AUDIO_BYTES=${{ vars.ADS_MAX_AUDIO_BYTES }}"
-          [ -n "${{ vars.ADS_MAX_AUDIO_SECONDS }}" ]      && ENV_VARS="$ENV_VARS@ADS_MAX_AUDIO_SECONDS=${{ vars.ADS_MAX_AUDIO_SECONDS }}"
-          ENV_VARS="$ENV_VARS@SEED_USERNAME=${{ vars.SEED_USERNAME }}"
-          ENV_VARS="$ENV_VARS@SEED_NAME=${{ vars.SEED_NAME }}"
-          ENV_VARS="$ENV_VARS@SEED_BUSINESS_NAME=${{ vars.SEED_BUSINESS_NAME }}"
-          [ -n "${{ vars.SEED_BUSINESS_ADDRESS }}" ] && ENV_VARS="$ENV_VARS@SEED_BUSINESS_ADDRESS=${{ vars.SEED_BUSINESS_ADDRESS }}"
-          [ -n "${{ vars.SEED_NMID }}" ]             && ENV_VARS="$ENV_VARS@SEED_NMID=${{ vars.SEED_NMID }}"
-          [ -n "${{ vars.SEED_MERCHANT_PAN }}" ]     && ENV_VARS="$ENV_VARS@SEED_MERCHANT_PAN=${{ vars.SEED_MERCHANT_PAN }}"
-
-          # Optional overrides — all have built-in defaults (application.yml), so only add
-          # them when the corresponding GitHub Actions variable is set. --set-env-vars
-          # replaces the whole set, so these must be listed here (not just in init-gcp.sh)
-          # for their overrides to survive a CI deploy.
-          [ -n "${{ vars.BUSINESS_MAX_USERS }}" ]         && ENV_VARS="$ENV_VARS@BUSINESS_MAX_USERS=${{ vars.BUSINESS_MAX_USERS }}"
-          [ -n "${{ vars.BUSINESS_SIZES }}" ]             && ENV_VARS="$ENV_VARS@BUSINESS_SIZES=${{ vars.BUSINESS_SIZES }}"
-          [ -n "${{ vars.BUSINESS_DEFAULT_SIZE }}" ]      && ENV_VARS="$ENV_VARS@BUSINESS_DEFAULT_SIZE=${{ vars.BUSINESS_DEFAULT_SIZE }}"
-          [ -n "${{ vars.BUSINESS_INDUSTRIES }}" ]        && ENV_VARS="$ENV_VARS@BUSINESS_INDUSTRIES=${{ vars.BUSINESS_INDUSTRIES }}"
-          [ -n "${{ vars.BUSINESS_DEFAULT_INDUSTRY }}" ]  && ENV_VARS="$ENV_VARS@BUSINESS_DEFAULT_INDUSTRY=${{ vars.BUSINESS_DEFAULT_INDUSTRY }}"
-          [ -n "${{ vars.CALLBACK_DEFAULT_USERNAME }}" ]  && ENV_VARS="$ENV_VARS@CALLBACK_DEFAULT_USERNAME=${{ vars.CALLBACK_DEFAULT_USERNAME }}"
-          [ -n "${{ vars.JWT_EXPIRATION_MS }}" ]          && ENV_VARS="$ENV_VARS@JWT_EXPIRATION_MS=${{ vars.JWT_EXPIRATION_MS }}"
-          [ -n "${{ vars.REQUEST_LOG_BODY_ON_ERROR }}" ]  && ENV_VARS="$ENV_VARS@REQUEST_LOG_BODY_ON_ERROR=${{ vars.REQUEST_LOG_BODY_ON_ERROR }}"
-          [ -n "${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}" ] && ENV_VARS="$ENV_VARS@REQUEST_LOG_MAX_BODY_LENGTH=${{ vars.REQUEST_LOG_MAX_BODY_LENGTH }}"
-
-          # Cloud Run request timeout (seconds). Default 15; override with the CLOUD_RUN_TIMEOUT
-          # GitHub Actions variable (max 3600 for HTTP/1).
-          RUN_TIMEOUT="${{ vars.CLOUD_RUN_TIMEOUT }}"
-          RUN_TIMEOUT="${RUN_TIMEOUT:-15}"
-
-          gcloud run deploy "${{ env.GCP_SERVICE_NAME }}" \
-            --image="${{ steps.image.outputs.image }}" \
-            --region="${{ env.GCP_REGION }}" \
-            --platform=managed \
-            --service-account="${{ env.CLOUD_RUN_SA }}@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
-            --add-cloudsql-instances="${{ env.CLOUD_SQL_INSTANCE }}" \
-            --set-env-vars="^@^$ENV_VARS" \
-            --set-secrets="DB_PASSWORD=bejo-db-password:latest" \
-            --set-secrets="JWT_SECRET=bejo-jwt-secret:latest" \
-            --set-secrets="API_TOKEN=bejo-api-token:latest" \
-            --set-secrets="FIREBASE_CREDENTIALS_BASE64=bejo-firebase-credentials:latest" \
-            --set-secrets="SEED_PASSWORD=bejo-seed-password:latest" \
-            --set-secrets="ADS_ADMIN_TOKEN=bejo-ads-admin-token:latest" \
-            --min-instances=0 \
-            --max-instances=2 \
-            --memory=512Mi \
-            --cpu=1 \
-            --concurrency=80 \
-            --timeout="$RUN_TIMEOUT" \
-            --cpu-throttling \
-            --cpu-boost \
-            --allow-unauthenticated \
-            --quiet
+        run: bash scripts/deploy-cloud-run.sh "${{ steps.image.outputs.image }}"
 
       - name: Print deployment URLs
         run: |
-          echo "Cloud Run: $(gcloud run services describe "${{ env.GCP_SERVICE_NAME }}" --region="${{ env.GCP_REGION }}" --format="value(status.url)")"
-          echo "Custom:    https://${{ env.CUSTOM_DOMAIN }}"
+          echo "Cloud Run: $(gcloud run services describe "$GCP_SERVICE_NAME" --region="$GCP_REGION" --format='value(status.url)')"
+          echo "Custom:    https://$CUSTOM_DOMAIN"
+
+  vm:
+    name: Deploy to VM
+    needs: [plan, test]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.vm == 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Two deploys racing on one VM would fight over the same containers.
+    concurrency:
+      group: deploy-vm
+      cancel-in-progress: false
+    env:
+      VM_HOST: ${{ vars.VM_HOST }}
+      VM_USER: ${{ vars.VM_USER }}
+      VM_SSH_PORT: ${{ vars.VM_SSH_PORT }}
+      VM_APP_DIR: ${{ vars.VM_APP_DIR }}
+      DOMAIN: ${{ vars.VM_DOMAIN }}
+      # Only the host key pinned in VM_KNOWN_HOSTS is accepted; a fresh runner has no history.
+      VM_HOST_KEY_CHECKING: "yes"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.VM_KNOWN_HOSTS }}
+        run: |
+          [ -n "$SSH_KEY" ] || { echo "::error::secret VM_SSH_KEY is not set"; exit 1; }
+          [ -n "$KNOWN_HOSTS" ] || { echo "::error::variable VM_KNOWN_HOSTS is not set (output of: ssh-keyscan -p <port> <host>)"; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          echo "VM_SSH_KEY=$HOME/.ssh/deploy_key" >> "$GITHUB_ENV"
+
+      # --keep-env: the app's secrets stay on the VM (in its .env) and never pass through
+      # GitHub; this deploys code only. Change app config with a normal local deploy.
+      - name: Deploy to the VM
+        env:
+          ROLLBACK: ${{ inputs.vm_rollback }}
+        run: |
+          if [ "$ROLLBACK" = true ]; then
+            bash scripts/deploy-vm.sh --rollback
+          else
+            bash scripts/deploy-vm.sh --keep-env
+          fi

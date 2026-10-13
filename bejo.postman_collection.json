@@ -238,6 +238,82 @@
           }
         },
         {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "forgot-password"
+              ]
+            },
+            "description": "Step 1 of a password reset. Emails a 6-digit code to the address on file for this username. No login needed, but `X-API-TOKEN` is required.\n\nAlways HTTP 200 with the same message whether or not the username exists (no account enumeration), so the app should always say \"if the account exists, we sent a code\" and start a 60-second resend countdown. The code is valid 15 minutes and works once. Nothing is sent if a code was requested in the last 60 seconds or 5 times in the last hour, or if the account's email changed in the last 24 hours. The response takes ~1.5 s on purpose.\n\n503 = email is not configured on the server (MAIL_HOST / MAIL_USERNAME / MAIL_PASSWORD)."
+          },
+          "response": []
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"code\": \"123456\",\n  \"newPassword\": \"NewPass123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "reset-password"
+              ]
+            },
+            "description": "Step 2. Sends the emailed code and the new password (8+ characters, at least one letter and one digit).\n\nSuccess: the password is changed and EVERY existing login session on every device is ended (send the user to the login screen); any login lockout is lifted.\n\n400 \"Kode tidak valid atau sudah kedaluwarsa\" is the single message for every failure (wrong code, expired, already used, more than 5 guesses, unknown user)."
+          },
+          "response": []
+        },
+        {
           "name": "Logout",
           "event": [
             {

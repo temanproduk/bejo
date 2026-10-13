@@ -38,6 +38,10 @@ services:
       FIREBASE_CREDENTIALS_BASE64: ${FIREBASE_CREDENTIALS_BASE64:-}
       FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-default}
+      SEED_MERCHANT_PAN: ${SEED_MERCHANT_PAN:-}
+      # Local convenience (production leaves this off): route unknown-PAN callbacks to the seed account
+      CALLBACK_FALLBACK_TO_DEFAULT: ${CALLBACK_FALLBACK_TO_DEFAULT:-true}
+      CALLBACK_SECRET: ${CALLBACK_SECRET:-}
       TZ: Asia/Jakarta
     ports:
       - "8080:8080"

@@ -110,7 +110,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
 
 ### Production
 
-Deployments trigger automatically on push to the `release` branch via GitHub Actions — builds the JAR, pushes a Docker image to Artifact Registry, and deploys to Cloud Run.
+Deployments trigger automatically on push to the `release` branch via GitHub Actions, **after the test suite passes** — a failing suite blocks the deploy. By default that deploys to Cloud Run; set the `DEPLOY_TARGET` repository variable to `vm` or `both` to deploy to the [VM](#production--single-vm-tencent-cloud-docker-compose) instead or as well. The Cloud Run job builds the Docker image (the Dockerfile compiles the app), pushes it to Artifact Registry, and deploys it to Cloud Run with `scripts/deploy-cloud-run.sh`, the same script `init-gcp.sh` uses for the first deploy.
 
 **First-time infrastructure setup:**
 
@@ -119,9 +119,50 @@ cp .env.gcp.example .env.gcp   # fill in all values
 bash scripts/init-gcp.sh
 ```
 
-Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
+Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. Safe to re-run: existing resources are skipped, secrets get a new version, and the database user's password is re-synced to `.env.gcp`. Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
+
+**Database backups (Cloud SQL):** `init-gcp.sh` enables automated daily backups (window `CLOUD_SQL_BACKUP_START_TIME`, default 19:00 UTC; the last 7 are kept) and re-running it turns them on for an instance that was created without them. Point-in-time recovery is deliberately off: it archives WAL on the instance's own 10 GB disk (auto-increase is off), and a full disk takes the database down — enable PITR and storage auto-increase together if you want it.
+
+**Image & build:** on a project that has never used Cloud Build, `init-gcp.sh` first grants the builder role to the service account Cloud Build runs as (the Compute Engine default one on projects created since April 2024) — otherwise the first build fails with `… does not have storage.objects.get access`. The Dockerfile is a pinned (by digest), multi-stage build that produces a *layered* image, so a normal deploy pushes only the small application layer; CI builds with Buildx and the GitHub Actions layer cache. Pinned images and Actions are kept current by Dependabot (`.github/dependabot.yml`). Request/abuse protection is deliberately **not** done in the app: a per-IP limiter needs the real client IP, which behind Cloud Run's proxy can't be determined reliably without testing against it, and a wrong guess would throttle all users together — put rate limits at the edge (Cloud Armor in front of Cloud Run; a Caddy rate-limit module on the VM). The app's own login throttle is per username.
 
 **Runtime scaling (Cloud Run, us-central1):** 1 vCPU / 512 MiB, **0–2 instances** — scales to **zero** when idle so there's no cost between requests, up to 2 under load. CPU is throttled to request time (request-based billing). `spring.main.lazy-initialization` is enabled to keep cold starts (from scale-to-zero) fast. Old images are pruned by an Artifact Registry cleanup policy (keep 5 most recent / delete >30 days).
+
+### Production — single VM (Docker Compose)
+
+An alternative to Cloud Run: one VM running **Caddy** (automatic HTTPS) → the **app** → **Postgres**, all as containers from `docker-compose.prod.yml`. Only Caddy publishes ports (80/443); the app and the database are reachable inside the compose network only. The image is built on the VM, so no container registry is needed.
+
+```bash
+cp .env.vm.example .env.vm      # VM address (VM_USER=root at first) + the same secrets/settings as .env.gcp; gitignored
+ssh-copy-id root@<host>         # so the scripts use key login instead of prompting for the root password
+bash scripts/init-vm.sh         # once: Docker, swap, an unprivileged `deploy` user + your key, directories, nightly DB backup
+bash scripts/harden-vm.sh       # once: firewall, key-only SSH, no root login, fail2ban, auto security updates
+# now set VM_USER=deploy in .env.vm
+bash scripts/deploy-vm.sh       # every deploy: ships the current commit, builds, restarts, health-checks
+bash scripts/deploy-vm.sh --rollback   # back to the previous release
+```
+
+Before the first deploy, point a DNS A record for `DOMAIN` at the VM so Caddy can get its certificate, and — if your hosting panel has its own firewall — allow inbound TCP 80/443 there (`harden-vm.sh` sets up the host firewall itself). **Choose a region outside mainland China** (e.g. Jakarta, Singapore, Hong Kong): FCM push isn't reachable from the mainland, and serving a domain on 80/443 there needs an ICP filing.
+
+- **Hardening (`harden-vm.sh`)**: ufw allows only SSH, 80 and 443; SSH is key-only with root login off and only the `deploy` user allowed (that account has no password and no sudo); fail2ban bans IPs after repeated failed logins; `unattended-upgrades` installs OS security updates (it never reboots — reboot yourself when a kernel update asks). It can't lock you out: it first checks `deploy` can log in with your key, keeps an admin connection open, arms a timer on the VM that reverts the SSH change after 5 minutes, tests a brand-new `deploy` login, and only then disarms the timer. After it, root can't SSH in, so admin work goes through the hosting panel's web console — or set `VM_ROOT_LOGIN=prohibit-password` (key-only root login) before running it. If you're ever locked out, in the web console: `rm /etc/ssh/sshd_config.d/00-bejo-hardening.conf && systemctl reload ssh`. Docker-group access is effectively root, so treat the `deploy` key (and the CI key) as a root credential. On Docker: containers run with `no-new-privileges`, and the app with all capabilities dropped.
+- `deploy-vm.sh` refuses uncommitted changes unless `--allow-dirty`. A failed health check puts the previous release back automatically. A rollback restarts the old *code* — Flyway migrations are forward-only and are never reverted.
+- The app is down for the ~30–60 s the new container takes to start (single VM, no blue/green).
+- Database backups: `scripts/vm-backup.sh` runs nightly via cron (7 days kept, in `~/bejo/backups`). On their own they die with the VM and are unencrypted, so create `~/bejo/backup.env` **on the VM** (never in git) with `BACKUP_PASSPHRASE_FILE` (AES-256 encrypt; keep a copy of the passphrase off the VM) and `BACKUP_RCLONE_REMOTE` (copy off the VM with rclone, e.g. to object storage) — see the script header for the restore commands. With a passphrase configured the script refuses to write a plaintext backup. `DB_PASSWORD` only takes effect when the data volume is first created.
+- Voice ads need Google Cloud Storage credentials the VM doesn't have, so leave `ADS_ADMIN_TOKEN` blank there.
+- **Deploying from GitHub Actions.** The `release` push can deploy here too. Set these in Settings → Secrets and variables → Actions, then `DEPLOY_TARGET` to `vm` (or `both`):
+
+  | Name | Kind | Description |
+  |---|---|---|
+  | `DEPLOY_TARGET` | variable | `cloudrun` (default when unset), `vm`, or `both` |
+  | `VM_HOST` / `VM_USER` | variables | The VM's address and the SSH user — the unprivileged deploy user (`deploy`), **not** root |
+  | `VM_SSH_PORT` / `VM_APP_DIR` | variables, optional | Default `22` / `bejo` |
+  | `VM_DOMAIN` | variable | Public domain; the deploy checks `https://VM_DOMAIN/actuator/health`. Optional — skipped if unset |
+  | `VM_KNOWN_HOSTS` | variable | The VM's SSH host key, so CI only talks to that machine: `ssh-keyscan -p 22 <host>` |
+  | `VM_SSH_KEY` | **secret** | Private key of a dedicated CI key (`ssh-keygen -t ed25519`). Put its public half at `VM_CI_PUBKEY` in `.env.vm` before `init-vm.sh`: it is authorized for the deploy user with `restrict` (commands only — no terminal, no port forwarding) |
+
+  **Switching target:** `DEPLOY_TARGET=vm` means a push to `release` no longer updates Cloud Run — the existing Cloud Run service (and its Cloud SQL data) keeps running as it is, untouched, so nothing is moved or shut down by the switch; copy the data across yourself when you cut over. Until the `VM_*` variables and `VM_SSH_KEY` exist and the first deploy has been done from your machine, the `vm` job fails and **nothing** gets deployed on a release push. Set `DEPLOY_TARGET` back to `cloudrun` (or `both`) to resume Cloud Run deploys.
+
+  CI runs `deploy-vm.sh --keep-env`: it ships the code and restarts, but the app's secrets stay in the `.env` already on the VM and never pass through GitHub. So do the **first deploy from your machine** (it creates that `.env`), and to change app config later, run a normal `deploy-vm.sh` locally. From the Actions tab, *Run workflow* lets you pick the target for one run or roll the VM back.
+- Moving existing data from Cloud SQL: `pg_dump` it and restore it into the `bejo-postgres` container before pointing DNS at the VM.
 
 ### Local — Docker Compose
 
@@ -134,9 +175,9 @@ Available at `http://localhost:8080`. Prometheus at `http://localhost:9090`.
 
 ### Local — Maven
 
-Requires a running PostgreSQL instance. Flyway migrations run on startup.
+Requires JDK 25 and a running PostgreSQL instance. Flyway migrations run on startup. Use the bundled wrapper (`./mvnw`), which pins the Maven version; the build stops with a clear message on an older JDK. No JDK 25? Run it in the Maven container: `podman run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-25-alpine ./mvnw test`.
 
-> **Schema changes.** `V1__init_schema.sql` is the deployed baseline and is **frozen** — never edit it (or any applied migration), since Flyway checksums the file against the live database and a mismatch stops the app booting. Add a **new** migration instead (`V2__…`, `V3__…`): additive, forward-only, and safe against a populated table. Keep the JPA entities in step — the test suite builds H2 from the entities, so it cannot catch entity/migration drift; boot once against a fresh Postgres with `--spring.jpa.hibernate.ddl-auto=validate` to prove they agree.
+> **Schema changes.** `V1__init_schema.sql` is the deployed baseline and is **frozen** — never edit it (or any applied migration), since Flyway checksums the file against the live database and a mismatch stops the app booting. Add a **new** migration instead (`V2__…`, `V3__…`): additive, forward-only, and safe against a populated table. Keep the JPA entities in step — the H2 tests build their tables from the entities, so they cannot catch entity/migration drift; `MigrationPostgresTest` can (see *Testing*), and CI runs it against a real Postgres on every push.
 
 ```bash
 export API_TOKEN=dev-token
@@ -144,7 +185,7 @@ export JWT_SECRET=YmVqby1kZXYtc2VjcmV0LWtleS1tdXN0LWJlLWNoYW5nZWQtaW4tcHJvZHVjdG
 export DB_URL=jdbc:postgresql://localhost:5432/bejo
 export DB_USERNAME=bejo
 export DB_PASSWORD=bejo
-mvn spring-boot:run
+./mvnw spring-boot:run
 ```
 
 ---
@@ -152,9 +193,16 @@ mvn spring-boot:run
 ## Testing
 
 ```bash
-mvn test                              # everything
-mvn test -Dtest=JwtServiceTest        # one class
-mvn test -Dtest=ApiIntegrationTest#logoutBlacklistsToken   # one method
+./mvnw test                              # everything
+./mvnw test -Dtest=JwtServiceTest        # one class
+./mvnw test -Dtest=ApiIntegrationTest#logoutBlacklistsToken   # one method
+```
+
+Most tests run on in-memory H2. **`MigrationPostgresTest`** boots the whole app against a *real* Postgres with Flyway on and Hibernate's `ddl-auto=validate`, so a migration that doesn't apply — or an entity that maps a column the migrations don't create — fails the build. It is skipped unless `MIGRATION_TEST_DB_URL` is set (CI sets it via a Postgres service container). To run it locally against an empty database:
+
+```bash
+podman run -d --name bejo-it-pg -p 5432:5432 -e POSTGRES_DB=bejo -e POSTGRES_USER=bejo -e POSTGRES_PASSWORD=bejo postgres:17-alpine
+MIGRATION_TEST_DB_URL=jdbc:postgresql://localhost:5432/bejo ./mvnw test -Dtest=MigrationPostgresTest
 ```
 
 No database or other services needed — tests are self-contained:
@@ -178,7 +226,7 @@ Every request requires:
 | `Authorization` | Protected only | `Bearer <JWT>` returned by login |
 
 Public (no JWT): `POST /api/users/register`, `POST /api/auth/login`  
-Exempt from the API token: `/actuator/health` (for Cloud Run probes) and `/snap/**` (inbound QRIS payment callbacks — server-to-server). All other `/actuator/*` endpoints (metrics, prometheus, info) **require** `X-API-TOKEN`.
+Exempt from the API token: `/actuator/health` (for Cloud Run probes) and `/snap/**` (inbound QRIS payment callbacks — server-to-server; optionally guarded by a shared secret, see [QRIS callback](#qris-callback)). All other `/actuator/*` endpoints (metrics, prometheus, info) **require** `X-API-TOKEN`.
 
 Tokens expire after `JWT_EXPIRATION_MS` (default 7 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
 
@@ -335,6 +383,36 @@ Blacklists the current JWT server-side. The token is rejected on all subsequent 
 **Success — HTTP 200:** `{ "status": 1, "message": "Logged out successfully" }`
 
 **Errors:** `400 Authorization header tidak valid`
+
+---
+
+#### Forgotten password — `POST /api/auth/forgot-password` and `POST /api/auth/reset-password`
+
+Two public calls (no login — that is the point) that still need `X-API-TOKEN`. The app asks for a code, the user reads the 6-digit code from their email, and the app sends code + new password.
+
+**1. Request a code** — `POST /api/auth/forgot-password`
+
+```json
+{ "username": "budi" }
+```
+
+**Always HTTP 200** with `{ "status": 1, "message": "Jika akun terdaftar, kode reset telah dikirim ke email Anda" }` — the same answer whether or not the username exists, has an email, or was rate-limited, so the endpoint cannot be used to discover accounts. The app should therefore always show *"if the account exists, we sent a code to your email"* and a **60-second resend countdown**. The code goes to the email registered on the account; it is valid for **15 minutes**, works **once**, and a new request replaces the previous code.
+
+Behind the scenes a request sends nothing when the user has already requested a code in the last **60 seconds** or **5 times in the past hour**, or when the account's **email was changed in the last 24 hours** (so a stolen login cannot swap in its own address and take the account over). Responses take about 1.5 s on purpose, for the same reason.
+
+**Errors:** `503` — email is not configured on the server (the feature is off); `400` — `username` missing.
+
+**2. Set the new password** — `POST /api/auth/reset-password`
+
+```json
+{ "username": "budi", "code": "482913", "newPassword": "NewPass123" }
+```
+
+`code` is exactly 6 digits; `newPassword` follows the registration rules (8+ characters, at least one letter and one digit).
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Kata sandi berhasil diubah. Silakan masuk dengan kata sandi baru" }`. The password is changed, **every existing login session on every device is ended** (the app must send the user back to the login screen), any login lockout is lifted, and the email is marked verified.
+
+**Errors:** `400 Kode tidak valid atau sudah kedaluwarsa` — the **single message for every failure** (wrong code, expired, already used, too many attempts, unknown user). A code allows **5 guesses**; after that the user must request a new one. Field-validation errors (not 6 digits, weak password) are also `400`.
 
 ---
 
@@ -1480,12 +1558,12 @@ List all per-user assignments (`userId` + `username` + `terminalId`, code omitte
 
 #### `POST /snap/v1.0/qr/qr-mpm-notify`
 
-Inbound QRIS payment notification (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). **Server-to-server — no `X-API-TOKEN` and no JWT.** Records the payment as a `MANAGED` transaction and stores the **raw payload** in the transaction's `info` column (the provider's `additionalInfo` object is stored under the shorter name).
+Inbound QRIS payment notification (SNAP-like QR MPM notify) from the QRIS merchant service (e.g. AstraPay). **Server-to-server — no `X-API-TOKEN` and no JWT.** If `CALLBACK_SECRET` is set the request must carry it as the `X-Callback-Secret` header (else `401`) — set it, because otherwise anyone who can reach this URL can forge a payment notification. Records the payment as a `MANAGED` transaction and stores the **raw payload** in the transaction's `info` column (the provider's `additionalInfo` object is stored under the shorter name).
 
 This endpoint does **not** use the standard `{ status, message, data }` envelope — it returns the callback contract's own acknowledgment shape.
 
 **Routing.** The useful fields arrive under `additionalInfo`: `terminalId`, `merchantPan` (there is **no NMID**), `customerPan`, `transactionId`. The service:
-> - **finds the business by `merchantPan`** (`businesses.merchant_pan`), falling back to the configured default account (`app.callback.default-username`) if it matches nothing, and records the transaction there;
+> - **finds the business by `merchantPan`** (`businesses.merchant_pan`) and records the transaction there. A missing or unmatched `merchantPan` is **rejected with `404`** (logged), unless `CALLBACK_FALLBACK_TO_DEFAULT=true`, which attributes it to the default account (`CALLBACK_DEFAULT_USERNAME`) as before;
 > - **routes the push by `terminalId`**: the **super admin** always gets it, a user with **no** [per-user QRIS](#put-apiqrisusersusername--assign-a-user-their-own-qris-super-admin) always gets it (they use the shared business QRIS), and a user **with** their own QRIS gets it only when their terminal id matches the callback's. A callback with no `terminalId` rings the whole business.
 >
 > **Idempotent:** re-delivering the same notification does **not** create a second transaction — see *Idempotency* below.
@@ -1701,6 +1779,8 @@ Errors shared across all endpoints:
 | `GET /actuator/metrics` | Micrometer metrics |
 | `GET /actuator/prometheus` | Prometheus scrape endpoint |
 
+> **On Cloud Run nothing scrapes these.** `/actuator/prometheus` and `/actuator/metrics` need the `X-API-TOKEN`, and only the local Compose Prometheus sends it, so production metrics go unused. Watch production with Cloud Monitoring instead: an **uptime check** on `/actuator/health`, a **log-based alert** on `[CALLBACK]` errors, and — the one that matters most for this product — an alert when **no payment callback has arrived for N minutes** (the `[CALLBACK] Recorded` log line / `qris.callbacks.received` counter). Distributed tracing is not set up.
+
 **Custom metrics**
 
 | Metric | Tags | Description |
@@ -1730,11 +1810,18 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `JWT_EXPIRATION_MS` | no | Token TTL in ms. Default `604800000` (7 days); `0` disables expiry |
 | `LOGIN_MAX_FAILURES` | no | Consecutive failed logins per username before a lockout. Default `10` |
 | `LOGIN_LOCKOUT_MINUTES` | no | How long a locked account must wait. Default `15` |
-| `MAX_REQUEST_BYTES` | no | Max request body size; larger bodies get `413`. Default `8388608` (8 MB) |
+| `MAX_REQUEST_BYTES` | no | Max request body size; larger bodies get `413`. Default `8388608` (8 MB) — the largest real payloads are ~3 MB, so it can be lowered |
+| `DB_POOL_SIZE` | no | JDBC pool size **per instance**, default `10`. Keep pool × Cloud Run max-instances (default 2), plus the database's own reserved connections, under its `max_connections` — a `db-f1-micro` allows very few |
+| `JAVA_OPTS` | no | JVM flags; **replaces** the image default `-XX:MaxRAMPercentage=75` (it is not appended). Lower the percentage if the platform OOM-kills the container |
 | `BUSINESS_MAX_USERS` | no | Max users per business, **including** the super admin. Default `10` |
 | `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` | no | Allowed business sizes + default (comma-separated). Default `Mikro,Kecil,Menengah,Besar,Non-Profit` / `Mikro` |
 | `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | no | Allowed industries + default (comma-separated). Default is the 11-industry list / `Makanan & Minuman` |
-| `CALLBACK_DEFAULT_USERNAME` | no | Seed user PoC QRIS callbacks attribute to. Defaults to `SEED_USERNAME` |
+| `CALLBACK_DEFAULT_USERNAME` | no | Account a callback is attributed to when `CALLBACK_FALLBACK_TO_DEFAULT` is on. Defaults to `SEED_USERNAME` |
+| `CALLBACK_FALLBACK_TO_DEFAULT` | no | Default `false`: a callback with a missing/unknown `merchantPan` is rejected (`404`). `true` records it against the default account instead |
+| `MAIL_HOST` / `MAIL_USERNAME` / `MAIL_PASSWORD` | no | Outgoing SMTP for password-reset emails (Zoho Mail: `smtp.zoho.com` for **free** accounts, `smtppro.zoho.com` for **paid** ones — the wrong host fails login with `554 5.7.8 Access Restricted`; `.eu`/`.in`/`.com.au`/`.jp` for other data centres). **All three** must be set or the feature is off and `/api/auth/forgot-password` answers `503`. With two-factor authentication on the Zoho account, `MAIL_PASSWORD` must be an **application-specific password** |
+| `MAIL_FROM` / `MAIL_FROM_NAME` | no | Sender address (must be the mailbox or one of its Zoho aliases; defaults to `MAIL_USERNAME`) and display name (default `Bejo`) |
+| `MAIL_PORT` / `MAIL_STARTTLS` / `MAIL_SSL` | no | Default `587` + STARTTLS. For port 465: `MAIL_PORT=465 MAIL_SSL=true MAIL_STARTTLS=false` |
+| `CALLBACK_SECRET` | no | Shared secret the payment provider must send as `X-Callback-Secret`. Blank = the callback is unauthenticated (a warning is logged at prod startup) |
 | `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | no | Log request bodies on 4xx/5xx (redacted, capped). Default `true` / `2048` |
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | PostgreSQL username |
@@ -1766,7 +1853,7 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 
 | Layer | Holds | Why it lives here |
 |---|---|---|
-| **GitHub Actions secret** | only `GCP_SA_KEY` (the deploy credential) | all the CI pipeline needs to authenticate to GCP |
+| **GitHub Actions secret** | no GCP secret at all — Cloud Run auth is keyless ([Workload Identity Federation](#github-actions-authentication-to-gcp)); only `VM_SSH_KEY` (VM). `GCP_SA_KEY` remains as a fallback for projects that allow keys | all the CI pipeline needs to authenticate to the target |
 | **GitHub Actions variables** | non-sensitive config: project/region/service names, seed + business options | plaintext is fine — none of it is secret |
 | **GCP Secret Manager** | runtime secrets: DB password, JWT secret, API token, Firebase creds, seed password | consumed by the **running app** on Cloud Run, not by CI |
 
@@ -1780,6 +1867,8 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `bejo-firebase-credentials` | `FIREBASE_CREDENTIALS_BASE64` | `FIREBASE_CREDENTIALS_BASE64` |
 | `bejo-seed-password` | `SEED_PASSWORD` | `SEED_PASSWORD` |
 | `bejo-ads-admin-token` | `ADS_ADMIN_TOKEN` *(optional)* | `ADS_ADMIN_TOKEN` |
+| `bejo-mail-password` | `MAIL_PASSWORD` *(optional)* | `MAIL_PASSWORD` (only when `MOUNT_MAIL_PASSWORD=true`) |
+| `bejo-callback-secret` | `CALLBACK_SECRET` *(optional)* | `CALLBACK_SECRET` (only when `MOUNT_CALLBACK_SECRET=true`) |
 
 `init-gcp.sh` also creates the **ad-audio bucket** `gs://<project>-ads` (uniform access + public-access-prevention; audio is reachable only via signed URLs) and grants the Cloud Run service account `objectAdmin` on it plus `serviceAccountTokenCreator` on itself (to V4-sign URLs without a key).
 
@@ -1790,7 +1879,9 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | Variable | Description |
 |---|---|
 | `GCP_PROJECT_ID` | GCP project ID |
-| `GCP_REGION` | Region e.g. `asia-southeast2` |
+| `GCP_REGION` | Region, `us-central1` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Workload Identity provider resource name, `projects/<number>/locations/global/workloadIdentityPools/github/providers/github-actions` — printed by `init-gcp.sh`. When set, the deploy authenticates keylessly; when empty it falls back to `GCP_SA_KEY` |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | The CI service account to impersonate, `bejo-github-actions@<project>.iam.gserviceaccount.com` — printed by `init-gcp.sh` |
 | `GCP_SERVICE_NAME` | Cloud Run service name |
 | `ARTIFACT_REGISTRY_REPO` | Artifact Registry repository name |
 | `CLOUD_SQL_INSTANCE_CONNECTION_NAME` | e.g. `project:region:instance` |
@@ -1800,15 +1891,29 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `CUSTOM_DOMAIN` | `api.bejo.temanproduk.com` |
 | `SEED_USERNAME` / `SEED_NAME` / `SEED_BUSINESS_NAME` / `SEED_BUSINESS_ADDRESS` / `SEED_NMID` / `SEED_MERCHANT_PAN` | Seed user values |
 | `BUSINESS_MAX_USERS` / `BUSINESS_SIZES` / `BUSINESS_DEFAULT_SIZE` / `BUSINESS_INDUSTRIES` / `BUSINESS_DEFAULT_INDUSTRY` | *(optional)* Business option overrides — built-in defaults apply if unset |
-| `JWT_EXPIRATION_MS` / `CALLBACK_DEFAULT_USERNAME` / `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | *(optional)* Other overrides — defaults apply if unset |
+| `JWT_EXPIRATION_MS` / `CALLBACK_DEFAULT_USERNAME` / `CALLBACK_FALLBACK_TO_DEFAULT` / `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | *(optional)* Other overrides — defaults apply if unset |
+| `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_MINUTES` / `MAX_REQUEST_BYTES` / `PUSH_QUEUE_THREADS` / `PUSH_QUEUE_CAPACITY` | *(optional)* Login throttle, request-size cap and FCM queue tuning — defaults `10` / `15` / `8388608` / `4` / `1000` |
+| `DB_POOL_SIZE` / `JAVA_OPTS` | *(optional)* JDBC pool size per instance (default `10`) and JVM flags (replaces the default `-XX:MaxRAMPercentage=75`) |
 | `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds. Default `15` (max `3600`) |
+| `CLOUD_RUN_MIN_INSTANCES` / `CLOUD_RUN_MAX_INSTANCES` / `CLOUD_RUN_MEMORY` / `CLOUD_RUN_CPU` | *(optional)* Cloud Run sizing — defaults `0` / `2` / `512Mi` / `1` |
 | `ADS_GCS_BUCKET` | *(optional)* Ad-audio bucket. Defaults to `<project>-ads` |
 | `ADS_SIGNED_URL_TTL_SECONDS` / `ADS_MAX_AUDIO_BYTES` / `ADS_MAX_AUDIO_SECONDS` | *(optional)* Voice-ad limits — defaults `86400` / `2097152` / `10` |
+| `MOUNT_ADS_ADMIN_TOKEN` | *(optional)* Set to `false` if `ADS_ADMIN_TOKEN` was left blank in `.env.gcp` (so `bejo-ads-admin-token` doesn't exist) — otherwise CI deploys fail mounting the missing secret. Default `true` |
+| `MAIL_HOST` / `MAIL_USERNAME` / `MAIL_FROM` / `MAIL_FROM_NAME` / `MAIL_PORT` / `MAIL_STARTTLS` / `MAIL_SSL` | *(optional)* Outgoing email settings (non-secret) — see the env table; unset keeps password reset off |
+| `MOUNT_MAIL_PASSWORD` | *(optional)* Set to `true` once `bejo-mail-password` exists in Secret Manager **and** keep it set: without it a release unmounts the SMTP password and silently switches password reset off. Default `false` |
+| `MOUNT_CALLBACK_SECRET` | *(optional)* Set to `true` once `bejo-callback-secret` exists in Secret Manager **and the provider is sending `X-Callback-Secret`**. Default `false` |
+| `CLOUD_RUN_CPU_THROTTLING` | *(optional)* `false` keeps Cloud Run CPU allocated between requests (costlier). Use it if payment alerts lag the callback — queued pushes are starved of CPU after the response. Default `true` |
 
 > These optional overrides must be set as GitHub Actions **variables** for CI deploys (`deploy.yml`) **and** in `.env.gcp` for the one-time `init-gcp.sh` run — `--set-env-vars` replaces the whole set on each deploy, so an override only in `.env.gcp` would be reset by the next CI deploy.
 
-**GitHub Actions secret** (Settings → Secrets → Actions)
+#### GitHub Actions authentication to GCP
+
+CI uses **Workload Identity Federation**: GitHub issues the job a short-lived OIDC token, Google exchanges it for credentials that impersonate `bejo-github-actions`, and no key file or secret exists to leak. `scripts/init-gcp.sh` creates the pool and provider, locks them to **this repository and the `release` branch** (a workflow pushed to any other branch cannot mint credentials; `GITHUB_DEPLOY_REF=any` lifts the branch restriction), and prints two `gh variable set` commands for `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_DEPLOY_SERVICE_ACCOUNT`. This is also the only option on organizations that enforce `constraints/iam.disableServiceAccountKeyCreation` (downloadable service-account keys are forbidden there — the script's key creation fails with `Key creation is not allowed on this service account`).
+
+**Legacy key (only where the org allows keys)** — `bash scripts/init-gcp.sh --sa-key` (or `--rotate-key`) writes a key file and prints the command to store it as the secret below; the key itself is never printed. A re-run skips key creation when one exists.
+
+**GitHub Actions secret** (Settings → Secrets → Actions) — only for the legacy key path
 
 | Secret | Description |
 |---|---|
-| `GCP_SA_KEY` | Base64-encoded service account JSON key — printed by `scripts/init-gcp.sh` |
+| `GCP_SA_KEY` | Base64-encoded service account JSON key, used only when `GCP_WORKLOAD_IDENTITY_PROVIDER` is empty |

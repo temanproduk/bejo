@@ -131,14 +131,17 @@ class RequestLoggingFilterTest {
         MockHttpServletRequest req = post("/snap/v1.0/qr/qr-mpm-notify", "{}");
         req.addHeader("Authorization", "Bearer super-secret");
         req.addHeader("X-API-TOKEN", "the-shared-secret");
+        req.addHeader("X-Callback-Secret", "the-callback-secret");
 
         filter.doFilter(req, new MockHttpServletResponse(), chainReturning(400));
 
         assertThat(callbackLogs().getFirst())
                 .contains("Authorization: ***")
                 .contains("X-API-TOKEN: ***")
+                .contains("X-Callback-Secret: ***")
                 .doesNotContain("super-secret")
-                .doesNotContain("the-shared-secret");
+                .doesNotContain("the-shared-secret")
+                .doesNotContain("the-callback-secret");
     }
 
     @Test

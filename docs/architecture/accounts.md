@@ -1,0 +1,37 @@
+# Accounts: login, registration, businesses & members
+
+> Moved out of `CLAUDE.md` unchanged to keep that file small — it is loaded into every session.
+> `CLAUDE.md` keeps the rules and gotchas; this is the detail behind them.
+
+How users, businesses and sessions fit together.
+
+## Login flow
+
+`AuthService.login()` authenticates against the local `users` table:
+1. Look up the **active** `users` row by `username` (`findByUsernameAndDeletedAtIsNull`) — `Invalid credentials` (400) if not found or BCrypt mismatch (a soft-deleted user can't log in).
+2. Load the `businesses` + `business_banks` rows (by the user's `business_id`) for business + bank fields in the response.
+3. Upsert a row in `sessions` keyed on `(username, device_id)`; an existing FCM token is preserved when the login request has no `pushToken`.
+4. Return `id` + profile + `businessRole` + **`hasOwnQris`** + business (name/address, **no NMID**) + bank + **`size` + `industry` + `storePhoto` + `profilePicture` (business picture) + `accountSettings`** + JWT (`expiresIn` seconds). The bundled picture/account-settings save the client round trips on the home screen; the individual endpoints (`/api/account-settings`, `/api/business/picture`, `GET /api/users/me`) still exist. `GET /api/users/me` returns the same bundle minus the token **and minus `size`/`industry`/`storePhoto`** — those are immutable (set once at registration), so the client caches them from the login response.
+
+## Password reset (forgot password)
+
+`PasswordResetController` → `PasswordResetService`: `POST /api/auth/forgot-password` emails a 6-digit code (an OTP rather than a link, because the mobile app has no web page to open one in), `POST /api/auth/reset-password` exchanges `{username, code, newPassword}`. Email goes over SMTP (`notification/SmtpEmailSender`, Zoho Mail in production; IMAP/POP are for *reading* a mailbox and play no part in sending). Table `core.password_reset_tokens` (migration V2); `core.users.email_changed_at` was added with it.
+
+- **Codes are never stored** — only `HMAC-SHA256(secret-derived pepper, userId:code)`. A 6-digit code is a million values, so a plain hash would be reversible from a database leak. Compared in constant time.
+- **Bounded guessing** — 5 attempts per code, spent with the atomic conditional update `spendAttempt` *before* the comparison (concurrent guesses cannot exceed the limit, and a wrong guess cannot be rolled back with its own exception). 15-minute TTL, single use (`markUsed`), and a new request replaces the open code.
+- **Per-user rate limits from the database** (so they hold across Cloud Run instances): 60-second resend cooldown, 5 codes per hour. Over a limit the request is silently ignored.
+- **No account enumeration** — `forgot-password` returns the same 200 whether or not the user exists, has an eligible email, or was rate-limited, and is padded to `response-floor-ms` (1.5 s) so an ignored request is not visibly faster than a sent email; a mail-server failure also looks like success (logged at ERROR). Only "email not configured" is distinguishable (503). `reset-password` has one failure message for everything.
+- **Stolen-session guard** — `PATCH /api/users/me` changes the email with no password, so a stolen JWT could set its own address and reset the password. `UserService.updateProfile` stamps `email_changed_at` and no code is sent to an address changed within `email-change-lockout-hours` (24).
+- **After a successful reset**: password changed → every earlier JWT dies at once (the `pwb` claim), any login lockout is cleared (`LoginThrottleService.recordSuccess`), `is_email_verified` becomes true (the user proved control), all open codes are spent.
+- **Sent synchronously**, deliberately: on Cloud Run, work after the response is starved of CPU, which would delay or lose the one email the user is waiting for. SMTP connect/read/write timeouts bound the cost (`application.yml`). The mail health indicator is disabled (`management.health.mail.enabled=false`) — its default would open an SMTP connection on every `/actuator/health` probe.
+- **Configuration** — `MAIL_HOST`/`MAIL_USERNAME`/`MAIL_PASSWORD` all required or the feature is off (503); Cloud Run mounts the password from Secret Manager (`bejo-mail-password`, opt-in via `MOUNT_MAIL_PASSWORD`). Zoho: sender must be the mailbox or an alias; with 2FA use an application-specific password; each plan has a daily SMTP sending cap.
+- Tests: `PasswordResetServiceTest` (rules), `PasswordResetApiIntegrationTest` (the full flow through the endpoints with the recording `InMemoryEmailSender`), `SmtpEmailSenderTest` (the real sender against an in-process SMTP server).
+
+## Registration, businesses & members
+
+Registration/user-management live in `UserService` + `MemberService` (not `AuthService` — auth is only login/logout/session). Scoping is resolved by `BusinessContext.requireBusinessId(username)` (a `@Component` mapping the authenticated username → `business_id`; throws 404 if the user is gone/soft-deleted).
+
+- `POST /api/users/register` (public) → creates a **new `businesses` row + its first `users` row** (`SUPER_ADMIN`, `AccountType.SELF_SERVICE`) + `business_banks` row (bank fields optional, empty by default). **No** `business_qris` row (QRIS optional — added later via upload). Accepts optional **`size`** + **`industry`** (validated + defaulted against the configurable `BusinessOptions` = `app.business.sizes`/`industries`; 400 on an invalid value) and an optional **`storePhoto`** (base64 ≤1 MB, same spec as the picture). These three are **set once at registration and immutable** — `PATCH /api/users/me/business` does **not** touch them, and they're returned only on login (not `/me`).
+- `MemberService` (super-admin-gated): `POST /api/users/members` adds a `MEMBER` to the caller's business (rejected once the business hits `app.business.max-users` active users, default 10, super admin included); `PATCH`/`DELETE .../members/{id}` update/soft-delete a member; `GET .../members` lists them (any member). A `SUPER_ADMIN` can never be modified or deleted here. **Delete is a soft delete** (`users.deleted_at` set) that **releases the username**: uniqueness is enforced only among active users (app check + a Postgres partial unique index `WHERE deleted_at IS NULL`), and the member's `sessions` are removed so a reused username starts clean.
+
+`DataSeeder` also creates a seed `businesses` + `SUPER_ADMIN`/`MANAGED` seed user at startup when `SEED_PASSWORD` is set — but seed data (including `seed-qris.b64`) is for the seed/test user only and must never back any other feature.

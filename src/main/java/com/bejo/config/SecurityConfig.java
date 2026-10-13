@@ -72,13 +72,17 @@ public class SecurityConfig {
                         // JSON API returns no HTML/scripts — lock the CSP right down
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'")))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login", "/api/users/register").permitAll()
+                        .requestMatchers("/api/auth/login", "/api/users/register",
+                                "/api/auth/forgot-password", "/api/auth/reset-password").permitAll()
                         .requestMatchers("/snap/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
                         // Ads admin surface is server-to-server: no JWT, guarded by the
                         // X-ADS-ADMIN-TOKEN header in the controller. The device-facing reports
                         // (/api/ads/deliveries/**) fall through to authenticated() below.
                         .requestMatchers("/api/ads/campaigns/**").permitAll()
+                        // Admin dashboard: an admin is not an app user, so no user JWT. Guarded by
+                        // AdminAuthFilter (emailed one-time code -> session token).
+                        .requestMatchers("/api/admin/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class)

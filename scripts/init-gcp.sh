@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time GCP setup for bejo on Cloud Run + Cloud SQL.
-# Run this once before the first deployment.
+# Run this once before the first deployment. Safe to re-run: existing resources are
+# skipped, secrets get a new version, and the DB user's password is re-synced to .env.gcp.
 #
 # Prerequisites:
 #   1. gcloud CLI installed and authenticated (gcloud auth login)
@@ -8,10 +9,28 @@
 #      https://search.google.com/search-console
 #   3. .env.gcp filled in (cp .env.gcp.example .env.gcp)
 #
+# How GitHub Actions authenticates to GCP: by default with Workload Identity Federation (keyless —
+# GitHub's OIDC token is exchanged for short-lived credentials, so there is no key file and no
+# GCP_SA_KEY secret). That is also the only option on organizations that enforce
+# constraints/iam.disableServiceAccountKeyCreation, which forbids downloadable service-account
+# keys. --sa-key falls back to a downloaded key for projects that still allow them.
+#
 # Usage:
-#   bash scripts/init-gcp.sh
+#   bash scripts/init-gcp.sh                # first run, or any re-run
+#   bash scripts/init-gcp.sh --sa-key       # use a downloaded key instead of Workload Identity
+#   bash scripts/init-gcp.sh --rotate-key   # --sa-key, and mint a new key even if one exists
 
 set -euo pipefail
+
+USE_SA_KEY=false
+ROTATE_KEY=false
+for arg in "$@"; do
+  case "$arg" in
+    --sa-key)     USE_SA_KEY=true ;;
+    --rotate-key) USE_SA_KEY=true; ROTATE_KEY=true ;;
+    *) echo "ERROR: unknown argument: $arg (supported: --sa-key, --rotate-key)" >&2; exit 1 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env.gcp"
@@ -21,10 +40,12 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+# Exported so deploy-cloud-run.sh sees the same configuration.
+set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+set +a
 
-# Validate required vars
 required_vars=(
   GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME CUSTOM_DOMAIN
   ARTIFACT_REGISTRY_REPO CLOUD_SQL_INSTANCE_NAME
@@ -38,68 +59,31 @@ for v in "${required_vars[@]}"; do
   fi
 done
 
-echo "==> Project: $GCP_PROJECT_ID  Region: $GCP_REGION"
-gcloud config set project "$GCP_PROJECT_ID"
+CLOUD_RUN_SA_EMAIL="$CLOUD_RUN_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
+GITHUB_ACTIONS_SA_EMAIL="$GITHUB_ACTIONS_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
+ADS_GCS_BUCKET="${ADS_GCS_BUCKET:-$GCP_PROJECT_ID-ads}"
+export ADS_GCS_BUCKET
+# Daily automated backup window, UTC (19:00 UTC = 02:00 WIB, the quietest hour).
+CLOUD_SQL_BACKUP_START_TIME="${CLOUD_SQL_BACKUP_START_TIME:-19:00}"
 
 # ---------------------------------------------------------------
-# 1. Enable required APIs
+# Helpers
 # ---------------------------------------------------------------
-echo "==> Enabling APIs..."
-gcloud services enable \
-  run.googleapis.com \
-  sqladmin.googleapis.com \
-  artifactregistry.googleapis.com \
-  secretmanager.googleapis.com \
-  cloudbuild.googleapis.com \
-  storage.googleapis.com \
-  iamcredentials.googleapis.com
 
-# ---------------------------------------------------------------
-# 2. Artifact Registry repository
-# ---------------------------------------------------------------
-echo "==> Creating Artifact Registry repository..."
-gcloud artifacts repositories create "$ARTIFACT_REGISTRY_REPO" \
-  --repository-format=docker \
-  --location="$GCP_REGION" \
-  --description="Bejo Docker images" \
-  --quiet 2>/dev/null || echo "    (already exists, skipping)"
-
-# ---------------------------------------------------------------
-# 3. Cloud SQL — PostgreSQL 17 (minimal / cheapest config)
-# ---------------------------------------------------------------
-echo "==> Creating Cloud SQL instance (this takes ~5 minutes)..."
-# Public IP but no authorized networks: only reachable via the Cloud SQL
-# connector (IAM-authenticated); private IP would require VPC peering setup
-if gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" --quiet >/dev/null 2>&1; then
-  echo "    (already exists, skipping)"
-else
-  gcloud sql instances create "$CLOUD_SQL_INSTANCE_NAME" \
-    --database-version=POSTGRES_17 \
-    --edition=enterprise \
-    --tier=db-f1-micro \
-    --region="$GCP_REGION" \
-    --storage-size=10GB \
-    --storage-type=HDD \
-    --no-storage-auto-increase \
-    --no-backup \
-    --assign-ip \
-    --quiet
-fi
-
-# Retrieve full connection name (PROJECT:REGION:INSTANCE)
-INSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" \
-  --format="value(connectionName)")
-echo "    Instance connection name: $INSTANCE_CONNECTION_NAME"
-
-echo "==> Creating database and user..."
-gcloud sql databases create "$CLOUD_SQL_DB_NAME" \
-  --instance="$CLOUD_SQL_INSTANCE_NAME" \
-  --quiet 2>/dev/null || echo "    (already exists, skipping)"
-
-gcloud sql users create "$CLOUD_SQL_DB_USER" \
-  --instance="$CLOUD_SQL_INSTANCE_NAME" \
-  --password="$DB_PASSWORD" \
-  --quiet 2>/dev/null || echo "    (already exists, skipping)"
+# create_unless_exists <describe command...> -- <create command...>
+# Runs the create command only when the describe command fails. Unlike silencing the create
+# with `2>/dev/null || echo "already exists"`, a real failure (permissions, quota, typo)
+# still aborts the script instead of being reported as "already exists".
+create_unless_exists() {
+  local describe=()
+  while [[ "$1" != "--" ]]; do describe+=("$1"); shift; done
+  shift
+  if "${describe[@]}" >/dev/null 2>&1; then
+    echo "    (already exists, skipping)"
+  else
+    "$@"
+  fi
+}
 
 # Create a service account (idempotent) and wait until it is readable —
 # add-iam-policy-binding right after create otherwise races the propagation
@@ -118,37 +102,151 @@ ensure_service_account() {
   return 1
 }
 
+grant_project_roles() {
+  local member=$1; shift
+  for role in "$@"; do
+    gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+      --member="serviceAccount:$member" \
+      --role="$role" \
+      --quiet >/dev/null
+  done
+}
+
+# Create the secret, or add a new version when it already exists.
+create_or_update_secret() {
+  local name=$1 value=$2
+  if gcloud secrets describe "$name" --quiet >/dev/null 2>&1; then
+    printf '%s' "$value" | gcloud secrets versions add "$name" --data-file=- --quiet
+  else
+    printf '%s' "$value" | gcloud secrets create "$name" --data-file=- --replication-policy=automatic --quiet
+  fi
+}
+
+echo "==> Project: $GCP_PROJECT_ID  Region: $GCP_REGION"
+gcloud config set project "$GCP_PROJECT_ID"
+
+# ---------------------------------------------------------------
+# 1. Enable required APIs
+# ---------------------------------------------------------------
+echo "==> Enabling APIs..."
+gcloud services enable \
+  run.googleapis.com \
+  sqladmin.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com \
+  cloudbuild.googleapis.com \
+  storage.googleapis.com \
+  iam.googleapis.com \
+  iamcredentials.googleapis.com \
+  sts.googleapis.com
+
+# ---------------------------------------------------------------
+# 2. Artifact Registry repository
+# ---------------------------------------------------------------
+echo "==> Creating Artifact Registry repository..."
+create_unless_exists \
+  gcloud artifacts repositories describe "$ARTIFACT_REGISTRY_REPO" --location="$GCP_REGION" \
+  -- \
+  gcloud artifacts repositories create "$ARTIFACT_REGISTRY_REPO" \
+    --repository-format=docker \
+    --location="$GCP_REGION" \
+    --description="Bejo Docker images" \
+    --quiet
+
+# ---------------------------------------------------------------
+# 3. Cloud SQL — PostgreSQL 17 (minimal / cheapest config)
+# ---------------------------------------------------------------
+echo "==> Creating Cloud SQL instance (this takes ~5 minutes)..."
+# Public IP but no authorized networks: only reachable via the Cloud SQL
+# connector (IAM-authenticated); private IP would require VPC peering setup
+create_unless_exists \
+  gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" --quiet \
+  -- \
+  gcloud sql instances create "$CLOUD_SQL_INSTANCE_NAME" \
+    --database-version=POSTGRES_17 \
+    --edition=enterprise \
+    --tier=db-f1-micro \
+    --region="$GCP_REGION" \
+    --storage-size=10GB \
+    --storage-type=HDD \
+    --no-storage-auto-increase \
+    --backup-start-time="$CLOUD_SQL_BACKUP_START_TIME" \
+    --assign-ip \
+    --quiet
+
+# Automated daily backups (the last 7 are kept). The instance used to be created with --no-backup,
+# so an existing one may have none — turn them on here, idempotently. This does not restart the
+# instance. Point-in-time recovery is deliberately NOT enabled: it archives WAL on the instance's own
+# disk, which is 10 GB with auto-increase off, and a full disk takes the database down. Enable it
+# (and storage auto-increase) together if you want PITR.
+if [[ "$(gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" \
+      --format="value(settings.backupConfiguration.enabled)")" != "True" ]]; then
+  echo "==> Enabling automated backups (daily at $CLOUD_SQL_BACKUP_START_TIME UTC)..."
+  gcloud sql instances patch "$CLOUD_SQL_INSTANCE_NAME" \
+    --backup-start-time="$CLOUD_SQL_BACKUP_START_TIME" --quiet
+else
+  echo "    (automated backups already enabled)"
+fi
+
+# Full connection name (PROJECT:REGION:INSTANCE), used by the Cloud Run deploy below.
+INSTANCE_CONNECTION_NAME=$(gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" \
+  --format="value(connectionName)")
+export INSTANCE_CONNECTION_NAME
+echo "    Instance connection name: $INSTANCE_CONNECTION_NAME"
+
+echo "==> Creating database and user..."
+create_unless_exists \
+  gcloud sql databases describe "$CLOUD_SQL_DB_NAME" --instance="$CLOUD_SQL_INSTANCE_NAME" \
+  -- \
+  gcloud sql databases create "$CLOUD_SQL_DB_NAME" \
+    --instance="$CLOUD_SQL_INSTANCE_NAME" \
+    --quiet
+
+# `sql users` has no describe command, so look the user up in the list instead.
+if [[ -n "$(gcloud sql users list --instance="$CLOUD_SQL_INSTANCE_NAME" \
+      --filter="name=$CLOUD_SQL_DB_USER" --format="value(name)")" ]]; then
+  # The secret in step 7 is rewritten from .env.gcp on every run, so re-sync the database
+  # side too — otherwise a changed DB_PASSWORD leaves the app holding a password Postgres
+  # no longer accepts.
+  echo "    (user already exists, syncing its password with .env.gcp)"
+  gcloud sql users set-password "$CLOUD_SQL_DB_USER" \
+    --instance="$CLOUD_SQL_INSTANCE_NAME" \
+    --password="$DB_PASSWORD" \
+    --quiet
+else
+  gcloud sql users create "$CLOUD_SQL_DB_USER" \
+    --instance="$CLOUD_SQL_INSTANCE_NAME" \
+    --password="$DB_PASSWORD" \
+    --quiet
+fi
+
 # ---------------------------------------------------------------
 # 4. Service account for Cloud Run (the running app)
 # ---------------------------------------------------------------
 echo "==> Creating Cloud Run service account..."
 ensure_service_account "$CLOUD_RUN_SA" "Bejo Cloud Run"
-
-CLOUD_RUN_SA_EMAIL="$CLOUD_RUN_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
-
-for role in "roles/cloudsql.client" "roles/secretmanager.secretAccessor"; do
-  gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
-    --member="serviceAccount:$CLOUD_RUN_SA_EMAIL" \
-    --role="$role" \
-    --quiet
-done
+grant_project_roles "$CLOUD_RUN_SA_EMAIL" \
+  roles/cloudsql.client \
+  roles/secretmanager.secretAccessor
 
 # ---------------------------------------------------------------
-# 4b. Cloud Storage bucket for ad-campaign audio
+# 5. Cloud Storage bucket for ad-campaign audio
 # ---------------------------------------------------------------
 # Holds the ≤10s voice files pushed to devices. Locked down: uniform bucket-level
 # access + public-access-prevention, so objects are reachable only via short-lived
 # V4 signed URLs the app mints at push time. The Cloud Run SA needs objectAdmin on
 # the bucket (read/write) and serviceAccountTokenCreator ON ITSELF so it can sign
 # those URLs without a downloaded key (uses the IAM Credentials signBlob API).
-ADS_GCS_BUCKET="${ADS_GCS_BUCKET:-$GCP_PROJECT_ID-ads}"
 echo "==> Creating ads audio bucket gs://$ADS_GCS_BUCKET ..."
-gcloud storage buckets create "gs://$ADS_GCS_BUCKET" \
-  --project="$GCP_PROJECT_ID" \
-  --location="$GCP_REGION" \
-  --uniform-bucket-level-access \
-  --public-access-prevention \
-  --quiet 2>/dev/null || echo "    (already exists, skipping)"
+create_unless_exists \
+  gcloud storage buckets describe "gs://$ADS_GCS_BUCKET" \
+  -- \
+  gcloud storage buckets create "gs://$ADS_GCS_BUCKET" \
+    --project="$GCP_PROJECT_ID" \
+    --location="$GCP_REGION" \
+    --uniform-bucket-level-access \
+    --public-access-prevention \
+    --quiet
 
 gcloud storage buckets add-iam-policy-binding "gs://$ADS_GCS_BUCKET" \
   --member="serviceAccount:$CLOUD_RUN_SA_EMAIL" \
@@ -162,140 +260,194 @@ gcloud iam service-accounts add-iam-policy-binding "$CLOUD_RUN_SA_EMAIL" \
   --quiet >/dev/null
 
 # ---------------------------------------------------------------
-# 5. Service account for GitHub Actions (CI/CD)
+# 6. Service account for GitHub Actions (CI/CD)
 # ---------------------------------------------------------------
 echo "==> Creating GitHub Actions service account..."
 ensure_service_account "$GITHUB_ACTIONS_SA" "Bejo GitHub Actions"
+grant_project_roles "$GITHUB_ACTIONS_SA_EMAIL" \
+  roles/run.admin \
+  roles/artifactregistry.writer \
+  roles/iam.serviceAccountUser
 
-GITHUB_ACTIONS_SA_EMAIL="$GITHUB_ACTIONS_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
+# GitHub Actions authenticates with Workload Identity Federation (keyless) unless --sa-key is given.
+if [[ "$USE_SA_KEY" != true ]]; then
+  # The repo allowed to deploy, as OWNER/REPO. Derived from the git remote; override with GITHUB_REPO.
+  GITHUB_REPO="${GITHUB_REPO:-$(git -C "$SCRIPT_DIR/.." remote get-url origin 2>/dev/null \
+    | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')}"
+  if [[ ! "$GITHUB_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    echo "ERROR: could not work out the GitHub repository (got '${GITHUB_REPO}'). Set GITHUB_REPO=OWNER/REPO in .env.gcp." >&2
+    exit 1
+  fi
+  WIF_POOL="${WIF_POOL:-github}"
+  WIF_PROVIDER="${WIF_PROVIDER:-github-actions}"
+  # Only runs from this branch may deploy. Anyone who can push a workflow to another branch of the
+  # repo still cannot mint credentials for the deploy service account. Set GITHUB_DEPLOY_REF=any to
+  # allow every ref of the repository (e.g. to dispatch a deploy from a feature branch).
+  GITHUB_DEPLOY_REF="${GITHUB_DEPLOY_REF:-refs/heads/release}"
+  PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT_ID" --format="value(projectNumber)")
 
-for role in \
-  "roles/run.admin" \
-  "roles/artifactregistry.writer" \
-  "roles/iam.serviceAccountUser"; do
-  gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
-    --member="serviceAccount:$GITHUB_ACTIONS_SA_EMAIL" \
-    --role="$role" \
-    --quiet
-done
+  echo "==> Setting up Workload Identity Federation for $GITHUB_REPO (no service-account key)..."
+  create_unless_exists \
+    gcloud iam workload-identity-pools describe "$WIF_POOL" --location=global \
+    -- \
+    gcloud iam workload-identity-pools create "$WIF_POOL" \
+      --location=global --display-name="GitHub Actions" --quiet
 
-echo "==> Generating GitHub Actions service account key..."
-KEY_FILE="$SCRIPT_DIR/../github-actions-key.json"
-gcloud iam service-accounts keys create "$KEY_FILE" \
-  --iam-account="$GITHUB_ACTIONS_SA_EMAIL"
+  if [[ "$GITHUB_DEPLOY_REF" == any ]]; then
+    ATTRIBUTE_CONDITION="assertion.repository == '$GITHUB_REPO'"
+  else
+    ATTRIBUTE_CONDITION="assertion.repository == '$GITHUB_REPO' && assertion.ref == '$GITHUB_DEPLOY_REF'"
+  fi
+  create_unless_exists \
+    gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER" \
+      --workload-identity-pool="$WIF_POOL" --location=global \
+    -- \
+    gcloud iam workload-identity-pools providers create-oidc "$WIF_PROVIDER" \
+      --workload-identity-pool="$WIF_POOL" --location=global \
+      --display-name="GitHub Actions OIDC" \
+      --issuer-uri="https://token.actions.githubusercontent.com" \
+      --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+      --attribute-condition="$ATTRIBUTE_CONDITION" \
+      --quiet
 
-echo ""
-echo "    *** ACTION REQUIRED ***"
-echo "    Add the following to GitHub → Settings → Secrets and variables → Actions:"
-echo ""
-echo "    Secret name : GCP_SA_KEY"
-echo "    Secret value: $(base64 < "$KEY_FILE" | tr -d '\n')"
-echo ""
-echo "    Then delete the key file: rm $KEY_FILE"
-echo ""
+  # Let identities from this repository impersonate the CI service account (and nothing else).
+  gcloud iam service-accounts add-iam-policy-binding "$GITHUB_ACTIONS_SA_EMAIL" \
+    --role="roles/iam.workloadIdentityUser" \
+    --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WIF_POOL/attribute.repository/$GITHUB_REPO" \
+    --project="$GCP_PROJECT_ID" --quiet >/dev/null
+
+  WIF_PROVIDER_RESOURCE=$(gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER" \
+    --workload-identity-pool="$WIF_POOL" --location=global --format="value(name)")
+
+  echo ""
+  echo "    *** ACTION REQUIRED — tell GitHub how to authenticate (variables, not secrets) ***"
+  echo ""
+  echo "      gh variable set GCP_WORKLOAD_IDENTITY_PROVIDER -R $GITHUB_REPO --body '$WIF_PROVIDER_RESOURCE'"
+  echo "      gh variable set GCP_DEPLOY_SERVICE_ACCOUNT     -R $GITHUB_REPO --body '$GITHUB_ACTIONS_SA_EMAIL'"
+  echo ""
+  echo "    Deploys are accepted only from $GITHUB_REPO on ${GITHUB_DEPLOY_REF/#any/any ref}."
+  echo "    No GCP_SA_KEY secret is needed; an old one can be deleted once this works."
+  echo ""
+else
+  # A service account may hold at most 10 keys and each one is a long-lived credential, so a
+  # re-run must not mint another. Only create one when the account has none, or on --rotate-key.
+  EXISTING_KEYS=$(gcloud iam service-accounts keys list \
+    --iam-account="$GITHUB_ACTIONS_SA_EMAIL" --managed-by=user --format="value(name)")
+
+  if [[ -n "$EXISTING_KEYS" && "$ROTATE_KEY" != true ]]; then
+    echo "==> GitHub Actions deploy key already exists, skipping (use --rotate-key to mint a new one)."
+  else
+    echo "==> Generating GitHub Actions service account key..."
+    KEY_FILE="$SCRIPT_DIR/../github-actions-key.json"
+    # umask: the key file is readable by this user only
+    (umask 077 && gcloud iam service-accounts keys create "$KEY_FILE" \
+      --iam-account="$GITHUB_ACTIONS_SA_EMAIL")
+
+    # The key itself is never echoed to the terminal (scrollback, screen shares).
+    echo ""
+    echo "    *** ACTION REQUIRED ***"
+    echo "    Store the key as the GitHub Actions secret GCP_SA_KEY (Settings → Secrets and"
+    echo "    variables → Actions). Its value is the base64-encoded key file:"
+    echo ""
+    echo "      base64 < $KEY_FILE | tr -d '\\n' | gh secret set GCP_SA_KEY"
+    echo "      # or copy it, then paste into GitHub (macOS):"
+    echo "      base64 < $KEY_FILE | tr -d '\\n' | pbcopy"
+    echo ""
+    echo "    Then delete the key file:  rm $KEY_FILE"
+    if [[ "$ROTATE_KEY" == true && -n "$EXISTING_KEYS" ]]; then
+      echo "    After updating the secret, delete the old key(s) so they can no longer be used:"
+      echo "      gcloud iam service-accounts keys list --iam-account=$GITHUB_ACTIONS_SA_EMAIL --managed-by=user"
+      echo "      gcloud iam service-accounts keys delete <KEY_ID> --iam-account=$GITHUB_ACTIONS_SA_EMAIL"
+    fi
+    echo ""
+  fi
+fi
 
 # ---------------------------------------------------------------
-# 6. Secret Manager — app secrets
+# 7. Secret Manager — app secrets
 # ---------------------------------------------------------------
 echo "==> Creating secrets in Secret Manager..."
-
-create_or_update_secret() {
-  local name=$1
-  local value=$2
-  if gcloud secrets describe "$name" --quiet 2>/dev/null; then
-    echo -n "$value" | gcloud secrets versions add "$name" --data-file=- --quiet
-  else
-    echo -n "$value" | gcloud secrets create "$name" --data-file=- --replication-policy=automatic --quiet
-  fi
-}
-
 create_or_update_secret "bejo-db-password"          "$DB_PASSWORD"
 create_or_update_secret "bejo-jwt-secret"           "$JWT_SECRET"
 create_or_update_secret "bejo-api-token"            "$API_TOKEN"
 create_or_update_secret "bejo-firebase-credentials" "$FIREBASE_CREDENTIALS_BASE64"
 create_or_update_secret "bejo-seed-password"        "$SEED_PASSWORD"
 
-# Ads admin token is optional (Secret Manager rejects an empty payload) — only create it, and
-# mount it into Cloud Run below, when a value is provided in .env.gcp.
-ADS_SECRET_FLAG=()
+# The QRIS callback shared secret is optional the same way. Set CALLBACK_SECRET in .env.gcp, and
+# give the payment provider the same value to send as the X-Callback-Secret header; until the
+# provider sends it the callback must stay open, so the mount is opt-in — set the GitHub
+# variable MOUNT_CALLBACK_SECRET=true for release deploys once the provider is configured.
+if [[ -n "${CALLBACK_SECRET:-}" ]]; then
+  create_or_update_secret "bejo-callback-secret" "$CALLBACK_SECRET"
+  export MOUNT_CALLBACK_SECRET=true
+  echo "    (CALLBACK_SECRET stored. The provider must send it as X-Callback-Secret, and the GitHub"
+  echo "     variable MOUNT_CALLBACK_SECRET=true makes release deploys keep mounting it.)"
+else
+  export MOUNT_CALLBACK_SECRET=false
+fi
+
+# The SMTP password (a Zoho application-specific password) is optional: without it the password-reset
+# endpoint answers 503. Set MAIL_PASSWORD (plus MAIL_HOST / MAIL_USERNAME) in .env.gcp to enable it. The
+# mount is opt-in for CI: set the GitHub variable MOUNT_MAIL_PASSWORD=true so release deploys keep it —
+# otherwise the next release would unmount it and silently switch password reset off.
+if [[ -n "${MAIL_PASSWORD:-}" ]]; then
+  create_or_update_secret "bejo-mail-password" "$MAIL_PASSWORD"
+  export MOUNT_MAIL_PASSWORD=true
+  echo "    (MAIL_PASSWORD stored. Set the GitHub variable MOUNT_MAIL_PASSWORD=true so release deploys keep"
+  echo "     mounting it, and the MAIL_HOST / MAIL_USERNAME / MAIL_FROM variables too.)"
+else
+  export MOUNT_MAIL_PASSWORD=false
+fi
+
+# The ads admin token is optional (Secret Manager rejects an empty payload): only create
+# it, and have deploy-cloud-run.sh mount it, when a value is provided in .env.gcp.
 if [[ -n "${ADS_ADMIN_TOKEN:-}" ]]; then
-  create_or_update_secret "bejo-ads-admin-token"    "$ADS_ADMIN_TOKEN"
-  ADS_SECRET_FLAG=(--set-secrets="ADS_ADMIN_TOKEN=bejo-ads-admin-token:latest")
+  create_or_update_secret "bejo-ads-admin-token" "$ADS_ADMIN_TOKEN"
+  export MOUNT_ADS_ADMIN_TOKEN=true
+else
+  export MOUNT_ADS_ADMIN_TOKEN=false
+  echo "    (ADS_ADMIN_TOKEN is blank: ads admin surface stays off. Also set the GitHub Actions"
+  echo "     variable MOUNT_ADS_ADMIN_TOKEN=false, or release deploys will fail on the missing secret.)"
 fi
 
 # ---------------------------------------------------------------
-# 7. Build & push initial Docker image
+# 8. Build & push initial Docker image
 # ---------------------------------------------------------------
 IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPO/$GCP_SERVICE_NAME:latest"
 
+# Cloud Build needs permissions on a project it hasn't been used in: projects created since April
+# 2024 run it as the Compute Engine default service account (older ones as
+# PROJECT_NUMBER@cloudbuild.gserviceaccount.com), and neither is granted anything by default — the
+# build fails with "<number>-compute@... does not have storage.objects.get access to the Google
+# Cloud Storage object". Grant the builder role (source access, logs, pushing to Artifact Registry)
+# to whichever of the two exists. Idempotent.
+BUILD_PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT_ID" --format="value(projectNumber)")
+for build_sa in "$BUILD_PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+                "$BUILD_PROJECT_NUMBER@cloudbuild.gserviceaccount.com"; do
+  if gcloud iam service-accounts describe "$build_sa" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+    echo "==> Granting the Cloud Build builder role to $build_sa ..."
+    grant_project_roles "$build_sa" roles/cloudbuild.builds.builder
+    BUILD_SA_GRANTED=true
+  fi
+done
+# IAM changes take a moment to propagate; a build started instantly can still be refused.
+if [[ "${BUILD_SA_GRANTED:-false}" == true ]]; then sleep 20; fi
+
 # Build with Cloud Build: runs on native amd64 server-side, so no local Docker/
 # podman and no slow qemu emulation on Apple Silicon. Uploads the source
-# (respecting .gcloudignore), builds the Dockerfile, and pushes to Artifact Registry.
+# (respecting .gcloudignore, or .gitignore when there is none), builds the Dockerfile,
+# and pushes to Artifact Registry.
 echo "==> Building image with Cloud Build (native amd64, no local emulation)..."
 gcloud builds submit "$SCRIPT_DIR/.." --tag="$IMAGE" --quiet
 
 # ---------------------------------------------------------------
-# 8. Initial Cloud Run deployment
+# 9. Initial Cloud Run deployment
 # ---------------------------------------------------------------
-echo "==> Deploying to Cloud Run..."
-
-DB_URL="jdbc:postgresql:///$CLOUD_SQL_DB_NAME?cloudSqlInstance=$INSTANCE_CONNECTION_NAME&socketFactory=com.google.cloud.sql.postgres.SocketFactory"
-
-# Build all env vars into one flag using gcloud's alternate delimiter (^@^)
-# so individual values may contain commas — e.g. a business address like
-# "Jl. Contoh No. 1, Jakarta" (default comma delimiter would mis-split it).
-ENV_VARS="DB_URL=$DB_URL"
-ENV_VARS+="@DB_USERNAME=$CLOUD_SQL_DB_USER"
-ENV_VARS+="@SPRING_PROFILES_ACTIVE=prod"
-ENV_VARS+="@TZ=Asia/Jakarta"
-ENV_VARS+="@ADS_GCS_BUCKET=$ADS_GCS_BUCKET"
-[[ -n "${ADS_SIGNED_URL_TTL_SECONDS:-}" ]] && ENV_VARS+="@ADS_SIGNED_URL_TTL_SECONDS=$ADS_SIGNED_URL_TTL_SECONDS"
-[[ -n "${ADS_MAX_AUDIO_BYTES:-}" ]]        && ENV_VARS+="@ADS_MAX_AUDIO_BYTES=$ADS_MAX_AUDIO_BYTES"
-[[ -n "${ADS_MAX_AUDIO_SECONDS:-}" ]]      && ENV_VARS+="@ADS_MAX_AUDIO_SECONDS=$ADS_MAX_AUDIO_SECONDS"
-ENV_VARS+="@SEED_USERNAME=${SEED_USERNAME:-admin}"
-ENV_VARS+="@SEED_NAME=${SEED_NAME:-Admin User}"
-ENV_VARS+="@SEED_BUSINESS_NAME=${SEED_BUSINESS_NAME:-My Business}"
-[[ -n "${SEED_BUSINESS_ADDRESS:-}" ]] && ENV_VARS+="@SEED_BUSINESS_ADDRESS=$SEED_BUSINESS_ADDRESS"
-[[ -n "${SEED_NMID:-}" ]]            && ENV_VARS+="@SEED_NMID=$SEED_NMID"
-[[ -n "${SEED_MERCHANT_PAN:-}" ]]    && ENV_VARS+="@SEED_MERCHANT_PAN=$SEED_MERCHANT_PAN"
-
-# Optional overrides — all have built-in defaults (application.yml), so only set them
-# when present in .env.gcp. The ^@^ delimiter above lets values contain commas
-# (e.g. BUSINESS_INDUSTRIES is a comma-separated list).
-[[ -n "${JWT_EXPIRATION_MS:-}" ]]         && ENV_VARS+="@JWT_EXPIRATION_MS=$JWT_EXPIRATION_MS"
-[[ -n "${BUSINESS_MAX_USERS:-}" ]]        && ENV_VARS+="@BUSINESS_MAX_USERS=$BUSINESS_MAX_USERS"
-[[ -n "${BUSINESS_SIZES:-}" ]]            && ENV_VARS+="@BUSINESS_SIZES=$BUSINESS_SIZES"
-[[ -n "${BUSINESS_DEFAULT_SIZE:-}" ]]     && ENV_VARS+="@BUSINESS_DEFAULT_SIZE=$BUSINESS_DEFAULT_SIZE"
-[[ -n "${BUSINESS_INDUSTRIES:-}" ]]       && ENV_VARS+="@BUSINESS_INDUSTRIES=$BUSINESS_INDUSTRIES"
-[[ -n "${BUSINESS_DEFAULT_INDUSTRY:-}" ]] && ENV_VARS+="@BUSINESS_DEFAULT_INDUSTRY=$BUSINESS_DEFAULT_INDUSTRY"
-[[ -n "${CALLBACK_DEFAULT_USERNAME:-}" ]]  && ENV_VARS+="@CALLBACK_DEFAULT_USERNAME=$CALLBACK_DEFAULT_USERNAME"
-[[ -n "${REQUEST_LOG_BODY_ON_ERROR:-}" ]]  && ENV_VARS+="@REQUEST_LOG_BODY_ON_ERROR=$REQUEST_LOG_BODY_ON_ERROR"
-[[ -n "${REQUEST_LOG_MAX_BODY_LENGTH:-}" ]] && ENV_VARS+="@REQUEST_LOG_MAX_BODY_LENGTH=$REQUEST_LOG_MAX_BODY_LENGTH"
-
-gcloud run deploy "$GCP_SERVICE_NAME" \
-  --image="$IMAGE" \
-  --region="$GCP_REGION" \
-  --platform=managed \
-  --service-account="$CLOUD_RUN_SA_EMAIL" \
-  --add-cloudsql-instances="$INSTANCE_CONNECTION_NAME" \
-  --set-env-vars="^@^$ENV_VARS" \
-  --set-secrets="DB_PASSWORD=bejo-db-password:latest" \
-  --set-secrets="JWT_SECRET=bejo-jwt-secret:latest" \
-  --set-secrets="API_TOKEN=bejo-api-token:latest" \
-  --set-secrets="FIREBASE_CREDENTIALS_BASE64=bejo-firebase-credentials:latest" \
-  --set-secrets="SEED_PASSWORD=bejo-seed-password:latest" \
-  ${ADS_SECRET_FLAG[@]+"${ADS_SECRET_FLAG[@]}"} \
-  --min-instances="${CLOUD_RUN_MIN_INSTANCES:-0}" \
-  --max-instances="${CLOUD_RUN_MAX_INSTANCES:-2}" \
-  --memory="${CLOUD_RUN_MEMORY:-512Mi}" \
-  --cpu="${CLOUD_RUN_CPU:-1}" \
-  --timeout="${CLOUD_RUN_TIMEOUT:-15}" \
-  --cpu-boost \
-  --allow-unauthenticated \
-  --quiet
+# Same script the release workflow uses, so env vars/secrets/sizing are defined once.
+bash "$SCRIPT_DIR/deploy-cloud-run.sh" "$IMAGE"
 
 # ---------------------------------------------------------------
-# 9. Custom domain mapping (one-time, persists across deployments)
+# 10. Custom domain mapping (one-time, persists across deployments)
 # ---------------------------------------------------------------
 # Managed Cloud Run domain mappings live under `gcloud beta run domain-mappings`
 # (the GA `gcloud run domain-mappings` group is Anthos-only and rejects --region).
@@ -306,7 +458,7 @@ gcloud beta run domain-mappings create \
   --domain="$CUSTOM_DOMAIN" \
   --region="$GCP_REGION" \
   --platform=managed \
-  --quiet 2>/dev/null || echo "    (not mapped — domain unverified or already mapped; see note below)"
+  --quiet || echo "    (not mapped — domain unverified or already mapped; see the error above)"
 
 echo ""
 echo "==> DNS records to add at your registrar for $CUSTOM_DOMAIN:"

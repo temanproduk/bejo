@@ -2,7 +2,7 @@ spring:
   datasource:
     # INIT pre-creates the per-module schemas on connect (entities are @Table(schema = core|commerce|ads)),
     # so Hibernate create-drop only manages the tables within them.
-    url: jdbc:h2:mem:bejo;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS core\;CREATE SCHEMA IF NOT EXISTS commerce\;CREATE SCHEMA IF NOT EXISTS ads
+    url: jdbc:h2:mem:bejo;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS core\;CREATE SCHEMA IF NOT EXISTS commerce\;CREATE SCHEMA IF NOT EXISTS ads\;CREATE SCHEMA IF NOT EXISTS admin
     username: sa
     password:
     driver-class-name: org.h2.Driver
@@ -29,6 +29,14 @@ app:
     password: ""
   callback:
     default-username: cb_seed
+  password-reset:
+    # No artificial delay in tests (production pads forgot-password to hide whether a user exists)
+    response-floor-ms: 0
+  admin:
+    emails: boss@example.com, Second.Admin@Example.com
+    dashboard-origins: https://dashboard.test
+    otp:
+      response-floor-ms: 0
   ads:
     admin-token: test-ads-admin-token
     signed-url-ttl-seconds: 86400

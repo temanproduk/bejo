@@ -5,12 +5,15 @@ target/
 
 .env
 .env.gcp
+.env.vm
+# Credentials — named explicitly. (A blanket *.json used to be ignored here, which would also have
+# silently hidden any legitimate JSON file added later.)
 github-actions-key.json
-*.json
-!package.json
-!bejo.postman_collection.json
-!bejo.local.postman_environment.json
-!bejo.production.postman_environment.json
+*-adminsdk*.json
+*service-account*.json
+*credentials*.json
+*.pem
+*.key
 
 .idea/
 *.iml
@@ -20,3 +23,6 @@ github-actions-key.json
 logs/
 
 .DS_Store
+
+# Local launcher scripts (machine/session specific, not shared)
+start-claude.sh

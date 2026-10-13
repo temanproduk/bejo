@@ -1,0 +1,10 @@
+# Reverse proxy for the VM stack (docker-compose.prod.yml).
+#
+# Caddy obtains and renews the Let's Encrypt certificate for {$DOMAIN} by itself, which needs
+# DNS for the domain pointing at this VM and inbound ports 80 + 443 open. It forwards
+# X-Forwarded-For/Proto/Host to the app, which Spring uses (forward-headers-strategy:
+# framework) to see the HTTPS scheme and emit HSTS.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:8080
+}

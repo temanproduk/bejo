@@ -38,11 +38,13 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
 
     // Header values never worth logging in the clear (masked even for the callback dump)
     private static final Set<String> SENSITIVE_HEADERS =
-            Set.of("authorization", "x-api-token", "cookie", "set-cookie");
+            Set.of("authorization", "x-api-token", "cookie", "set-cookie",
+                    "x-callback-secret", "x-ads-admin-token");
 
     // Bodies for these paths are almost entirely secret — never capture them
     private static boolean isSensitivePath(String uri) {
         return uri.startsWith("/api/auth/")
+                || uri.startsWith("/api/admin/auth/")   // one-time sign-in codes
                 || uri.equals("/api/users/register")
                 || uri.equals("/api/users/members")   // add-member carries a password
                 || uri.startsWith("/api/users/members/");

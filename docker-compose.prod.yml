@@ -1,0 +1,105 @@
+# Production stack for a single VM (see scripts/deploy-vm.sh):
+#
+#   internet ──443──▶ caddy (TLS) ──▶ app :8080 ──▶ postgres :5432
+#
+# Only Caddy publishes ports. The app and Postgres are reachable on the compose network
+# alone, so neither 8080 nor 5432 is exposed to the internet — keep it that way (the app
+# trusts X-Forwarded-* headers, which is only safe because Caddy is the sole way in).
+#
+# Config comes from `.env` next to this file (deploy-vm.sh writes it from your local
+# .env.vm). It is used twice: for ${...} substitution below and, via env_file, as the app's
+# environment — so a setting you leave out of .env falls back to the app's own default.
+#
+# Local development uses docker-compose.yml instead.
+name: bejo
+
+# Third-party images are pinned by digest (the tag is for humans). `docker compose up` does not re-pull
+# a tag it already has, so a floating tag meant Postgres and Caddy silently never got patched; now an
+# update is a reviewed change — Dependabot (docker-compose ecosystem) opens the PR.
+x-hardening: &hardening
+  # A process inside the container can't gain privileges via setuid binaries.
+  security_opt:
+    - no-new-privileges:true
+
+x-logging: &logging
+  # Docker's default json-file driver never rotates; unbounded logs eventually fill the disk.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:0b2882c46a2b8d8e148431b333394348cf4d7f15aec6df7f17d51dc641e56cfa
+    container_name: bejo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-bejo}
+      POSTGRES_USER: ${DB_USERNAME:-bejo}
+      # NOTE: only applied when the data volume is first created. Changing DB_PASSWORD later
+      # needs `ALTER USER` inside Postgres as well, or the app can no longer log in.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      TZ: Asia/Jakarta
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    <<: *hardening
+    healthcheck:
+      # $$ defers expansion to the container's shell, where these variables are set.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+
+  app:
+    image: bejo:${BEJO_TAG:-latest}
+    build: .
+    container_name: bejo-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # These win over env_file: the database is always the compose service next to us.
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-bejo}
+      DB_USERNAME: ${DB_USERNAME:-bejo}
+      SPRING_PROFILES_ACTIVE: prod
+      TZ: Asia/Jakarta
+    expose:
+      - "8080"
+    <<: *hardening
+    # The JVM runs as a non-root user and binds only 8080, so it needs no capabilities at all.
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine@sha256:84058f1a0e5beb97664a9b79dcfd267b594c033d5bb88d8463cdfb59c0779197
+    container_name: bejo-caddy
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN must be set in .env}
+    ports:
+      - "80:80"    # Let's Encrypt HTTP challenge + redirect to HTTPS
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # issued certificates — losing this means re-issuing (rate-limited)
+      - caddy_config:/config
+    <<: *hardening
+    logging: *logging
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

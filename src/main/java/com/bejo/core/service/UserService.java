@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
+import java.time.LocalDateTime;
 
 /**
  * User + business account management. Public registration creates a new {@link Business}
@@ -148,6 +149,12 @@ public class UserService {
         log.info("[PROFILE] username={}", username);
         User user = businessContext.requireUser(username);
         user.setName(request.name());
+        // Remember when the address changed: password-reset codes are not sent to a recently changed
+        // address, so a stolen session cannot swap in its own email and then reset the password.
+        if (user.getEmail() == null || !user.getEmail().equalsIgnoreCase(request.email())) {
+            user.setEmailChangedAt(LocalDateTime.now());
+            user.setEmailVerified(false);
+        }
         user.setEmail(request.email());
         user.setPhone(request.phone());
         userRepository.save(user);

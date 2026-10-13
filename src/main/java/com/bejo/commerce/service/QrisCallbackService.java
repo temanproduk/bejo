@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -54,9 +56,13 @@ public class QrisCallbackService {
     private final ObjectMapper objectMapper;
     private final Counter callbackCounter;
 
-    // Fallback account a callback is attributed to when its merchant PAN matches no business.
+    // Fallback account a callback is attributed to when its merchant PAN matches no business —
+    // used only when fallbackToDefault is on (it is off by default: see application.yml).
     @Value("${app.callback.default-username:admin}")
     private String defaultUsername;
+
+    @Value("${app.callback.fallback-to-default:false}")
+    private boolean fallbackToDefault;
 
     public QrisCallbackService(TransactionRepository transactionRepository,
                                UserRepository userRepository,
@@ -75,12 +81,11 @@ public class QrisCallbackService {
     }
 
     /**
-     * PoC behavior: the provider's callback is currently buggy — it only sends a valid
-     * amount + status, with merchantPan / reference numbers / transactionId all null.
-     * So we can't route by NMID or dedupe by reference. For now, EVERY callback records
-     * a MANAGED transaction against the seed user and pushes a notification to its
-     * devices. Restore NMID routing + reference-based idempotency once the provider
-     * fixes the payload.
+     * Records one MANAGED transaction for the business the callback's merchant PAN belongs to and
+     * pushes it to that business's recipients (after commit). A payload with a missing or unknown
+     * merchant PAN is rejected (404) unless {@code app.callback.fallback-to-default} is on, in
+     * which case it is attributed to the default account — the old behaviour, from when the
+     * provider's payload carried no usable PAN. Idempotent on the provider's reference.
      */
     @Transactional
     public QrMpmNotifyResponseDto processNotify(QrMpmNotifyRequestDto req, String xTimestamp) {
@@ -145,19 +150,49 @@ public class QrisCallbackService {
                 transactionId, businessId, t.getAmount(), status,
                 info != null ? info.merchantPan() : null, info != null ? info.transactionId() : null);
 
-        // Best-effort push to the terminal's recipients — must never fail the callback.
-        try {
-            String terminalId = info != null ? info.terminalId() : null;
-            List<String> recipients = resolveRecipients(businessId, terminalId);
-            log.debug("[CALLBACK] Routing push to {} recipient(s) for businessId={} terminalId={}",
-                    recipients.size(), businessId, terminalId);
-            pushNotificationService.sendToUsernames(recipients, buildPushData(t, businessName));
-        } catch (RuntimeException e) {
-            log.warn("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
-                    transactionId, e.getMessage());
-        }
+        pushAfterCommit(businessId, info != null ? info.terminalId() : null, t, businessName);
 
         return response(t.getId(), req, amount, tip);
+    }
+
+    /**
+     * Pushes the payment to the terminal's recipients — but only once the transaction has
+     * committed, the same rule the PARSED, presence and ads pushes follow. Enqueuing inside the
+     * transaction let a worker thread buzz a phone before the row was visible (a tap on the push
+     * would 404) and for a payment whose commit then failed. Best-effort: never fails the callback.
+     * Recipients are resolved here (fast DB reads, inside the transaction); only the send is deferred.
+     */
+    private void pushAfterCommit(Long businessId, String terminalId, Transaction t, String businessName) {
+        List<String> recipients;
+        PushPayload payload;
+        try {
+            recipients = resolveRecipients(businessId, terminalId);
+            payload = buildPushData(t, businessName);
+        } catch (RuntimeException e) {
+            log.warn("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
+                    t.getTransactionId(), e.getMessage());
+            return;
+        }
+        log.debug("[CALLBACK] Routing push to {} recipient(s) for businessId={} terminalId={}",
+                recipients.size(), businessId, terminalId);
+
+        Runnable send = () -> {
+            try {
+                pushNotificationService.sendToUsernames(recipients, payload);
+            } catch (RuntimeException e) {
+                log.warn("[CALLBACK] Push step failed for transactionId={} (transaction still recorded): {}",
+                        t.getTransactionId(), e.getMessage());
+            }
+        };
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            send.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() {
+                send.run();
+            }
+        });
     }
 
     /**
@@ -174,13 +209,19 @@ public class QrisCallbackService {
         return null;
     }
 
-    // The business a callback belongs to: matched by merchant PAN, else the configured default account.
+    // The business a callback belongs to: matched by merchant PAN. A payload that can't be routed
+    // is rejected unless fallback-to-default is on, in which case it goes to the default account.
     private Business resolveBusiness(String merchantPan) {
         if (merchantPan != null && !merchantPan.isBlank()) {
             Optional<Business> byPan = businessRepository.findFirstByMerchantPan(merchantPan);
             if (byPan.isPresent()) return byPan.get();
-            log.warn("[CALLBACK] No business for merchantPan={} — falling back to default account", merchantPan);
         }
+        if (!fallbackToDefault) {
+            log.warn("[CALLBACK] Rejected — merchantPan={} matches no business and fallback-to-default is off",
+                    merchantPan);
+            throw new ResourceNotFoundException("Merchant not found");
+        }
+        log.warn("[CALLBACK] No business for merchantPan={} — falling back to default account", merchantPan);
         User fallback = userRepository.findByUsernameAndDeletedAtIsNull(defaultUsername)
                 .orElseThrow(() -> {
                     log.error("[CALLBACK] Default account '{}' not found — payment NOT recorded", defaultUsername);

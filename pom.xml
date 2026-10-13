@@ -44,6 +44,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
+        <!-- SMTP for the password-reset email (Zoho Mail); see notification/SmtpEmailSender -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
@@ -98,10 +103,6 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-        </dependency>
-        <dependency>
             <groupId>com.google.cloud.sql</groupId>
             <artifactId>postgres-socket-factory</artifactId>
             <version>1.21.0</version>
@@ -117,6 +118,13 @@
             <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- In-process SMTP server: lets SmtpEmailSenderTest exercise the real mail code with no network -->
+        <dependency>
+            <groupId>com.icegreen</groupId>
+            <artifactId>greenmail-junit5</artifactId>
+            <version>2.1.14</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>com.tngtech.archunit</groupId>
             <artifactId>archunit-junit5</artifactId>
@@ -126,7 +134,36 @@
     </dependencies>
 
     <build>
+        <!-- A stable name (no version) so the Dockerfile and anything else can refer to the jar. -->
+        <finalName>bejo</finalName>
         <plugins>
+            <!-- Fail fast, with a readable message, on the wrong toolchain. Without this an older JDK
+                 dies with "release version 25 not supported" and the Maven version is whatever the
+                 machine has; ./mvnw pins Maven itself. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.6.3</version>
+                <executions>
+                    <execution>
+                        <id>enforce-toolchain</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[25,)</version>
+                                    <message>Bejo needs JDK 25 or newer (found ${java.version}). Use JDK 25 locally, or run in the Maven container: podman run --rm -v "$PWD":/app -w /app maven:3.9-eclipse-temurin-25-alpine ./mvnw test</message>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[3.9,)</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

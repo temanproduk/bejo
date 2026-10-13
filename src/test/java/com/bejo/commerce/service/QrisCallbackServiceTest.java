@@ -22,6 +22,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -39,9 +41,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * PoC behavior: every callback records a MANAGED transaction against the seed user's
- * business and pushes to every device of every user in that business, regardless of the
- * (currently buggy) payload contents.
+ * The callback routes to a business by merchant PAN. Most tests here run with
+ * {@code fallback-to-default} ON — the legacy mode where an unroutable payload is attributed to
+ * the default account; the strict (default) mode and the post-commit push have their own tests.
  */
 @ExtendWith(MockitoExtension.class)
 class QrisCallbackServiceTest {
@@ -61,6 +63,7 @@ class QrisCallbackServiceTest {
         service = new QrisCallbackService(transactionRepository, userRepository, businessRepository,
                 userQrisRepository, pushNotificationService, new ObjectMapper(), new SimpleMeterRegistry());
         ReflectionTestUtils.setField(service, "defaultUsername", "admin");
+        ReflectionTestUtils.setField(service, "fallbackToDefault", true);
     }
 
     private User user(String username, String role) {
@@ -212,6 +215,83 @@ class QrisCallbackServiceTest {
         verify(transactionRepository, times(5)).save(captor.capture());
         assertThat(captor.getAllValues()).extracting(Transaction::getStatus)
                 .containsExactly("SUCCESS", "FAILED", "REFUNDED", "EXPIRED", "UNKNOWN");
+    }
+
+    @Test
+    void strictModeRejectsAnUnknownMerchantPan() {
+        ReflectionTestUtils.setField(service, "fallbackToDefault", false);
+        when(businessRepository.findFirstByMerchantPan("9360082232504524231")).thenReturn(Optional.empty());
+
+        // request() carries merchantPan 9360082232504524231, which matches no business
+        assertThatThrownBy(() -> service.processNotify(request("00"), null))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        verify(transactionRepository, never()).save(any());
+        verify(pushNotificationService, never()).sendToUsernames(any(), any());
+        // never even looked at the default account
+        verify(userRepository, never()).findByUsernameAndDeletedAtIsNull(any());
+    }
+
+    @Test
+    void strictModeRejectsAPayloadWithNoMerchantPan() {
+        ReflectionTestUtils.setField(service, "fallbackToDefault", false);
+
+        assertThatThrownBy(() -> service.processNotify(buggyMinimal(), null))
+                .isInstanceOf(ResourceNotFoundException.class);
+
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void strictModeStillRoutesAKnownMerchantPan() {
+        ReflectionTestUtils.setField(service, "fallbackToDefault", false);
+        Business biz = new Business();
+        biz.setName("Merchant");
+        ReflectionTestUtils.setField(biz, "id", BIZ);
+        when(businessRepository.findFirstByMerchantPan("9360082232504524231")).thenReturn(Optional.of(biz));
+
+        service.processNotify(request("00"), null);
+
+        ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(captor.capture());
+        assertThat(captor.getValue().getBusinessId()).isEqualTo(BIZ);
+    }
+
+    @Test
+    void pushIsDeferredUntilTheTransactionCommits() {
+        seedUserExists();
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.processNotify(request("00"), null);
+
+            // recorded, but nobody is buzzed while the transaction is still open
+            verify(transactionRepository).save(any(Transaction.class));
+            verify(pushNotificationService, never()).sendToUsernames(any(), any());
+
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(TransactionSynchronization::afterCommit);
+
+            verify(pushNotificationService, times(1)).sendToUsernames(any(), any());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void pushIsNeverSentWhenTheTransactionRollsBack() {
+        seedUserExists();
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            service.processNotify(request("00"), null);
+
+            // a rollback runs afterCompletion only — afterCommit is never invoked
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(s -> s.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+            verify(pushNotificationService, never()).sendToUsernames(any(), any());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
