@@ -18,6 +18,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByUsernameAndDeletedAtIsNull(String username);
 
+    // An email address belongs to one ACTIVE user (case-insensitive); a soft-deleted user releases it,
+    // like its username. The partial unique index in Postgres is the backstop for a concurrent race.
+    boolean existsByEmailIgnoreCaseAndDeletedAtIsNull(String email);
+
+    boolean existsByEmailIgnoreCaseAndDeletedAtIsNullAndIdNot(String email, Long id);
+
     // The active user's current password hash — the per-request auth check needs both
     // "is this user still active?" (empty = gone/soft-deleted) and the hash the token was
     // bound to, so it resolves them in one query instead of two.

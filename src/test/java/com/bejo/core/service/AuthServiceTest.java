@@ -12,6 +12,7 @@ import com.bejo.core.repository.BusinessBankRepository;
 import com.bejo.core.repository.BusinessRepository;
 import com.bejo.core.repository.SessionRepository;
 import com.bejo.core.repository.UserRepository;
+import com.bejo.shared.exception.EmailNotVerifiedException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,6 +75,7 @@ class AuthServiceTest {
         u.setBusinessId(BIZ);
         u.setBusinessRole(BusinessRole.SUPER_ADMIN);
         u.setAccountType("MANAGED");
+        u.setEmailVerified(true);   // login needs a verified email; tests for the refusal unset it
         return u;
     }
 
@@ -116,6 +118,57 @@ class AuthServiceTest {
                 .hasMessage("Nama pengguna atau kata sandi salah");
 
         assertThat(meterRegistry.counter("login.attempts", "result", "failure").count()).isEqualTo(1.0);
+    }
+
+    @Test
+    void loginIsRefusedWhileTheEmailIsUnverifiedAndCreatesNothing() {
+        User unverified = user("alice");
+        unverified.setEmailVerified(false);
+        when(userRepository.findByUsernameAndDeletedAtIsNull("alice")).thenReturn(Optional.of(unverified));
+        when(passwordEncoder.matches("pw", "$hash")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.login(new LoginRequestDto("alice", "pw", "dev-1", "fcm-token")))
+                .isInstanceOfSatisfying(EmailNotVerifiedException.class, e -> {
+                    assertThat(e.getMaskedEmail()).isEqualTo("a***@example.com");   // enough to recognise, not to harvest
+                    assertThat(e.getMessage()).contains("belum diverifikasi");
+                });
+
+        verify(sessionRepository, never()).save(any());          // no session, no push token...
+        verify(jwtService, never()).generateToken(any(), any()); // ...and no JWT
+    }
+
+    @Test
+    void aSubAccountLogsInEvenWithAnUnverifiedEmail() {
+        // The owner vouches for staff they add; this also covers members created before verification existed
+        User member = user("bob");
+        member.setBusinessRole(BusinessRole.MEMBER);
+        member.setEmailVerified(false);
+        when(userRepository.findByUsernameAndDeletedAtIsNull("bob")).thenReturn(Optional.of(member));
+        when(passwordEncoder.matches("pw", "$hash")).thenReturn(true);
+        when(businessRepository.findById(BIZ)).thenReturn(Optional.of(business()));
+        when(businessBankRepository.findByBusinessId(BIZ)).thenReturn(Optional.of(bank()));
+        when(sessionRepository.findByUsernameAndDeviceId("bob", "dev-1")).thenReturn(Optional.empty());
+        when(jwtService.generateToken("bob", "$hash")).thenReturn("jwt-token");
+        when(accountSettingsService.getSettings("bob")).thenReturn(
+                new AccountSettingsResponseDto(Map.of(), List.of(), List.of(), true, false, false, false, false, false));
+
+        LoginResponseDto data = authService.login(new LoginRequestDto("bob", "pw", "dev-1", null));
+
+        assertThat(data.token()).isEqualTo("jwt-token");
+        assertThat(data.businessRole()).isEqualTo("MEMBER");
+    }
+
+    @Test
+    void anUnverifiedUserWithTheWrongPasswordGetsTheGenericFailure() {
+        // The verification status must not be learnable without the password
+        User unverified = user("alice");
+        unverified.setEmailVerified(false);
+        when(userRepository.findByUsernameAndDeletedAtIsNull("alice")).thenReturn(Optional.of(unverified));
+        when(passwordEncoder.matches("wrong", "$hash")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.login(new LoginRequestDto("alice", "wrong", "dev-1", null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Nama pengguna atau kata sandi salah");
     }
 
     @Test

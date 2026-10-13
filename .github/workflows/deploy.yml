@@ -92,6 +92,7 @@ jobs:
       # Seed user / business
       SEED_USERNAME: ${{ vars.SEED_USERNAME }}
       SEED_NAME: ${{ vars.SEED_NAME }}
+      SEED_EMAIL: ${{ vars.SEED_EMAIL }}
       SEED_BUSINESS_NAME: ${{ vars.SEED_BUSINESS_NAME }}
       SEED_BUSINESS_ADDRESS: ${{ vars.SEED_BUSINESS_ADDRESS }}
       SEED_NMID: ${{ vars.SEED_NMID }}
@@ -105,6 +106,10 @@ jobs:
       MOUNT_ADS_ADMIN_TOKEN: ${{ vars.MOUNT_ADS_ADMIN_TOKEN }}
       # Set to true once bejo-callback-secret exists in Secret Manager (default: false)
       MOUNT_CALLBACK_SECRET: ${{ vars.MOUNT_CALLBACK_SECRET }}
+      # Firebase/FCM: by default the service sends as its own service account in FIREBASE_PROJECT_ID (default:
+      # this GCP project) — no key. Set MOUNT_FIREBASE_CREDENTIALS=true to mount bejo-firebase-credentials instead.
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      MOUNT_FIREBASE_CREDENTIALS: ${{ vars.MOUNT_FIREBASE_CREDENTIALS }}
       # Outgoing email for password reset. The password is a Secret Manager secret (bejo-mail-password);
       # set MOUNT_MAIL_PASSWORD=true once it exists (default: false)
       MOUNT_MAIL_PASSWORD: ${{ vars.MOUNT_MAIL_PASSWORD }}

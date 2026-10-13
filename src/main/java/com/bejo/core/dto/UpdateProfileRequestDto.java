@@ -14,8 +14,8 @@ public record UpdateProfileRequestDto(
         @Email(message = "Format email tidak valid")
         String email,
 
-        @NotBlank(message = "Nomor telepon wajib diisi")
-        @Pattern(regexp = "^\\+[1-9][0-9]{6,14}$",
+        // Optional, like at registration: blank removes the number
+        @Pattern(regexp = "^$|^\\+[1-9][0-9]{6,14}$",
                  message = "Format nomor telepon tidak valid (contoh: +628123456789)")
         String phone
 ) {}

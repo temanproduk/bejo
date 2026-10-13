@@ -119,7 +119,7 @@ cp .env.gcp.example .env.gcp   # fill in all values
 bash scripts/init-gcp.sh
 ```
 
-Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. Safe to re-run: existing resources are skipped, secrets get a new version, and the database user's password is re-synced to `.env.gcp`. The custom-domain step is idempotent too: an existing mapping is detected and left alone (no error), and `--take-over-domain` maps the domain to this project even if another one — say, an abandoned project — still holds it (it uses Cloud Run's `--force-override`). Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
+Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. **Idempotent — safe to re-run any time**, including after an interrupted run: it converges on what `.env.gcp` declares and changes only what differs. Existing resources are skipped (a Cloud SQL instance still being created is waited for; one that is `SUSPENDED` stops the script with a billing hint), IAM bindings are written only when missing, a secret gets a new version only when its value in `.env.gcp` changed, a soft-deleted Workload Identity pool/provider is restored, the provider's repo/branch condition follows `GITHUB_REPO`/`GITHUB_DEPLOY_REF`, and the database user's password is re-synced to `.env.gcp`. The one thing every run does is build + deploy (it ships the files on disk, uncommitted changes included); `--skip-deploy` provisions the infrastructure, secrets and domain without touching the running service. The custom-domain step is idempotent too: an existing mapping is detected and left alone (no error), and `--take-over-domain` maps the domain to this project even if another one — say, an abandoned project — still holds it (it uses Cloud Run's `--force-override`). Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
 
 **Database backups (Cloud SQL):** `init-gcp.sh` enables automated daily backups (window `CLOUD_SQL_BACKUP_START_TIME`, default 19:00 UTC; the last 7 are kept) and re-running it turns them on for an instance that was created without them. Point-in-time recovery is deliberately off: it archives WAL on the instance's own 10 GB disk (auto-increase is off), and a full disk takes the database down — enable PITR and storage auto-increase together if you want it.
 
@@ -225,7 +225,7 @@ Every request requires:
 | `X-API-TOKEN` | All | Shared secret — `API_TOKEN` env var |
 | `Authorization` | Protected only | `Bearer <JWT>` returned by login |
 
-Public (no JWT): `POST /api/users/register`, `POST /api/auth/login`  
+Public (no JWT): `POST /api/users/register`, `POST /api/auth/login`, `POST /api/auth/verify-email`, `POST /api/auth/resend-verification`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`  
 Exempt from the API token: `/actuator/health` (for Cloud Run probes) and `/snap/**` (inbound QRIS payment callbacks — server-to-server; optionally guarded by a shared secret, see [QRIS callback](#qris-callback)). All other `/actuator/*` endpoints (metrics, prometheus, info) **require** `X-API-TOKEN`.
 
 Tokens expire after `JWT_EXPIRATION_MS` (default 7 days — the login response's `expiresIn` is the same value in seconds). Logout blacklists the token immediately; blacklist entries are purged automatically once expired.
@@ -368,6 +368,15 @@ Authenticates and returns a JWT. Registers or updates the device's FCM push toke
 
 **Errors:** `400 Invalid credentials`, `400 username is required`, `400 deviceId is required` (field validation)
 
+**`403` — email not verified.** Checked only **after the password was right** (so it never reveals which usernames exist), and nothing is created for the attempt — no session, push token or JWT:
+
+```json
+{ "status": 0, "message": "Email belum diverifikasi. Masukkan kode verifikasi yang dikirim ke email Anda",
+  "data": { "reason": "EMAIL_NOT_VERIFIED", "email": "a***@example.com" } }
+```
+
+The client reads `data.reason` and moves the user to the verification step ([`verify-email` / `resend-verification`](#email-verification--post-apiauthverify-email-and-post-apiauthresend-verification)). Who it applies to: **owners** (self-service registrations, and an owner who changes their own email). **Sub-accounts (`MEMBER`) never need to verify** — the owner who adds them vouches for them — so a member can always log in, including members created before verification existed; the seed admin is created verified.
+
 ---
 
 #### `POST /api/auth/logout`
@@ -413,6 +422,32 @@ Behind the scenes a request sends nothing when the user has already requested a 
 **Success — HTTP 200:** `{ "status": 1, "message": "Kata sandi berhasil diubah. Silakan masuk dengan kata sandi baru" }`. The password is changed, **every existing login session on every device is ended** (the app must send the user back to the login screen), any login lockout is lifted, and the email is marked verified.
 
 **Errors:** `400 Kode tidak valid atau sudah kedaluwarsa` — the **single message for every failure** (wrong code, expired, already used, too many attempts, unknown user). A code allows **5 guesses**; after that the user must request a new one. Field-validation errors (not 6 digits, weak password) are also `400`.
+
+---
+
+#### Email verification — `POST /api/auth/verify-email` and `POST /api/auth/resend-verification`
+
+Two public calls (they come *before* a session exists) that need only `X-API-TOKEN`; the 6-digit code is the credential. A code is emailed at registration (and when an owner changes their email); the owner's login is refused until it is confirmed. Sub-accounts are exempt.
+
+**1. Confirm the code** — `POST /api/auth/verify-email`
+
+```json
+{ "username": "alice", "code": "482913" }
+```
+
+**Success — HTTP 200:** `{ "status": 1, "message": "Email berhasil diverifikasi. Silakan masuk" }`; the user then logs in normally (verification does **not** log them in).
+
+**Errors:** `400 Kode tidak valid atau sudah kedaluwarsa` — the **single message for every failure** (wrong code, expired, already used, too many attempts, unknown user, already verified). A code allows **5 guesses** and lives **15 minutes**; the hash covers the address, so a code sent to an old address never confirms a newer one. Field validation: `code` must be exactly 6 digits.
+
+**2. Ask for another code** — `POST /api/auth/resend-verification`
+
+```json
+{ "username": "alice" }
+```
+
+**Always HTTP 200** with the same message whether or not the username exists or is already verified (no account enumeration; the response is padded to ~1.5 s). A code is sent only to an existing, unverified account that has not asked within the last **60 seconds** or **5 times in the past hour**; a new code replaces the previous one. A code that could not be delivered does not count against those limits. **Errors:** `503` — email is not configured.
+
+When an **owner** changes their email with `PATCH /api/users/me`, the account becomes unverified and a code goes to the **new** address at once (the cooldown does not apply, the hourly cap does), so their next login needs it. A sub-account that changes its email stays verified and is sent nothing. Resetting a forgotten password also verifies the email (the user proved they read that inbox).
 
 ---
 
@@ -821,6 +856,8 @@ Updates the FCM push token for a device. Only devices belonging to the authentic
 
 Self-service registration. Creates a **new business** and its first user as the `SUPER_ADMIN` (`SELF_SERVICE`) + bank profile. **No QRIS row is created — QRIS is optional** and can be added later via `POST /api/qris/upload`. `X-API-TOKEN` required, no JWT.
 
+> **The account cannot log in until its email is verified.** Registration never verifies it: it emails a 6-digit code to the address given, and the user confirms it with [`POST /api/auth/verify-email`](#email-verification--post-apiauthverify-email-and-post-apiauthresend-verification) before the first login. **There is no phone number at registration** — the user adds one later from `PATCH /api/users/me` (a `phone` sent here by an older client is ignored). **An email address belongs to one active user** (case-insensitive). If the server has no email configured, registration answers `503` and creates nothing, because the account could never be verified.
+
 **Request body**
 
 | Field | Required | Validation |
@@ -828,8 +865,7 @@ Self-service registration. Creates a **new business** and its first user as the 
 | `username` | yes | 3–50 chars, alphanumeric + underscore, unique |
 | `password` | yes | Min 8 chars, at least 1 letter and 1 digit |
 | `name` | yes | 2–100 chars |
-| `email` | yes | Valid email format |
-| `phone` | yes | International format e.g. `+628123456789` |
+| `email` | yes | Valid email format; unique among active users. The verification code is sent here |
 | `businessName` | yes | Max 255 chars |
 | `businessAddress` | no | Free text |
 | `merchantPan` | no | Max 50 chars — QRIS merchant PAN; the payment callback carries this (not the NMID), so it's how a callback routes to this business |
@@ -848,7 +884,6 @@ Self-service registration. Creates a **new business** and its first user as the 
   "password": "Secret1",
   "name": "Alice",
   "email": "alice@example.com",
-  "phone": "+628100000000",
   "businessName": "Alice Shop",
   "businessAddress": "Jl. Contoh No. 1",
   "size": "Mikro",
@@ -860,9 +895,10 @@ Self-service registration. Creates a **new business** and its first user as the 
 
 | HTTP | Result |
 |---|---|
-| 201 | `{ "status": 1, "message": "Registrasi berhasil" }` |
+| 201 | `{ "status": 1, "message": "Registrasi berhasil. Masukkan kode verifikasi yang dikirim ke email Anda", "data": { "emailVerificationRequired": true, "emailSent": true, "email": "a***@example.com" } }` — `email` is masked. `emailSent` is `false` (and the message says the code has not been sent) when the mail server was unreachable: the account exists, and the client offers "resend" |
 | 400 | Validation error — `username wajib diisi`, `password harus mengandung minimal 1 huruf dan 1 angka`, `format email tidak valid`, etc. |
-| 400 | `Username sudah digunakan` |
+| 400 | `Username sudah digunakan` / `Email sudah digunakan` |
+| 503 | `Verifikasi email belum tersedia. Coba lagi nanti.` — email is not configured; nothing was created |
 
 ---
 
@@ -1826,7 +1862,8 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `DB_URL` | yes | JDBC URL e.g. `jdbc:postgresql://localhost:5432/bejo` |
 | `DB_USERNAME` | yes | PostgreSQL username |
 | `DB_PASSWORD` | yes | PostgreSQL password |
-| `FIREBASE_CREDENTIALS_BASE64` | no* | Base64-encoded Firebase service account JSON |
+| `FIREBASE_PROJECT_ID` | no* | Firebase project that owns the app's FCM tokens. With no key given, the app sends as its **own service account** (application-default credentials — on Cloud Run no key file is needed, which matters where the org forbids creating keys). That account needs `roles/firebasecloudmessaging.admin`; `init-gcp.sh` grants it, and `deploy-cloud-run.sh` sets this to the GCP project by default |
+| `FIREBASE_CREDENTIALS_BASE64` | no* | Base64-encoded Firebase service account JSON (takes precedence over `FIREBASE_PROJECT_ID`) |
 | `FIREBASE_CREDENTIALS_PATH` | no* | Path to Firebase service account JSON file |
 | `ADS_ADMIN_TOKEN` | no | Gates the [voice-ads](#voice-ads) admin surface (`X-ADS-ADMIN-TOKEN`). Blank ⇒ feature off |
 | `ADS_GCS_BUCKET` | no† | Cloud Storage bucket for ad audio. Needed only to use voice ads |
@@ -1864,7 +1901,7 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `bejo-db-password` | `DB_PASSWORD` | `DB_PASSWORD` |
 | `bejo-jwt-secret` | `JWT_SECRET` | `JWT_SECRET` |
 | `bejo-api-token` | `API_TOKEN` | `API_TOKEN` |
-| `bejo-firebase-credentials` | `FIREBASE_CREDENTIALS_BASE64` | `FIREBASE_CREDENTIALS_BASE64` |
+| `bejo-firebase-credentials` | `FIREBASE_CREDENTIALS_BASE64` *(optional, key-based FCM only)* | `FIREBASE_CREDENTIALS_BASE64` (only when `MOUNT_FIREBASE_CREDENTIALS=true`) |
 | `bejo-seed-password` | `SEED_PASSWORD` | `SEED_PASSWORD` |
 | `bejo-ads-admin-token` | `ADS_ADMIN_TOKEN` *(optional)* | `ADS_ADMIN_TOKEN` |
 | `bejo-mail-password` | `MAIL_PASSWORD` *(optional)* | `MAIL_PASSWORD` (only when `MOUNT_MAIL_PASSWORD=true`) |

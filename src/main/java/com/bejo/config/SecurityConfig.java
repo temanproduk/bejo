@@ -73,7 +73,8 @@ public class SecurityConfig {
                         .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'none'; frame-ancestors 'none'")))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login", "/api/users/register",
-                                "/api/auth/forgot-password", "/api/auth/reset-password").permitAll()
+                                "/api/auth/forgot-password", "/api/auth/reset-password",
+                                "/api/auth/verify-email", "/api/auth/resend-verification").permitAll()
                         .requestMatchers("/snap/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll()
                         // Ads admin surface is server-to-server: no JWT, guarded by the

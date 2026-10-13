@@ -32,6 +32,8 @@ app:
   password-reset:
     # No artificial delay in tests (production pads forgot-password to hide whether a user exists)
     response-floor-ms: 0
+  email-verification:
+    response-floor-ms: 0
   admin:
     emails: boss@example.com, Second.Admin@Example.com
     dashboard-origins: https://dashboard.test

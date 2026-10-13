@@ -56,12 +56,16 @@ set_env DB_USERNAME           "$CLOUD_SQL_DB_USER"
 set_env SPRING_PROFILES_ACTIVE prod
 set_env TZ                    Asia/Jakarta
 set_env ADS_GCS_BUCKET        "$ADS_GCS_BUCKET"
+# The Firebase project that owns the app's FCM tokens. The service authenticates to it as its own service
+# account (application-default credentials), so there is no key to store: the org may forbid creating one,
+# and the account needs roles/firebasecloudmessaging.admin (init-gcp.sh grants it). Defaults to this project.
+set_env FIREBASE_PROJECT_ID   "${FIREBASE_PROJECT_ID:-$GCP_PROJECT_ID}"
 set_env SEED_USERNAME         "${SEED_USERNAME:-admin}"
 set_env SEED_NAME             "${SEED_NAME:-Admin User}"
 set_env SEED_BUSINESS_NAME    "${SEED_BUSINESS_NAME:-My Business}"
 
 for name in \
-  SEED_BUSINESS_ADDRESS SEED_NMID SEED_MERCHANT_PAN \
+  SEED_EMAIL SEED_BUSINESS_ADDRESS SEED_NMID SEED_MERCHANT_PAN \
   ADS_SIGNED_URL_TTL_SECONDS ADS_MAX_AUDIO_BYTES ADS_MAX_AUDIO_SECONDS \
   JWT_EXPIRATION_MS CALLBACK_DEFAULT_USERNAME CALLBACK_FALLBACK_TO_DEFAULT \
   BUSINESS_MAX_USERS BUSINESS_SIZES BUSINESS_DEFAULT_SIZE \
@@ -86,9 +90,15 @@ secrets=(
   DB_PASSWORD=bejo-db-password:latest
   JWT_SECRET=bejo-jwt-secret:latest
   API_TOKEN=bejo-api-token:latest
-  FIREBASE_CREDENTIALS_BASE64=bejo-firebase-credentials:latest
   SEED_PASSWORD=bejo-seed-password:latest
 )
+# A Firebase service-account key is opt-in: by default FCM uses the service's own identity (see
+# FIREBASE_PROJECT_ID above). Set MOUNT_FIREBASE_CREDENTIALS=true to mount the key instead, once
+# `bejo-firebase-credentials` exists (init-gcp.sh creates it when FIREBASE_CREDENTIALS_BASE64 is in .env.gcp).
+# An explicit key takes precedence over the service identity, so never leave one for a different project.
+if [[ "${MOUNT_FIREBASE_CREDENTIALS:-false}" == true ]]; then
+  secrets+=(FIREBASE_CREDENTIALS_BASE64=bejo-firebase-credentials:latest)
+fi
 # The ads admin token is optional: init-gcp.sh only creates the secret when a value was
 # provided. Mounting a secret that doesn't exist fails the deploy, so an install without ads
 # sets MOUNT_ADS_ADMIN_TOKEN=false (init-gcp.sh does this for its own deploy; CI reads the

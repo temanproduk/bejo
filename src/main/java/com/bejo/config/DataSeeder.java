@@ -57,6 +57,9 @@ public class DataSeeder implements ApplicationRunner {
     @Value("${app.seed.name:Admin}")
     private String seedName;
 
+    @Value("${app.seed.email:anton.rifco@gmail.com}")
+    private String seedEmail;
+
     @Value("${app.seed.business-name:My Business}")
     private String seedBusinessName;
 
@@ -114,7 +117,8 @@ public class DataSeeder implements ApplicationRunner {
             user.setUsername(seedUsername);
             user.setPasswordHash(passwordEncoder.encode(seedPassword));
             user.setName(seedName);
-            user.setEmail("admin@bejo.id");
+            user.setEmail(seedEmail);
+            user.setEmailVerified(true);   // login needs a verified email, and the seed account has no inbox flow
             user.setPhone("+6281234567890");
             user.setBusinessId(businessId);
             user.setBusinessRole(BusinessRole.SUPER_ADMIN);

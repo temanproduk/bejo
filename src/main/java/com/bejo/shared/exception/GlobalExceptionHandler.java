@@ -19,6 +19,8 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
@@ -101,6 +103,10 @@ public class GlobalExceptionHandler {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("Username sudah digunakan"));
             }
+            if ("uq_users_email_active".equals(constraint)) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(ApiResponseDto.error("Email sudah digunakan"));
+            }
             if ("uq_idempotency_key".equals(constraint)) {
                 return ResponseEntity.status(HttpStatus.CONFLICT)
                         .body(ApiResponseDto.error("Permintaan sedang diproses, coba lagi"));
@@ -139,6 +145,18 @@ public class GlobalExceptionHandler {
         log.error("Data integrity violation", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponseDto.error("Data tidak valid atau sudah terdaftar"));
+    }
+
+    // 403 with a machine-readable reason + the masked address, so the app can open the verification step
+    @ExceptionHandler(EmailNotVerifiedException.class)
+    public ResponseEntity<ApiResponseDto<Map<String, String>>> handleEmailNotVerified(
+            EmailNotVerifiedException ex, HttpServletRequest req) {
+        log.warn("[403] {} — {}", at(req), ex.getMessage());
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("reason", EmailNotVerifiedException.REASON);
+        if (ex.getMaskedEmail() != null) data.put("email", ex.getMaskedEmail());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(new ApiResponseDto<>(0, ex.getMessage(), data, null, null, null, null));
     }
 
     @ExceptionHandler(ForbiddenException.class)

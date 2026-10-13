@@ -46,7 +46,7 @@ public class NotificationService {
 
     public void send(String username, SendNotificationRequestDto request) throws FirebaseMessagingException {
         if (!pushNotificationService.isConfigured()) {
-            throw new IllegalStateException("Firebase is not configured — set FIREBASE_CREDENTIALS_BASE64 or FIREBASE_CREDENTIALS_PATH");
+            throw new IllegalStateException("Firebase is not configured — set FIREBASE_PROJECT_ID (application-default credentials), FIREBASE_CREDENTIALS_BASE64 or FIREBASE_CREDENTIALS_PATH");
         }
 
         String pushToken = sessionRepository.findByUsernameAndDeviceId(username, request.deviceId())
@@ -86,7 +86,7 @@ public class NotificationService {
      */
     public int broadcastToUser(String username, BroadcastNotificationRequestDto request) {
         if (!pushNotificationService.isConfigured()) {
-            throw new IllegalStateException("Firebase is not configured — set FIREBASE_CREDENTIALS_BASE64 or FIREBASE_CREDENTIALS_PATH");
+            throw new IllegalStateException("Firebase is not configured — set FIREBASE_PROJECT_ID (application-default credentials), FIREBASE_CREDENTIALS_BASE64 or FIREBASE_CREDENTIALS_PATH");
         }
         PushPayload payload = buildPayload(request.title(), request.body(), request.data(), merchantName(username));
         log.info("[NOTIFY-USER] Broadcasting push to all devices of username={}", username);

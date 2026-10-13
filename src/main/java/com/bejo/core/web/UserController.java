@@ -1,13 +1,16 @@
 package com.bejo.core.web;
 
 import com.bejo.core.dto.ChangePasswordRequestDto;
+import com.bejo.core.domain.User;
 import com.bejo.core.dto.RegisterRequestDto;
+import com.bejo.core.dto.RegisterResponseDto;
 import com.bejo.core.dto.UpdateBankRequestDto;
 import com.bejo.core.dto.UpdateBusinessRequestDto;
 import com.bejo.core.dto.UpdateProfileRequestDto;
 import com.bejo.core.dto.UpgradeAccountRequestDto;
 import com.bejo.shared.web.ApiResponseDto;
 import com.bejo.core.dto.MeResponseDto;
+import com.bejo.core.service.EmailVerificationService;
 import com.bejo.core.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -21,17 +24,29 @@ public class UserController {
 
     private final UserService userService;
 
-    public UserController(UserService userService) {
+    private final EmailVerificationService emailVerificationService;
+
+    public UserController(UserService userService, EmailVerificationService emailVerificationService) {
         this.userService = userService;
+        this.emailVerificationService = emailVerificationService;
     }
 
     // Public self-service registration — creates a new business and its first user
     // (the SUPER_ADMIN). Additional users are added by a super admin via /api/users/members.
+    // The account cannot log in until its email is verified: the emailed code is confirmed through
+    // POST /api/auth/verify-email.
     @PostMapping("/register")
-    public ResponseEntity<ApiResponseDto<Void>> register(@Valid @RequestBody RegisterRequestDto request) {
-        userService.register(request);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponseDto.success("Registrasi berhasil", null));
+    public ResponseEntity<ApiResponseDto<RegisterResponseDto>> register(@Valid @RequestBody RegisterRequestDto request) {
+        // Without email a new account could never be verified, so refuse before creating anything
+        emailVerificationService.requireEnabled();
+        User user = userService.register(request);
+        // After the registration committed: a mail failure must not undo it (the user can resend)
+        boolean sent = emailVerificationService.sendCode(user.getUsername());
+        String message = sent
+                ? "Registrasi berhasil. Masukkan kode verifikasi yang dikirim ke email Anda"
+                : "Registrasi berhasil, tetapi kode verifikasi belum terkirim. Minta kode baru untuk melanjutkan";
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponseDto.success(message,
+                new RegisterResponseDto(true, sent, EmailVerificationService.maskEmail(user.getEmail()))));
     }
 
     // The caller's own account bundle (profile + role + shared business/bank/picture/app
@@ -46,8 +61,12 @@ public class UserController {
     public ResponseEntity<ApiResponseDto<Void>> updateProfile(
             @Valid @RequestBody UpdateProfileRequestDto request,
             Authentication authentication) {
-        userService.updateProfile(authentication.getName(), request);
-        return ResponseEntity.ok(ApiResponseDto.success("Profil berhasil diperbarui", null));
+        boolean emailChanged = userService.updateProfile(authentication.getName(), request);
+        // A new address must be confirmed before the next login; send its code once the update committed
+        boolean sent = emailChanged && emailVerificationService.sendCode(authentication.getName(), true);
+        return ResponseEntity.ok(ApiResponseDto.success(sent
+                ? "Profil berhasil diperbarui. Kode verifikasi dikirim ke email baru Anda"
+                : "Profil berhasil diperbarui", null));
     }
 
     @PatchMapping("/me/bank")

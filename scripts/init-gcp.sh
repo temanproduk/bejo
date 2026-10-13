@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# One-time GCP setup for bejo on Cloud Run + Cloud SQL.
-# Run this once before the first deployment. Safe to re-run: existing resources are
-# skipped, secrets get a new version, and the DB user's password is re-synced to .env.gcp.
+# GCP setup for bejo on Cloud Run + Cloud SQL. Run it before the first deployment; re-run it any time.
+#
+# IDEMPOTENT — a re-run converges on what .env.gcp declares and changes only what differs:
+#   - existing resources are left alone (an interrupted earlier run is picked up where it stopped;
+#     a Cloud SQL instance that is still being created is waited for)
+#   - IAM bindings are only written when missing
+#   - secrets get a new version only when the value in .env.gcp changed
+#   - the Workload Identity provider's repo/branch condition is updated if you changed it
+#   - the DB user's password is re-synced to .env.gcp
+# The one thing that happens every time is the build + deploy (steps 8-9), which ships the files ON DISK
+# (uncommitted changes included). Use --skip-deploy to provision without touching the running service.
 #
 # Prerequisites:
 #   1. gcloud CLI installed and authenticated (gcloud auth login)
@@ -19,6 +27,7 @@
 #   bash scripts/init-gcp.sh                # first run, or any re-run
 #   bash scripts/init-gcp.sh --sa-key       # use a downloaded key instead of Workload Identity
 #   bash scripts/init-gcp.sh --rotate-key   # --sa-key, and mint a new key even if one exists
+#   bash scripts/init-gcp.sh --skip-deploy  # infrastructure, secrets and domain only: no build, no deploy
 #   bash scripts/init-gcp.sh --take-over-domain   # map the custom domain here even if another
 #                                                 # project (e.g. an abandoned one) still holds it
 
@@ -27,12 +36,14 @@ set -euo pipefail
 USE_SA_KEY=false
 ROTATE_KEY=false
 TAKE_OVER_DOMAIN=false
+SKIP_DEPLOY=false
 for arg in "$@"; do
   case "$arg" in
     --sa-key)           USE_SA_KEY=true ;;
     --rotate-key)       USE_SA_KEY=true; ROTATE_KEY=true ;;
     --take-over-domain) TAKE_OVER_DOMAIN=true ;;
-    *) echo "ERROR: unknown argument: $arg (supported: --sa-key, --rotate-key, --take-over-domain)" >&2; exit 1 ;;
+    --skip-deploy)      SKIP_DEPLOY=true ;;
+    *) echo "ERROR: unknown argument: $arg (supported: --sa-key, --rotate-key, --take-over-domain, --skip-deploy)" >&2; exit 1 ;;
   esac
 done
 
@@ -54,7 +65,7 @@ required_vars=(
   GCP_PROJECT_ID GCP_REGION GCP_SERVICE_NAME CUSTOM_DOMAIN
   ARTIFACT_REGISTRY_REPO CLOUD_SQL_INSTANCE_NAME
   CLOUD_SQL_DB_NAME CLOUD_SQL_DB_USER CLOUD_RUN_SA GITHUB_ACTIONS_SA
-  DB_PASSWORD JWT_SECRET API_TOKEN FIREBASE_CREDENTIALS_BASE64 SEED_PASSWORD
+  DB_PASSWORD JWT_SECRET API_TOKEN SEED_PASSWORD
 )
 for v in "${required_vars[@]}"; do
   if [[ -z "${!v:-}" ]]; then
@@ -75,18 +86,25 @@ CLOUD_SQL_BACKUP_START_TIME="${CLOUD_SQL_BACKUP_START_TIME:-19:00}"
 # ---------------------------------------------------------------
 
 # create_unless_exists <describe command...> -- <create command...>
-# Runs the create command only when the describe command fails. Unlike silencing the create
-# with `2>/dev/null || echo "already exists"`, a real failure (permissions, quota, typo)
-# still aborts the script instead of being reported as "already exists".
+# Runs the create command only when the describe command fails. Unlike silencing the create with
+# `2>/dev/null || echo "already exists"`, a real failure (permissions, quota, typo) still aborts the script.
+# If the create fails but the resource exists afterwards (a concurrent run, an earlier interrupted run
+# that finished server-side, eventual consistency) the goal is met, so that is not an error either.
 create_unless_exists() {
   local describe=()
   while [[ "$1" != "--" ]]; do describe+=("$1"); shift; done
   shift
   if "${describe[@]}" >/dev/null 2>&1; then
     echo "    (already exists, skipping)"
-  else
-    "$@"
+    return 0
   fi
+  if "$@"; then return 0; fi
+  sleep 3
+  if "${describe[@]}" >/dev/null 2>&1; then
+    echo "    (it exists now — created by another or an interrupted run; continuing)"
+    return 0
+  fi
+  return 1
 }
 
 # Create a service account (idempotent) and wait until it is readable —
@@ -106,24 +124,63 @@ ensure_service_account() {
   return 1
 }
 
+# True when the service account already holds the role on the project (a read, so a re-run leaves the
+# IAM policy — and its etag — alone).
+has_project_role() {
+  local member=$1 role=$2
+  [[ -n "$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --flatten='bindings[].members' \
+        --filter="bindings.role=\"$role\" AND bindings.members=\"serviceAccount:$member\"" \
+        --format='value(bindings.role)' 2>/dev/null)" ]]
+}
+
+# Grants each role that is missing. Sets ROLES_GRANTED=true if it changed anything.
+ROLES_GRANTED=false
 grant_project_roles() {
   local member=$1; shift
+  ROLES_GRANTED=false
   for role in "$@"; do
+    if has_project_role "$member" "$role"; then continue; fi
     gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
       --member="serviceAccount:$member" \
       --role="$role" \
       --quiet >/dev/null
+    ROLES_GRANTED=true
   done
 }
 
-# Create the secret, or add a new version when it already exists.
+# Create the secret, or add a new version only when the value actually changed — otherwise every re-run
+# would pile up identical versions (clutter, and each active version is billed).
 create_or_update_secret() {
-  local name=$1 value=$2
+  local name=$1 value=$2 current
   if gcloud secrets describe "$name" --quiet >/dev/null 2>&1; then
+    # If the latest version can't be read (disabled, destroyed, no permission) fall through and add one.
+    if current=$(gcloud secrets versions access latest --secret="$name" 2>/dev/null) && [[ "$current" == "$value" ]]; then
+      echo "    (secret $name unchanged)"
+      return 0
+    fi
     printf '%s' "$value" | gcloud secrets versions add "$name" --data-file=- --quiet
+    echo "    (secret $name: new version)"
   else
     printf '%s' "$value" | gcloud secrets create "$name" --data-file=- --replication-policy=automatic --quiet
   fi
+}
+
+# Wait for the Cloud SQL instance to be usable. An instance whose creation was interrupted exists
+# (so create is skipped) but is still PENDING_CREATE; creating its database then fails.
+wait_for_sql_instance() {
+  local state
+  for _ in $(seq 1 60); do
+    state=$(gcloud sql instances describe "$CLOUD_SQL_INSTANCE_NAME" --format="value(state)")
+    case "$state" in
+      RUNNABLE) return 0 ;;
+      SUSPENDED|FAILED|"")
+        echo "ERROR: Cloud SQL instance $CLOUD_SQL_INSTANCE_NAME is '${state:-unknown}' — if SUSPENDED, check that billing is enabled on the project." >&2
+        return 1 ;;
+      *) echo "    (instance is $state; waiting...)"; sleep 10 ;;
+    esac
+  done
+  echo "ERROR: Cloud SQL instance $CLOUD_SQL_INSTANCE_NAME did not become RUNNABLE in 10 minutes" >&2
+  return 1
 }
 
 echo "==> Project: $GCP_PROJECT_ID  Region: $GCP_REGION"
@@ -178,6 +235,8 @@ create_unless_exists \
     --assign-ip \
     --quiet
 
+wait_for_sql_instance
+
 # Automated daily backups (the last 7 are kept). The instance used to be created with --no-backup,
 # so an existing one may have none — turn them on here, idempotently. This does not restart the
 # instance. Point-in-time recovery is deliberately NOT enabled: it archives WAL on the instance's own
@@ -229,9 +288,11 @@ fi
 # ---------------------------------------------------------------
 echo "==> Creating Cloud Run service account..."
 ensure_service_account "$CLOUD_RUN_SA" "Bejo Cloud Run"
+# roles/firebasecloudmessaging.admin lets the service send push messages as itself (no key file).
 grant_project_roles "$CLOUD_RUN_SA_EMAIL" \
   roles/cloudsql.client \
-  roles/secretmanager.secretAccessor
+  roles/secretmanager.secretAccessor \
+  roles/firebasecloudmessaging.admin
 
 # ---------------------------------------------------------------
 # 5. Cloud Storage bucket for ad-campaign audio
@@ -296,6 +357,11 @@ if [[ "$USE_SA_KEY" != true ]]; then
     -- \
     gcloud iam workload-identity-pools create "$WIF_POOL" \
       --location=global --display-name="GitHub Actions" --quiet
+  # A deleted pool stays describable for 30 days; "exists" would then be a lie. Restore it.
+  if [[ "$(gcloud iam workload-identity-pools describe "$WIF_POOL" --location=global --format='value(state)')" == DELETED ]]; then
+    echo "    (the pool was deleted; restoring it)"
+    gcloud iam workload-identity-pools undelete "$WIF_POOL" --location=global --quiet
+  fi
 
   if [[ "$GITHUB_DEPLOY_REF" == any ]]; then
     ATTRIBUTE_CONDITION="assertion.repository == '$GITHUB_REPO'"
@@ -313,12 +379,41 @@ if [[ "$USE_SA_KEY" != true ]]; then
       --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
       --attribute-condition="$ATTRIBUTE_CONDITION" \
       --quiet
+  if [[ "$(gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER" \
+        --workload-identity-pool="$WIF_POOL" --location=global --format='value(state)')" == DELETED ]]; then
+    echo "    (the provider was deleted; restoring it)"
+    gcloud iam workload-identity-pools providers undelete "$WIF_PROVIDER" \
+      --workload-identity-pool="$WIF_POOL" --location=global --quiet
+  fi
+  # create_unless_exists leaves an EXISTING provider as it was, so a changed GITHUB_REPO / GITHUB_DEPLOY_REF
+  # would be silently ignored. Converge the condition.
+  CURRENT_CONDITION=$(gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER" \
+    --workload-identity-pool="$WIF_POOL" --location=global --format='value(attributeCondition)')
+  if [[ "$CURRENT_CONDITION" != "$ATTRIBUTE_CONDITION" ]]; then
+    echo "    updating the provider's condition:"
+    echo "      was: $CURRENT_CONDITION"
+    echo "      now: $ATTRIBUTE_CONDITION"
+    gcloud iam workload-identity-pools providers update-oidc "$WIF_PROVIDER" \
+      --workload-identity-pool="$WIF_POOL" --location=global \
+      --attribute-condition="$ATTRIBUTE_CONDITION" --quiet
+  fi
 
   # Let identities from this repository impersonate the CI service account (and nothing else).
   gcloud iam service-accounts add-iam-policy-binding "$GITHUB_ACTIONS_SA_EMAIL" \
     --role="roles/iam.workloadIdentityUser" \
     --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WIF_POOL/attribute.repository/$GITHUB_REPO" \
     --project="$GCP_PROJECT_ID" --quiet >/dev/null
+
+  # Bindings for any OTHER repository (say the repo was renamed) are left alone — they may be deliberate —
+  # but are reported, because each one is also a way to deploy.
+  WIF_PRINCIPAL="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WIF_POOL/attribute.repository/$GITHUB_REPO"
+  OTHER_PRINCIPALS=$(gcloud iam service-accounts get-iam-policy "$GITHUB_ACTIONS_SA_EMAIL" --project="$GCP_PROJECT_ID" \
+    --flatten='bindings[].members' --filter='bindings.role="roles/iam.workloadIdentityUser"' \
+    --format='value(bindings.members)' | grep -vxF "$WIF_PRINCIPAL" || true)
+  if [[ -n "$OTHER_PRINCIPALS" ]]; then
+    echo "    NOTE: these other identities can also impersonate $GITHUB_ACTIONS_SA (remove any you do not want):"
+    echo "$OTHER_PRINCIPALS" | sed 's/^/      /'
+  fi
 
   WIF_PROVIDER_RESOURCE=$(gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER" \
     --workload-identity-pool="$WIF_POOL" --location=global --format="value(name)")
@@ -343,6 +438,10 @@ else
   else
     echo "==> Generating GitHub Actions service account key..."
     KEY_FILE="$SCRIPT_DIR/../github-actions-key.json"
+    if [[ -s "$KEY_FILE" ]]; then
+      echo "ERROR: $KEY_FILE already holds a key. Store it as the secret (or delete the file) before minting another." >&2
+      exit 1
+    fi
     # umask: the key file is readable by this user only
     (umask 077 && gcloud iam service-accounts keys create "$KEY_FILE" \
       --iam-account="$GITHUB_ACTIONS_SA_EMAIL")
@@ -374,8 +473,17 @@ echo "==> Creating secrets in Secret Manager..."
 create_or_update_secret "bejo-db-password"          "$DB_PASSWORD"
 create_or_update_secret "bejo-jwt-secret"           "$JWT_SECRET"
 create_or_update_secret "bejo-api-token"            "$API_TOKEN"
-create_or_update_secret "bejo-firebase-credentials" "$FIREBASE_CREDENTIALS_BASE64"
 create_or_update_secret "bejo-seed-password"        "$SEED_PASSWORD"
+
+# FCM: by default the service sends as its own service account (FIREBASE_PROJECT_ID, defaulting to this
+# project) — no key. FIREBASE_CREDENTIALS_BASE64 is only for installs that must use a service-account key
+# (e.g. the Firebase project lives elsewhere); then also set the GitHub variable MOUNT_FIREBASE_CREDENTIALS=true.
+if [[ -n "${FIREBASE_CREDENTIALS_BASE64:-}" && "${MOUNT_FIREBASE_CREDENTIALS:-false}" == true ]]; then
+  create_or_update_secret "bejo-firebase-credentials" "$FIREBASE_CREDENTIALS_BASE64"
+else
+  echo "    (Firebase: sending push as the service account; no key stored. Set MOUNT_FIREBASE_CREDENTIALS=true"
+  echo "     and FIREBASE_CREDENTIALS_BASE64 in .env.gcp only if you need a key.)"
+fi
 
 # The QRIS callback shared secret is optional the same way. Set CALLBACK_SECRET in .env.gcp, and
 # give the payment provider the same value to send as the X-Callback-Secret header; until the
@@ -419,36 +527,46 @@ fi
 # ---------------------------------------------------------------
 IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPO/$GCP_SERVICE_NAME:latest"
 
-# Cloud Build needs permissions on a project it hasn't been used in: projects created since April
-# 2024 run it as the Compute Engine default service account (older ones as
-# PROJECT_NUMBER@cloudbuild.gserviceaccount.com), and neither is granted anything by default — the
-# build fails with "<number>-compute@... does not have storage.objects.get access to the Google
-# Cloud Storage object". Grant the builder role (source access, logs, pushing to Artifact Registry)
-# to whichever of the two exists. Idempotent.
-BUILD_PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT_ID" --format="value(projectNumber)")
-for build_sa in "$BUILD_PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
-                "$BUILD_PROJECT_NUMBER@cloudbuild.gserviceaccount.com"; do
-  if gcloud iam service-accounts describe "$build_sa" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
-    echo "==> Granting the Cloud Build builder role to $build_sa ..."
-    grant_project_roles "$build_sa" roles/cloudbuild.builds.builder
-    BUILD_SA_GRANTED=true
+if [[ "$SKIP_DEPLOY" == true ]]; then
+  echo "==> --skip-deploy: not building or deploying; the running service is untouched."
+else
+
+  # Cloud Build needs permissions on a project it hasn't been used in: projects created since April
+  # 2024 run it as the Compute Engine default service account (older ones as
+  # PROJECT_NUMBER@cloudbuild.gserviceaccount.com), and neither is granted anything by default — the
+  # build fails with "<number>-compute@... does not have storage.objects.get access to the Google
+  # Cloud Storage object". Grant the builder role (source access, logs, pushing to Artifact Registry)
+  # to whichever of the two exists. Idempotent.
+  BUILD_PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT_ID" --format="value(projectNumber)")
+  for build_sa in "$BUILD_PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+                  "$BUILD_PROJECT_NUMBER@cloudbuild.gserviceaccount.com"; do
+    if gcloud iam service-accounts describe "$build_sa" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+      grant_project_roles "$build_sa" roles/cloudbuild.builds.builder
+      if [[ "$ROLES_GRANTED" == true ]]; then
+        echo "==> Granted the Cloud Build builder role to $build_sa"
+        BUILD_SA_GRANTED=true
+      fi
+    fi
+  done
+  # IAM changes take a moment to propagate; a build started instantly can still be refused.
+  if [[ "${BUILD_SA_GRANTED:-false}" == true ]]; then sleep 20; fi
+
+  # Build with Cloud Build: runs on native amd64 server-side, so no local Docker/
+  # podman and no slow qemu emulation on Apple Silicon. Uploads the source
+  # (respecting .gcloudignore, or .gitignore when there is none), builds the Dockerfile,
+  # and pushes to Artifact Registry.
+  if [[ -n "$(git -C "$SCRIPT_DIR/.." status --porcelain 2>/dev/null)" ]]; then
+    echo "    NOTE: the working tree has uncommitted changes — the image is built from the files on disk, not from a commit."
   fi
-done
-# IAM changes take a moment to propagate; a build started instantly can still be refused.
-if [[ "${BUILD_SA_GRANTED:-false}" == true ]]; then sleep 20; fi
+  echo "==> Building image with Cloud Build (native amd64, no local emulation)..."
+  gcloud builds submit "$SCRIPT_DIR/.." --tag="$IMAGE" --quiet
 
-# Build with Cloud Build: runs on native amd64 server-side, so no local Docker/
-# podman and no slow qemu emulation on Apple Silicon. Uploads the source
-# (respecting .gcloudignore, or .gitignore when there is none), builds the Dockerfile,
-# and pushes to Artifact Registry.
-echo "==> Building image with Cloud Build (native amd64, no local emulation)..."
-gcloud builds submit "$SCRIPT_DIR/.." --tag="$IMAGE" --quiet
-
-# ---------------------------------------------------------------
-# 9. Initial Cloud Run deployment
-# ---------------------------------------------------------------
-# Same script the release workflow uses, so env vars/secrets/sizing are defined once.
-bash "$SCRIPT_DIR/deploy-cloud-run.sh" "$IMAGE"
+  # ---------------------------------------------------------------
+  # 9. Initial Cloud Run deployment
+  # ---------------------------------------------------------------
+  # Same script the release workflow uses, so env vars/secrets/sizing are defined once.
+  bash "$SCRIPT_DIR/deploy-cloud-run.sh" "$IMAGE"
+fi
 
 # ---------------------------------------------------------------
 # 10. Custom domain mapping (one-time, persists across deployments)
@@ -473,8 +591,14 @@ else
   # Takes the domain over from whichever project holds it now — only on request.
   if [[ "$TAKE_OVER_DOMAIN" == true ]]; then create_args+=(--force-override); fi
   if ! gcloud beta run domain-mappings create "${create_args[@]}"; then
-    echo "    (not mapped — see the error above. Common causes: $CUSTOM_DOMAIN is not verified in Search Console,"
-    echo "     or it is mapped in ANOTHER project: re-run with --take-over-domain to take it over)"
+    # A create that fails but leaves the mapping behind (a concurrent or interrupted run) is not a failure.
+    if gcloud beta run domain-mappings describe \
+         --domain="$CUSTOM_DOMAIN" --region="$GCP_REGION" --platform=managed >/dev/null 2>&1; then
+      echo "    (the mapping exists now — continuing)"
+    else
+      echo "    (not mapped — see the error above. Common causes: $CUSTOM_DOMAIN is not verified in Search Console,"
+      echo "     or it is mapped in ANOTHER project: re-run with --take-over-domain to take it over)"
+    fi
   fi
 fi
 

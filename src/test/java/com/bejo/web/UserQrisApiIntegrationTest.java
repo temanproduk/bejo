@@ -46,6 +46,7 @@ class UserQrisApiIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private com.bejo.notification.InMemoryEmailSender email;
 
     private void register(String username) throws Exception {
         Map<String, Object> body = new HashMap<>();
@@ -58,6 +59,7 @@ class UserQrisApiIntegrationTest {
         mockMvc.perform(post("/api/users/register").header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON).content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated());
+        EmailVerificationTestSupport.verifyEmail(mockMvc, objectMapper, email, username, username + "@example.com");
     }
 
     private String login(String username, String deviceId) throws Exception {

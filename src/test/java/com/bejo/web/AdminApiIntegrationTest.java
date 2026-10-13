@@ -108,6 +108,7 @@ class AdminApiIntegrationTest {
         mockMvc.perform(post("/api/users/register").header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON).content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated());
+        EmailVerificationTestSupport.verifyEmail(mockMvc, objectMapper, email, username, username + "@example.com");
         String login = mockMvc.perform(post("/api/auth/login").header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
@@ -263,7 +264,7 @@ class AdminApiIntegrationTest {
                 .andExpect(jsonPath("$.data[0].businessName").value("Bengkel Maju Admintest"))
                 .andExpect(jsonPath("$.data[0].businessRole").value("SUPER_ADMIN"))
                 .andExpect(jsonPath("$.data[0].email").value("adm_owner_b@example.com"))
-                .andExpect(jsonPath("$.data[0].emailVerified").value(false))
+                .andExpect(jsonPath("$.data[0].emailVerified").value(true))   // registerAndLogin confirms the emailed code
                 .andExpect(jsonPath("$.data[0].createdAt").isNotEmpty())
                 .andExpect(jsonPath("$.data[0].passwordHash").doesNotExist())
                 .andExpect(jsonPath("$.data[0].password").doesNotExist());

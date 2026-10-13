@@ -16,14 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.HexFormat;
 import java.util.Optional;
 
 /**
@@ -76,7 +71,6 @@ public class PasswordResetService {
     private final EmailSender emailSender;
     private final LoginThrottleService loginThrottle;
     private final TransactionTemplate tx;
-    private final SecureRandom random = new SecureRandom();
 
     @Value("${app.jwt.secret}")
     private String pepperSource;
@@ -154,7 +148,7 @@ public class PasswordResetService {
             return;
         }
 
-        String code = String.format("%06d", random.nextInt(1_000_000));
+        String code = OneTimeCode.generate();
         tx.executeWithoutResult(status -> {
             tokenRepository.invalidateOpen(user.getId(), now);   // a new code replaces any open one
             PasswordResetToken token = new PasswordResetToken();
@@ -216,13 +210,7 @@ public class PasswordResetService {
     // ---- helpers ----
 
     private String hash(Long userId, String code) {
-        try {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(("password-reset:" + pepperSource).getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            return HexFormat.of().formatHex(mac.doFinal((userId + ":" + code).getBytes(StandardCharsets.UTF_8)));
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("Cannot hash reset code", e);
-        }
+        return OneTimeCode.hash("password-reset", pepperSource, String.valueOf(userId), code);
     }
 
     private String body(User user, String code) {

@@ -10,13 +10,15 @@ Every endpoint with its auth requirement. Response envelope and pagination conve
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/snap/v1.0/qr/qr-mpm-notify` | None (optional `X-Callback-Secret`) | Inbound QRIS payment callback (SNAP QR MPM notify); routes by `merchantPan` (unknown → 404), records a MANAGED transaction, stores raw payload in `info` |
-| `POST` | `/api/users/register` | Public | Self-service registration; creates a **new business** + its first user (the `SUPER_ADMIN`) + bank (no QRIS row — QRIS is optional) |
+| `POST` | `/api/users/register` | Public | Self-service registration; creates a **new business** + its first user (the `SUPER_ADMIN`, **email unverified**) + bank (no QRIS row — QRIS is optional). Emails a 6-digit code; no phone number is collected; the email must be unique; 503 if email is not configured |
 | `GET` | `/api/users/me` | JWT | The caller's own account bundle (`MeResponseDto`: id + profile + role + shared business/bank/picture/account-settings) — same shape as login minus the token, for refreshing state |
 | `GET` | `/api/users/members` | JWT | List the users of the caller's business (any member) |
 | `POST` | `/api/users/members` | JWT (super admin) | Add a user to the caller's business as a `MEMBER` |
 | `PATCH` | `/api/users/members/{id}` | JWT (super admin) | Update a member (name/email/phone/password; a super admin can't be modified here) |
 | `DELETE` | `/api/users/members/{id}` | JWT (super admin) | Soft-delete a member (releases its username); a super admin can't be deleted |
-| `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT |
+| `POST` | `/api/auth/login` | Public | Validate credentials, upsert session, returns JWT. `403` + `data.reason=EMAIL_NOT_VERIFIED` while the email is unverified (checked after the password) |
+| `POST` | `/api/auth/verify-email` | Public (`X-API-TOKEN` only) | `{username, code}` → marks the email verified; every failure is one `400` message |
+| `POST` | `/api/auth/resend-verification` | Public (`X-API-TOKEN` only) | Email a fresh verification code to `{username}`; always 200 (no account enumeration), 503 if email is not configured |
 | `POST` | `/api/auth/forgot-password` | Public (`X-API-TOKEN` only) | Email a 6-digit reset code to the address on file for `{username}`; always 200 (no account enumeration), 503 if email is not configured |
 | `POST` | `/api/auth/reset-password` | Public (`X-API-TOKEN` only) | `{username, code, newPassword}` → sets the password, ends every session, lifts any login lockout; every failure is one `400` message |
 | `POST` | `/api/auth/logout` | JWT | Blacklist the current token (jti); optional body `{deviceId}` clears that device's FCM token |

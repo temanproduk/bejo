@@ -43,6 +43,7 @@ class UserServiceTest {
     @Mock private BusinessContext businessContext;
     @Mock private AccountSettingsService accountSettingsService;
     @Mock private PasswordEncoder passwordEncoder;
+    @Mock private EmailVerificationService emailVerificationService;
 
     // Real (not mocked): a simple config-backed value object
     private static final BusinessOptions BUSINESS_OPTIONS = new BusinessOptions(
@@ -54,14 +55,15 @@ class UserServiceTest {
     @BeforeEach
     void setUp() {
         userService = new UserService(userRepository, businessRepository, businessBankRepository,
-                qrisService, businessContext, accountSettingsService, BUSINESS_OPTIONS, passwordEncoder);
+                qrisService, businessContext, accountSettingsService, BUSINESS_OPTIONS, passwordEncoder,
+                emailVerificationService);
         lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);           // reads
         lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // picture / business / bank mutations (super admin)
     }
 
     private RegisterRequestDto registerRequest() {
         return new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, null);
+                "Warung Alice", null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -74,6 +76,43 @@ class UserServiceTest {
 
         verify(userRepository, never()).save(any());
         verify(businessRepository, never()).save(any());
+    }
+
+    @Test
+    void registerRejectsAnEmailAnotherActiveUserHas() {
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
+        when(userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNull("alice@example.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.register(registerRequest()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Email sudah digunakan");
+
+        verify(userRepository, never()).save(any());
+        verify(businessRepository, never()).save(any());   // nothing half-created
+    }
+
+    @Test
+    void registerCreatesAnUnverifiedUserAndReturnsIt() {
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
+        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
+
+        User created = userService.register(registerRequest());
+
+        assertThat(created.getUsername()).isEqualTo("alice");
+        assertThat(created.isEmailVerified()).isFalse();   // login stays refused until the emailed code is confirmed
+    }
+
+    @Test
+    void registerCollectsNoPhoneAndTrimsTheEmail() {
+        when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
+        when(passwordEncoder.encode("password1")).thenReturn("$encoded");
+
+        RegisterRequestDto request = new RegisterRequestDto("alice", "password1", "Alice", " alice@example.com ",
+                "Warung Alice", null, null, null, null, null, null, null, null);
+        User created = userService.register(request);
+
+        assertThat(created.getPhone()).isNull();   // the user adds a phone later, from Edit Profile
+        assertThat(created.getEmail()).isEqualTo("alice@example.com");
     }
 
     @Test
@@ -139,7 +178,7 @@ class UserServiceTest {
         when(passwordEncoder.encode("password1")).thenReturn("$encoded");
         String photo = java.util.Base64.getEncoder().encodeToString("img".getBytes());
         var req = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, "Kecil", "Otomotif", photo, null);
+                "Warung Alice", null, null, null, null, "Kecil", "Otomotif", photo, null);
 
         userService.register(req);
 
@@ -155,7 +194,7 @@ class UserServiceTest {
         when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
         when(passwordEncoder.encode("password1")).thenReturn("$encoded");
         var req = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, null, null, "9360082232606290012");
+                "Warung Alice", null, null, null, null, null, null, null, "9360082232606290012");
 
         userService.register(req);
 
@@ -168,12 +207,12 @@ class UserServiceTest {
     void registerRejectsInvalidSizeOrIndustry() {
         when(userRepository.existsByUsernameAndDeletedAtIsNull("alice")).thenReturn(false);
         var badSize = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, "Raksasa", null, null, null);
+                "Warung Alice", null, null, null, null, "Raksasa", null, null, null);
         assertThatThrownBy(() -> userService.register(badSize))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("size tidak valid");
 
         var badIndustry = new RegisterRequestDto("alice", "password1", "Alice", "alice@example.com",
-                "+628111111111", "Warung Alice", null, null, null, null, null, "Antariksa", null, null);
+                "Warung Alice", null, null, null, null, null, "Antariksa", null, null);
         assertThatThrownBy(() -> userService.register(badIndustry))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("industry tidak valid");
         verify(businessRepository, never()).save(any());
@@ -189,6 +228,88 @@ class UserServiceTest {
         assertThat(user.getName()).isEqualTo("New Name");
         assertThat(user.getEmail()).isEqualTo("new@example.com");
         assertThat(user.getPhone()).isEqualTo("+628999999999");
+    }
+
+    private User verifiedAlice() {
+        User user = new User();
+        org.springframework.test.util.ReflectionTestUtils.setField(user, "id", 5L);
+        user.setUsername("alice");
+        user.setEmail("alice@example.com");
+        user.setBusinessRole(BusinessRole.SUPER_ADMIN);   // the owner: the one who must verify a new address
+        user.setEmailVerified(true);
+        return user;
+    }
+
+    @Test
+    void changingTheEmailUnverifiesItRetiresOpenCodesAndReportsTheChange() {
+        User user = verifiedAlice();
+        when(businessContext.requireUser("alice")).thenReturn(user);
+
+        boolean changed = userService.updateProfile("alice",
+                new UpdateProfileRequestDto("Alice", "alice-new@example.com", "+628111111111"));
+
+        assertThat(changed).isTrue();                      // the caller then sends the new address a code
+        assertThat(user.isEmailVerified()).isFalse();
+        assertThat(user.getEmailChangedAt()).isNotNull();
+        verify(emailVerificationService).invalidateOpenCodes(5L);
+    }
+
+    @Test
+    void aSubAccountChangingItsEmailStaysVerifiedAndNeedsNoCode() {
+        User member = verifiedAlice();
+        member.setBusinessRole(BusinessRole.MEMBER);
+        when(businessContext.requireUser("alice")).thenReturn(member);
+
+        boolean needsCode = userService.updateProfile("alice",
+                new UpdateProfileRequestDto("Alice", "alice-new@example.com", "+628111111111"));
+
+        assertThat(needsCode).isFalse();                       // nothing to confirm for a sub-account
+        assertThat(member.getEmail()).isEqualTo("alice-new@example.com");
+        assertThat(member.isEmailVerified()).isTrue();         // so it can still log in
+        assertThat(member.getEmailChangedAt()).isNotNull();    // the password-reset guard still applies
+        verify(emailVerificationService, never()).invalidateOpenCodes(any());
+    }
+
+    @Test
+    void keepingTheSameEmailKeepsItVerified() {
+        User user = verifiedAlice();
+        when(businessContext.requireUser("alice")).thenReturn(user);
+
+        // same address, different case/whitespace: not a change
+        boolean changed = userService.updateProfile("alice",
+                new UpdateProfileRequestDto("Alice B", " ALICE@example.com ", "+628111111111"));
+
+        assertThat(changed).isFalse();
+        assertThat(user.isEmailVerified()).isTrue();
+        assertThat(user.getEmailChangedAt()).isNull();
+        verify(emailVerificationService, never()).invalidateOpenCodes(any());
+    }
+
+    @Test
+    void changingToAnotherUsersEmailIsRejected() {
+        User user = verifiedAlice();
+        when(businessContext.requireUser("alice")).thenReturn(user);
+        when(userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNullAndIdNot("taken@example.com", 5L)).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.updateProfile("alice",
+                new UpdateProfileRequestDto("Alice", "taken@example.com", "+628111111111")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Email sudah digunakan");
+
+        assertThat(user.getEmail()).isEqualTo("alice@example.com");   // unchanged
+        assertThat(user.isEmailVerified()).isTrue();
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void aBlankPhoneRemovesTheNumber() {
+        User user = verifiedAlice();
+        user.setPhone("+628111111111");
+        when(businessContext.requireUser("alice")).thenReturn(user);
+
+        userService.updateProfile("alice", new UpdateProfileRequestDto("Alice", "alice@example.com", ""));
+
+        assertThat(user.getPhone()).isNull();
     }
 
     @Test

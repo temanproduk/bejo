@@ -120,6 +120,49 @@ class MemberServiceTest {
     }
 
     @Test
+    void addRejectsAnEmailAnotherActiveUserHas() {
+        when(businessContext.requireUser("admin")).thenReturn(user("admin", BusinessRole.SUPER_ADMIN));
+        when(userRepository.countByBusinessIdAndDeletedAtIsNull(BIZ)).thenReturn(1L);
+        when(userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNull("bob@example.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.add("admin", addReq("bob")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Email sudah digunakan");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void aMemberTheSuperAdminAddsStartsWithAVerifiedEmail() {
+        // The owner vouches for staff they create; otherwise a member without a mailbox could never log in
+        when(businessContext.requireUser("admin")).thenReturn(user("admin", BusinessRole.SUPER_ADMIN));
+        when(userRepository.countByBusinessIdAndDeletedAtIsNull(BIZ)).thenReturn(1L);
+        when(passwordEncoder.encode("password1")).thenReturn("$h");
+
+        service.add("admin", addReq("newbie"));
+
+        org.mockito.ArgumentCaptor<User> saved = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(saved.capture());
+        assertThat(saved.getValue().isEmailVerified()).isTrue();
+    }
+
+    @Test
+    void updateRejectsAnEmailAnotherActiveUserHas() {
+        User admin = user("admin", BusinessRole.SUPER_ADMIN);
+        User member = user("bob", BusinessRole.MEMBER);
+        member.setEmail("bob@example.com");
+        when(businessContext.requireUser("admin")).thenReturn(admin);
+        when(userRepository.findByIdAndBusinessIdAndDeletedAtIsNull(9L, BIZ)).thenReturn(Optional.of(member));
+        when(userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNullAndIdNot("taken@example.com", null)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.update("admin", 9L,
+                new com.bejo.core.dto.UpdateMemberRequestDto(null, "taken@example.com", null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Email sudah digunakan");
+        assertThat(member.getEmail()).isEqualTo("bob@example.com");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
     void updateMemberAppliesProvidedFields() {
         User admin = user("admin", BusinessRole.SUPER_ADMIN);
         User member = user("bob", BusinessRole.MEMBER);

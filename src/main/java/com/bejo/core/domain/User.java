@@ -39,7 +39,7 @@ public class User {
     @Column(nullable = false)
     private String email;
 
-    @Column(nullable = false)
+    // Optional: registration does not require a phone number
     private String phone;
 
     @Column(name = "is_email_verified", nullable = false)

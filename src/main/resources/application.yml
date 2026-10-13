@@ -94,16 +94,24 @@ app:
     username: ${SEED_USERNAME:admin}
     password: ${SEED_PASSWORD:}
     name: ${SEED_NAME:Admin}
+    email: ${SEED_EMAIL:anton.rifco@gmail.com}   # verified at creation, so the seed admin can log in
     business-name: ${SEED_BUSINESS_NAME:My Business}
     business-address: ${SEED_BUSINESS_ADDRESS:}
     merchant-pan: ${SEED_MERCHANT_PAN:}
   firebase:
     credentials-path: ${FIREBASE_CREDENTIALS_PATH:}
     credentials-base64: ${FIREBASE_CREDENTIALS_BASE64:}
+    project-id: ${FIREBASE_PROJECT_ID:}
   mail:
     # From address; Zoho requires the authenticated mailbox or one of its aliases (default: the username)
     from: ${MAIL_FROM:}
     from-name: ${MAIL_FROM_NAME:Bejo}
+  email-verification:
+    code-ttl-minutes: 15
+    max-attempts: 5               # guesses per code
+    resend-cooldown-seconds: 60   # minimum gap between codes for one user
+    max-requests-per-hour: 5      # codes per user per hour
+    response-floor-ms: 1500       # pad resend-verification so an ignored request is not visibly faster
   password-reset:
     code-ttl-minutes: 15
     max-attempts: 5               # guesses per code

@@ -39,6 +39,7 @@ class AdsApiIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private com.bejo.notification.InMemoryEmailSender email;
 
     // Minimal valid mono 8-bit 8kHz PCM WAV of the given duration (silence) — jaudiotagger reads
     // its length from the header, so this exercises the real duration check without a fixture file.
@@ -70,6 +71,7 @@ class AdsApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated());
+        EmailVerificationTestSupport.verifyEmail(mockMvc, objectMapper, email, username, username + "@example.com");
     }
 
     private String login(String username, String deviceId) throws Exception {

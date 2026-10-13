@@ -6,6 +6,7 @@ import com.bejo.core.domain.Business;
 import com.bejo.core.domain.BusinessBank;
 import com.bejo.core.domain.Session;
 import com.bejo.core.domain.User;
+import com.bejo.shared.exception.EmailNotVerifiedException;
 import com.bejo.shared.exception.ResourceNotFoundException;
 import com.bejo.core.repository.BusinessBankRepository;
 import com.bejo.core.repository.BusinessRepository;
@@ -92,6 +93,17 @@ public class AuthService {
             throw new IllegalArgumentException("Nama pengguna atau kata sandi salah");
         }
         loginThrottleService.recordSuccess(request.username());
+
+        // Only after the password was right, so this never tells a guesser which usernames exist.
+        // Nothing is created for the attempt: no session, no push token, no JWT.
+        // Sub-accounts (MEMBER) never need it: the owner created them and vouches for them, and staff often
+        // have no mailbox of their own. That also covers members created before verification existed.
+        if (user.isSuperAdmin() && !user.isEmailVerified()) {
+            log.info("[LOGIN] Refused for username={}: email not verified", request.username());
+            throw new EmailNotVerifiedException(
+                    "Email belum diverifikasi. Masukkan kode verifikasi yang dikirim ke email Anda",
+                    EmailVerificationService.maskEmail(user.getEmail()));
+        }
 
         Business business = businessRepository.findById(user.getBusinessId())
                 .orElseThrow(() -> new ResourceNotFoundException("Business not found"));

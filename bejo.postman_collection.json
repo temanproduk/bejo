@@ -24,7 +24,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"phone\": \"+628100000000\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\",\n  \"merchantPan\": \"9360082232606290012\"\n}",
+              "raw": "{\n  \"username\": \"alice\",\n  \"password\": \"Secret1\",\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\",\n  \"businessName\": \"Alice Shop\",\n  \"businessAddress\": \"Jl. Contoh No. 1\",\n  \"bankName\": \"Bank BCA\",\n  \"bankNumber\": \"1234567890\",\n  \"bankAccountName\": \"Alice\",\n  \"merchantPan\": \"9360082232606290012\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -42,7 +42,7 @@
                 "register"
               ]
             },
-            "description": "Self-service registration. Creates a NEW BUSINESS and its first user as the SUPER_ADMIN (SELF_SERVICE) + bank profile. No JWT required — only X-API-TOKEN. No QRIS row is created (QRIS is optional; add one later via /api/qris/upload).\n\nMandatory: username, password, name, email, phone, businessName.\nOptional: businessAddress, nmid, bankName, bankNumber, bankAccountName.\n\nReturns HTTP 201 on success."
+            "description": "Self-service registration. Creates a NEW BUSINESS and its first user as the SUPER_ADMIN (SELF_SERVICE) + bank profile. No JWT required — only X-API-TOKEN. No QRIS row is created (QRIS is optional; add one later via /api/qris/upload).\n\nMandatory: username, password, name, email, businessName. There is NO phone number at registration — add one later with PATCH /api/users/me.\nOptional: businessAddress, merchantPan, bankName, bankNumber, bankAccountName, size, industry, storePhoto.\n\nThe email must be unique among active users. The account CANNOT LOG IN until its email is verified: a 6-digit code is emailed to it, and you confirm it with Verify Email. Registration never verifies on its own.\n\nReturns HTTP 201 with data { emailVerificationRequired, emailSent, email (masked) }. 400 Username/Email sudah digunakan. 503 = email is not configured on the server (nothing is created)."
           }
         },
         {
@@ -234,8 +234,84 @@
                 "login"
               ]
             },
-            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse `data` includes: id, username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessRole (SUPER_ADMIN|MEMBER), hasOwnQris, businessName, businessAddress, bankName, bankNumber, bankAccountName, profilePicture (business picture, null when unset), appSettings (bundled), token, tokenType, expiresIn.\n\nThe bundled profilePicture + appSettings save the client extra round trips on the home screen; GET /api/users/me returns the same bundle minus the token."
+            "description": "Authenticate with username + password. The test script auto-saves the JWT to `{{token}}`.\n\nResponse `data` includes: id, username, accountType, name, email, isEmailVerified, phone, isPhoneVerified, businessRole (SUPER_ADMIN|MEMBER), hasOwnQris, businessName, businessAddress, bankName, bankNumber, bankAccountName, profilePicture (business picture, null when unset), appSettings (bundled), token, tokenType, expiresIn.\n\nThe bundled profilePicture + appSettings save the client extra round trips on the home screen; GET /api/users/me returns the same bundle minus the token.\n\n403 with data.reason = \"EMAIL_NOT_VERIFIED\" (and the masked address in data.email) while an OWNER account's email is unverified (sub-accounts never need to verify) — checked only after the password was right. Verify the email (Verify Email / Resend Verification), then log in again."
           }
+        },
+        {
+          "name": "Verify Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\",\n  \"code\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/verify-email",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "verify-email"
+              ]
+            },
+            "description": "Confirms the email address with the 6-digit code that was emailed at registration (or after an email change). No login needed, but `X-API-TOKEN` is required.\n\n200 on success — the user then logs in normally (verification does not log them in). Every failure is one 400 message, \"Kode tidak valid atau sudah kedaluwarsa\" (wrong, expired, already used, too many attempts, unknown user). A code allows 5 guesses and lives 15 minutes."
+          },
+          "response": []
+        },
+        {
+          "name": "Resend Verification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"alice\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/resend-verification",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "resend-verification"
+              ]
+            },
+            "description": "Emails a fresh verification code to the address on file for this username. No login needed, but `X-API-TOKEN` is required.\n\nAlways HTTP 200 with the same message whether or not the username exists or is already verified (no account enumeration; ~1.5 s on purpose). Nothing is sent if a code was requested in the last 60 seconds or 5 times in the last hour. A new code replaces the previous one.\n\n503 = email is not configured on the server."
+          },
+          "response": []
         },
         {
           "name": "Forgot Password",

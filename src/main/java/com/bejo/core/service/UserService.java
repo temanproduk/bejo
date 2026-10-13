@@ -51,6 +51,7 @@ public class UserService {
     private final AccountSettingsService accountSettingsService;
     private final BusinessOptions businessOptions;
     private final PasswordEncoder passwordEncoder;
+    private final EmailVerificationService emailVerificationService;
 
     public UserService(UserRepository userRepository,
                        BusinessRepository businessRepository,
@@ -59,7 +60,8 @@ public class UserService {
                        BusinessContext businessContext,
                        AccountSettingsService accountSettingsService,
                        BusinessOptions businessOptions,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       EmailVerificationService emailVerificationService) {
         this.userRepository = userRepository;
         this.businessRepository = businessRepository;
         this.businessBankRepository = businessBankRepository;
@@ -68,6 +70,7 @@ public class UserService {
         this.accountSettingsService = accountSettingsService;
         this.businessOptions = businessOptions;
         this.passwordEncoder = passwordEncoder;
+        this.emailVerificationService = emailVerificationService;
     }
 
     /**
@@ -95,13 +98,22 @@ public class UserService {
     /**
      * Self-service registration: creates a new business and its first user as the
      * {@link BusinessRole#SUPER_ADMIN}. QRIS is optional (no {@code business_qris} row is
-     * created — the user may upload one later).
+     * created — the user may upload one later). The account starts with an unverified email and
+     * cannot log in until the emailed code is confirmed — the caller sends that code once this
+     * transaction has committed (see {@link EmailVerificationService#sendCode}). Registration collects
+     * no phone number; the user can add one from Edit Profile.
+     *
+     * @return the created user
      */
     @Transactional
-    public void register(RegisterRequestDto request) {
+    public User register(RegisterRequestDto request) {
         log.info("[REGISTER] username={}", request.username());
         if (userRepository.existsByUsernameAndDeletedAtIsNull(request.username())) {
             throw new IllegalArgumentException("Username sudah digunakan");
+        }
+        String email = request.email().trim();
+        if (userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNull(email)) {
+            throw new IllegalArgumentException("Email sudah digunakan");
         }
 
         Business business = new Business();
@@ -122,8 +134,8 @@ public class UserService {
         user.setUsername(request.username());
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setName(request.name());
-        user.setEmail(request.email());
-        user.setPhone(request.phone());
+        user.setEmail(email);
+        // No phone at registration: the user adds one later from Edit Profile (the column is nullable)
         user.setBusinessId(business.getId());
         user.setBusinessRole(BusinessRole.SUPER_ADMIN);
         user.setAccountType(AccountType.SELF_SERVICE);
@@ -142,23 +154,44 @@ public class UserService {
         businessBankRepository.save(bank);
 
         log.info("[REGISTER] Created business id={} + super admin username={}", business.getId(), request.username());
+        return user;
     }
 
+    /**
+     * Updates the caller's name, email and phone. A different email must not belong to another active user.
+     * For an owner (super admin) the new address is unverified until the emailed code is confirmed — so it
+     * also retires any code still outstanding for the old address. A sub-account never needs to verify, so
+     * its email just changes.
+     *
+     * @return true if the owner's email address changed and so needs verifying — the caller then sends a
+     *         code to the new address once this transaction has committed
+     */
     @Transactional
-    public void updateProfile(String username, UpdateProfileRequestDto request) {
+    public boolean updateProfile(String username, UpdateProfileRequestDto request) {
         log.info("[PROFILE] username={}", username);
         User user = businessContext.requireUser(username);
+        String email = request.email().trim();
+        boolean emailChanged = user.getEmail() == null || !user.getEmail().equalsIgnoreCase(email);
+        if (emailChanged && userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNullAndIdNot(email, user.getId())) {
+            throw new IllegalArgumentException("Email sudah digunakan");
+        }
         user.setName(request.name());
         // Remember when the address changed: password-reset codes are not sent to a recently changed
         // address, so a stolen session cannot swap in its own email and then reset the password.
-        if (user.getEmail() == null || !user.getEmail().equalsIgnoreCase(request.email())) {
+        boolean needsVerification = false;
+        if (emailChanged) {
             user.setEmailChangedAt(LocalDateTime.now());
-            user.setEmailVerified(false);
+            if (user.isSuperAdmin()) {
+                user.setEmailVerified(false);
+                emailVerificationService.invalidateOpenCodes(user.getId());
+                needsVerification = true;
+            }
         }
-        user.setEmail(request.email());
-        user.setPhone(request.phone());
+        user.setEmail(email);
+        user.setPhone(trimToNull(request.phone()));
         userRepository.save(user);
         log.info("[PROFILE] Updated for username={}", username);
+        return needsVerification;
     }
 
     @Transactional

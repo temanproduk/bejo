@@ -71,16 +71,23 @@ public class MemberService {
         if (userRepository.existsByUsernameAndDeletedAtIsNull(request.username())) {
             throw new IllegalArgumentException("Username sudah digunakan");
         }
+        String email = request.email().trim();
+        if (userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNull(email)) {
+            throw new IllegalArgumentException("Email sudah digunakan");
+        }
         User member = new User();
         member.setUsername(request.username());
         member.setPasswordHash(passwordEncoder.encode(request.password()));
         member.setName(request.name());
-        member.setEmail(request.email());
+        member.setEmail(email);
         member.setPhone(request.phone());
         member.setBusinessId(caller.getBusinessId());
         member.setBusinessRole(BusinessRole.MEMBER);
         member.setAccountType(AccountType.MANAGED);
-        member.setEmailVerified(false);
+        // Sub-accounts never need to verify (AuthService only gates owners): the owner vouches for the
+        // people they add, and staff often have no mailbox of their own. Stored verified anyway so the
+        // flag reads true everywhere (admin dashboard, /me).
+        member.setEmailVerified(true);
         member.setPhoneVerified(false);
         userRepository.save(member);
         log.info("[MEMBER] Added username={} to businessId={} by {}", request.username(), caller.getBusinessId(), callerUsername);
@@ -98,7 +105,14 @@ public class MemberService {
             throw new ForbiddenException("Super admin tidak dapat diubah");
         }
         if (request.name() != null) member.setName(request.name());
-        if (request.email() != null) member.setEmail(request.email());
+        if (request.email() != null) {
+            String email = request.email().trim();
+            if (!email.equalsIgnoreCase(member.getEmail())
+                    && userRepository.existsByEmailIgnoreCaseAndDeletedAtIsNullAndIdNot(email, member.getId())) {
+                throw new IllegalArgumentException("Email sudah digunakan");
+            }
+            member.setEmail(email);
+        }
         if (request.phone() != null) member.setPhone(request.phone());
         if (request.password() != null) member.setPasswordHash(passwordEncoder.encode(request.password()));
         userRepository.save(member);

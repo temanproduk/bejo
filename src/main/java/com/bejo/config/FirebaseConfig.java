@@ -31,6 +31,15 @@ public class FirebaseConfig {
     @Value("${app.firebase.credentials-base64:}")
     private String credentialsBase64;
 
+    /**
+     * The Firebase project that owns the app's FCM tokens. Setting it with no explicit credentials selects
+     * application-default credentials — on Cloud Run, the service's own identity — so no key file is needed
+     * (organizations that enforce iam.disableServiceAccountKeyCreation can't issue one). That identity needs
+     * roles/firebasecloudmessaging.admin. Explicit credentials, when given, still take precedence.
+     */
+    @Value("${app.firebase.project-id:}")
+    private String projectId;
+
     @PostConstruct
     public void initialize() throws IOException {
         if (!FirebaseApp.getApps().isEmpty()) {
@@ -46,14 +55,22 @@ public class FirebaseConfig {
         } else if (StringUtils.hasText(credentialsPath)) {
             credentials = GoogleCredentials.fromStream(new FileInputStream(credentialsPath));
             log.info("Firebase initialized from credentials file: {}", credentialsPath);
+        } else if (StringUtils.hasText(projectId)) {
+            // Fails startup when no application-default credentials exist, like a malformed key does:
+            // a misconfigured deploy should be rejected, not run with push silently dead.
+            credentials = GoogleCredentials.getApplicationDefault();
+            log.info("Firebase initialized from application-default credentials (project {})", projectId);
         } else {
             log.warn("No Firebase credentials configured — push notifications will be disabled");
             return;
         }
 
-        FirebaseOptions options = FirebaseOptions.builder()
-                .setCredentials(credentials)
-                .build();
+        FirebaseOptions.Builder builder = FirebaseOptions.builder().setCredentials(credentials);
+        // Application-default credentials from the metadata server carry no project id; FCM needs one.
+        if (StringUtils.hasText(projectId)) {
+            builder.setProjectId(projectId);
+        }
+        FirebaseOptions options = builder.build();
 
         FirebaseApp.initializeApp(options);
         log.info("FirebaseApp initialized successfully");

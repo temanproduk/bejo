@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 
 /**
  * Test double for {@link EmailSender}: records every message instead of speaking SMTP, so the
- * functional tests can read the reset code out of the "email" and finish the flow. Bound under the
+ * functional tests can read the reset or verification code out of the "email" and finish the flow. Bound under the
  * {@code test} profile (where {@link SmtpEmailSender} is not active).
  */
 @Service
@@ -19,7 +19,7 @@ public class InMemoryEmailSender implements EmailSender {
 
     public record Sent(String to, String subject, String body) {}
 
-    private static final Pattern CODE = Pattern.compile("Kode reset Anda: (\\d{6})");
+    private static final Pattern CODE = Pattern.compile("Kode (?:reset|verifikasi) Anda: (\\d{6})");
 
     private final List<Sent> sent = new CopyOnWriteArrayList<>();
     private volatile boolean enabled = true;

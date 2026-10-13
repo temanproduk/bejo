@@ -5,6 +5,11 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+/**
+ * Self-service registration. There is deliberately no phone field: registration asks only for what is
+ * needed to create the account, and a phone number is added later from Edit Profile. (A client that still
+ * sends {@code phone} is not rejected — unknown JSON properties are ignored — but the value is discarded.)
+ */
 public record RegisterRequestDto(
         @NotBlank(message = "username wajib diisi")
         @Size(min = 3, max = 50, message = "username harus antara 3 hingga 50 karakter")
@@ -25,11 +30,6 @@ public record RegisterRequestDto(
         @Email(message = "format email tidak valid")
         @Size(max = 255, message = "email maksimal 255 karakter")
         String email,
-
-        @NotBlank(message = "phone wajib diisi")
-        @Pattern(regexp = "^\\+[1-9][0-9]{6,14}$",
-                 message = "format nomor telepon tidak valid (contoh: +628123456789)")
-        String phone,
 
         @NotBlank(message = "businessName wajib diisi")
         @Size(max = 255, message = "businessName maksimal 255 karakter")

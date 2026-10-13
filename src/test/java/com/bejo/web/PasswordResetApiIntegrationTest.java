@@ -57,6 +57,9 @@ class PasswordResetApiIntegrationTest {
         mockMvc.perform(post("/api/users/register").header("X-API-TOKEN", API_TOKEN)
                         .contentType(APPLICATION_JSON).content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated());
+        // Registration leaves the email unverified and login refused; finish that first, then the
+        // reset code is the only code in play for the rest of the test
+        EmailVerificationTestSupport.verifyEmail(mockMvc, objectMapper, email, username, username + "@example.com");
         return login(username, "password1").andReturn().getResponse().getContentAsString()
                 .replaceAll(".*\"token\":\"([^\"]+)\".*", "$1");
     }
@@ -77,6 +80,11 @@ class PasswordResetApiIntegrationTest {
         return mockMvc.perform(post("/api/auth/reset-password").header("X-API-TOKEN", API_TOKEN)
                 .contentType(APPLICATION_JSON).content(objectMapper.writeValueAsString(Map.of(
                         "username", username, "code", code, "newPassword", newPassword))));
+    }
+
+    /** Password-reset emails only: registration and address changes also send verification emails. */
+    private java.util.List<InMemoryEmailSender.Sent> resetEmailsTo(String address) {
+        return email.sentTo(address).stream().filter(s -> s.body().contains("Kode reset Anda")).toList();
     }
 
     private String wrongCodeFor(String realCode) {
@@ -169,7 +177,7 @@ class PasswordResetApiIntegrationTest {
         forgot("pr_cool").andExpect(status().isOk());
         forgot("pr_cool").andExpect(status().isOk());   // same answer, but suppressed
 
-        assertThat(email.sentTo("pr_cool@example.com")).hasSize(1);
+        assertThat(resetEmailsTo("pr_cool@example.com")).hasSize(1);
     }
 
     @Test
@@ -200,8 +208,10 @@ class PasswordResetApiIntegrationTest {
 
         forgot("pr_swap").andExpect(status().isOk());   // same generic answer...
 
-        assertThat(email.sentTo("attacker@example.com")).isEmpty();   // ...but nothing is sent anywhere
-        assertThat(email.sentTo("pr_swap@example.com")).isEmpty();
+        // ...but no RESET code goes anywhere. (The new address was sent a *verification* code when it was set;
+        // that only confirms the address and cannot change the password.)
+        assertThat(resetEmailsTo("attacker@example.com")).isEmpty();
+        assertThat(resetEmailsTo("pr_swap@example.com")).isEmpty();
     }
 
     // ---------- configuration and validation ----------

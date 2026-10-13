@@ -7,6 +7,8 @@ The data-only push design, the producer/queue/consumer split and stale-token cle
 
 ## Push notifications (FCM)
 
+**Credentials (`FirebaseConfig`):** an explicit key (`FIREBASE_CREDENTIALS_BASE64` / `_PATH`) wins; otherwise, when `FIREBASE_PROJECT_ID` is set, the app sends as its own service account via application-default credentials — no key file, which is what Cloud Run uses because the org forbids creating service-account keys (that account needs `roles/firebasecloudmessaging.admin`, granted by `init-gcp.sh`). With neither, push is disabled with a warning. A token belongs to one Firebase project: the app's `google-services.json` and the server's project must match, or FCM answers `SENDER_ID_MISMATCH` (which the stale-token cleanup treats as a dead token).
+
 FCM sending lives in `PushNotificationService` (shared). **Every message is data-only** — no FCM `notification` block anywhere, so the app always gets `onMessageReceived` and renders the push itself; `data.type` (`PushType`) says which kind it is.
 
 Transaction push copy renders the amount through `shared/util/Rupiah.format` — Indonesian currency (`Rp 1.000.000`, `.` grouping, `,` for decimals, decimals only when non-zero, never padded to `,00`). It goes in `data.body` only; **no `notification` block is ever added** (see `PushJobSender.buildMessage`, which only calls `putAllData`), since that would stop `onMessageReceived` firing on a backgrounded app and the payment would not be announced aloud. `transactions.amount` is a `BIGINT` of whole rupiah, so the decimal branch is currently unreachable but is implemented + tested.

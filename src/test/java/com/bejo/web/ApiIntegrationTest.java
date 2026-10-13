@@ -33,6 +33,7 @@ class ApiIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private com.bejo.notification.InMemoryEmailSender email;
     @Autowired private com.bejo.commerce.repository.TransactionRepository transactionRepository;
     @Autowired private com.bejo.core.repository.UserRepository userRepository;
     @Autowired private com.bejo.core.repository.BusinessRepository businessRepository;
@@ -52,6 +53,7 @@ class ApiIntegrationTest {
         return body;
     }
 
+    // Registers AND confirms the email: a new account cannot log in until the emailed code is verified.
     private void register(String username) throws Exception {
         mockMvc.perform(post("/api/users/register")
                         .header("X-API-TOKEN", API_TOKEN)
@@ -59,6 +61,7 @@ class ApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(registerBody(username))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value(1));
+        EmailVerificationTestSupport.verifyEmail(mockMvc, objectMapper, email, username, username + "@example.com");
     }
 
     private String login(String username, String password, String deviceId) throws Exception {
@@ -1189,6 +1192,7 @@ class ApiIntegrationTest {
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated());
+        EmailVerificationTestSupport.verifyEmail(mockMvc, objectMapper, email, "biz_class1", "biz_class1@example.com");
 
         // On login they come back; NOT on /me (immutable → app caches from login)
         mockMvc.perform(post("/api/auth/login")
@@ -1459,6 +1463,8 @@ class ApiIntegrationTest {
                                 "email", "updated@example.com",
                                 "phone", "+628999999999"))))
                 .andExpect(status().isOk());
+        // A new address must be confirmed before the next login (a code went to it)
+        EmailVerificationTestSupport.verifyEmail(mockMvc, objectMapper, email, "prof_user1", "updated@example.com");
 
         mockMvc.perform(patch("/api/users/me/bank")
                         .header("X-API-TOKEN", API_TOKEN)
