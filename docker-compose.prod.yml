@@ -16,6 +16,9 @@ name: bejo
 # Third-party images are pinned by digest (the tag is for humans). `docker compose up` does not re-pull
 # a tag it already has, so a floating tag meant Postgres and Caddy silently never got patched; now an
 # update is a reviewed change — Dependabot (docker-compose ecosystem) opens the PR.
+# Pin the multi-arch INDEX digest (what the registry returns for the tag), never `podman/docker image inspect`
+# RepoDigests from a laptop: on an Apple Silicon Mac that is the arm64-only manifest, which fails on an amd64
+# server or runner with "exec format error" (this broke CI once).
 x-hardening: &hardening
   # A process inside the container can't gain privileges via setuid binaries.
   security_opt:
@@ -30,7 +33,7 @@ x-logging: &logging
 
 services:
   postgres:
-    image: postgres:17-alpine@sha256:0b2882c46a2b8d8e148431b333394348cf4d7f15aec6df7f17d51dc641e56cfa
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     container_name: bejo-postgres
     restart: unless-stopped
     environment:
@@ -81,7 +84,7 @@ services:
     logging: *logging
 
   caddy:
-    image: caddy:2-alpine@sha256:84058f1a0e5beb97664a9b79dcfd267b594c033d5bb88d8463cdfb59c0779197
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     container_name: bejo-caddy
     restart: unless-stopped
     depends_on:

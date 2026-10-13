@@ -19,16 +19,20 @@
 #   bash scripts/init-gcp.sh                # first run, or any re-run
 #   bash scripts/init-gcp.sh --sa-key       # use a downloaded key instead of Workload Identity
 #   bash scripts/init-gcp.sh --rotate-key   # --sa-key, and mint a new key even if one exists
+#   bash scripts/init-gcp.sh --take-over-domain   # map the custom domain here even if another
+#                                                 # project (e.g. an abandoned one) still holds it
 
 set -euo pipefail
 
 USE_SA_KEY=false
 ROTATE_KEY=false
+TAKE_OVER_DOMAIN=false
 for arg in "$@"; do
   case "$arg" in
-    --sa-key)     USE_SA_KEY=true ;;
-    --rotate-key) USE_SA_KEY=true; ROTATE_KEY=true ;;
-    *) echo "ERROR: unknown argument: $arg (supported: --sa-key, --rotate-key)" >&2; exit 1 ;;
+    --sa-key)           USE_SA_KEY=true ;;
+    --rotate-key)       USE_SA_KEY=true; ROTATE_KEY=true ;;
+    --take-over-domain) TAKE_OVER_DOMAIN=true ;;
+    *) echo "ERROR: unknown argument: $arg (supported: --sa-key, --rotate-key, --take-over-domain)" >&2; exit 1 ;;
   esac
 done
 
@@ -452,22 +456,41 @@ bash "$SCRIPT_DIR/deploy-cloud-run.sh" "$IMAGE"
 # Managed Cloud Run domain mappings live under `gcloud beta run domain-mappings`
 # (the GA `gcloud run domain-mappings` group is Anthos-only and rejects --region).
 # Requires the domain verified in Google Search Console.
-echo "==> Mapping custom domain $CUSTOM_DOMAIN..."
-gcloud beta run domain-mappings create \
-  --service="$GCP_SERVICE_NAME" \
-  --domain="$CUSTOM_DOMAIN" \
-  --region="$GCP_REGION" \
-  --platform=managed \
-  --quiet || echo "    (not mapped — domain unverified or already mapped; see the error above)"
+echo "==> Custom domain $CUSTOM_DOMAIN..."
+# Idempotent: a re-run must not report the existing mapping as a failure. Only create it when this
+# project does not have it yet.
+if gcloud beta run domain-mappings describe \
+     --domain="$CUSTOM_DOMAIN" --region="$GCP_REGION" --platform=managed >/dev/null 2>&1; then
+  mapped_to=$(gcloud beta run domain-mappings describe \
+    --domain="$CUSTOM_DOMAIN" --region="$GCP_REGION" --platform=managed --format="value(spec.routeName)")
+  echo "    (already mapped in this project to service '$mapped_to' — nothing to do)"
+  if [[ "$mapped_to" != "$GCP_SERVICE_NAME" ]]; then
+    echo "    WARNING: it points at '$mapped_to', not '$GCP_SERVICE_NAME'. Delete it and re-run to remap:"
+    echo "      gcloud beta run domain-mappings delete --domain=$CUSTOM_DOMAIN --region=$GCP_REGION --platform=managed"
+  fi
+else
+  create_args=(--service="$GCP_SERVICE_NAME" --domain="$CUSTOM_DOMAIN" --region="$GCP_REGION" --platform=managed --quiet)
+  # Takes the domain over from whichever project holds it now — only on request.
+  if [[ "$TAKE_OVER_DOMAIN" == true ]]; then create_args+=(--force-override); fi
+  if ! gcloud beta run domain-mappings create "${create_args[@]}"; then
+    echo "    (not mapped — see the error above. Common causes: $CUSTOM_DOMAIN is not verified in Search Console,"
+    echo "     or it is mapped in ANOTHER project: re-run with --take-over-domain to take it over)"
+  fi
+fi
 
-echo ""
-echo "==> DNS records to add at your registrar for $CUSTOM_DOMAIN:"
-gcloud beta run domain-mappings describe \
-  --domain="$CUSTOM_DOMAIN" \
-  --region="$GCP_REGION" \
-  --platform=managed \
-  --format="table(status.resourceRecords[].name,status.resourceRecords[].rrdata,status.resourceRecords[].type)" \
-  || echo "    (domain mapping not created — verify $CUSTOM_DOMAIN ownership in Search Console, then re-run this script)"
+# Show where it stands and the DNS record it needs (nothing is printed if there is no mapping).
+# `read` returns non-zero on empty input (no mapping), which would abort the script under `set -e`
+map_ready=""; rec_type=""; rec_name=""; rec_data=""
+read -r map_ready < <(gcloud beta run domain-mappings describe --domain="$CUSTOM_DOMAIN" \
+  --region="$GCP_REGION" --platform=managed --format="value(status.conditions[0].status)" 2>/dev/null || true) || true
+read -r rec_type rec_name rec_data < <(gcloud beta run domain-mappings describe --domain="$CUSTOM_DOMAIN" \
+  --region="$GCP_REGION" --platform=managed \
+  --format="value(status.resourceRecords[0].type,status.resourceRecords[0].name,status.resourceRecords[0].rrdata)" \
+  2>/dev/null || true) || true
+if [[ -n "${rec_type:-}" ]]; then
+  echo "    Ready: ${map_ready:-unknown}  (True = certificate issued; Unknown = still being issued, can take a while)"
+  echo "    DNS record the domain needs at your registrar/Cloudflare:  $rec_type  $rec_name  ->  $rec_data"
+fi
 
 echo ""
 echo "==> Done!"

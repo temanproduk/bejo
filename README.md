@@ -119,7 +119,7 @@ cp .env.gcp.example .env.gcp   # fill in all values
 bash scripts/init-gcp.sh
 ```
 
-Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. Safe to re-run: existing resources are skipped, secrets get a new version, and the database user's password is re-synced to `.env.gcp`. Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
+Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and maps `api.bejo.temanproduk.com`. Safe to re-run: existing resources are skipped, secrets get a new version, and the database user's password is re-synced to `.env.gcp`. The custom-domain step is idempotent too: an existing mapping is detected and left alone (no error), and `--take-over-domain` maps the domain to this project even if another one — say, an abandoned project — still holds it (it uses Cloud Run's `--force-override`). Requires `gcloud auth login` and domain verified in [Google Search Console](https://search.google.com/search-console).
 
 **Database backups (Cloud SQL):** `init-gcp.sh` enables automated daily backups (window `CLOUD_SQL_BACKUP_START_TIME`, default 19:00 UTC; the last 7 are kept) and re-running it turns them on for an instance that was created without them. Point-in-time recovery is deliberately off: it archives WAL on the instance's own 10 GB disk (auto-increase is off), and a full disk takes the database down — enable PITR and storage auto-increase together if you want it.
 

@@ -23,7 +23,7 @@ jobs:
     # production VM runs, pinned by digest.
     services:
       postgres:
-        image: postgres:17-alpine@sha256:0b2882c46a2b8d8e148431b333394348cf4d7f15aec6df7f17d51dc641e56cfa
+        image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
         env:
           POSTGRES_DB: bejo
           POSTGRES_USER: bejo
