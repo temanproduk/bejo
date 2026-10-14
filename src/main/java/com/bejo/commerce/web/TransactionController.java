@@ -79,6 +79,16 @@ public class TransactionController {
         return ResponseEntity.ok(ApiResponseDto.success("Transaksi berhasil diubah", data));
     }
 
+    // Marks a QRIS sale that is waiting for payment as paid ("Sudah Terbayar"), by hand. Open to any user of
+    // the business. 400 when the transaction was not awaiting payment; repeating it on a paid one is a no-op.
+    @PostMapping("/{transactionId}/mark-paid")
+    public ResponseEntity<ApiResponseDto<TransactionResponseDto>> markPaid(
+            @PathVariable String transactionId,
+            Authentication authentication) {
+        TransactionResponseDto data = transactionService.markPaid(authentication.getName(), transactionId);
+        return ResponseEntity.ok(ApiResponseDto.success("Transaksi ditandai sudah terbayar", data));
+    }
+
     @DeleteMapping("/{transactionId}")
     public ResponseEntity<ApiResponseDto<Void>> deleteTransaction(
             @PathVariable String transactionId,

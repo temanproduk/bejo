@@ -64,6 +64,7 @@ class TransactionServiceTest {
     @Mock private com.bejo.core.repository.UserQrisRepository userQrisRepository;
     @Mock private com.bejo.notification.PushNotificationService pushNotificationService;
     @Mock private BusinessContext businessContext;
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private TransactionService transactionService;
     private static final jakarta.validation.Validator VALIDATOR =
@@ -74,7 +75,7 @@ class TransactionServiceTest {
         transactionService = new TransactionService(transactionRepository, transactionItemRepository,
                 productRepository, stockMutationService, businessRepository, userRepository,
                 userQrisRepository, pushNotificationService, businessContext,
-                VALIDATOR, new SimpleMeterRegistry());
+                VALIDATOR, transactionManager, new SimpleMeterRegistry());
         stubAtomicStock();
         lenient().when(businessContext.requireBusinessId("alice")).thenReturn(BIZ);
         lenient().when(businessContext.requireSuperAdminBusinessId("alice")).thenReturn(BIZ);  // alice = super admin (delete)
@@ -802,5 +803,433 @@ class TransactionServiceTest {
 
         assertThatThrownBy(() -> transactionService.bulkCreate("ghost", request))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+    // ---------- awaiting payment (QRIS sales recorded before they are paid) ----------
+
+    private AddTransactionRequestDto manualWithSource(String issuerName) {
+        return new AddTransactionRequestDto("MANUAL", LocalDateTime.now(), 50_000L,
+                issuerName, null, null, null, null, null);
+    }
+
+    private Transaction savedByCreate() {
+        ArgumentCaptor<Transaction> captor = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository).save(captor.capture());
+        return captor.getValue();
+    }
+
+    @Test
+    void manualQrisSaleStartsAwaitingPayment() {
+        transactionService.create("alice", "key-1", null, manualWithSource("QRIS"));
+
+        Transaction saved = savedByCreate();
+        assertThat(saved.getStatus()).isEqualTo("AWAITING_PAYMENT");
+        assertThat(saved.getSource()).isEqualTo("QRIS");
+        assertThat(saved.getPaidAt()).isNull();
+    }
+
+    @Test
+    void qrisSourceIsMatchedIgnoringCaseAndSpaces() {
+        transactionService.create("alice", "key-1", null, manualWithSource("  qris "));
+
+        assertThat(savedByCreate().getStatus()).isEqualTo("AWAITING_PAYMENT");
+    }
+
+    @Test
+    void otherSourcesAreRecordedAsPaid() {
+        for (String source : new String[] {"Tunai", "Transfer", "Kartu Kredit", "Kartu Debit", "Lainnya", null}) {
+            org.mockito.Mockito.clearInvocations(transactionRepository);
+            transactionService.create("alice", "key-" + source, null, manualWithSource(source));
+            assertThat(savedByCreate().getStatus()).as("source %s", source).isEqualTo("SUCCESS");
+        }
+    }
+
+    @Test
+    void parsedPaymentFromAnAppCalledQrisIsNeverAwaiting() {
+        // The word only means something for a hand-entered sale; a detected payment has been paid by definition
+        transactionService.create("alice", "key-1", null,
+                new AddTransactionRequestDto("PARSED", LocalDateTime.now(), 50_000L, "QRIS", null, null, null, "AstraPay", null));
+
+        assertThat(savedByCreate().getStatus()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    void bulkSyncedQrisSaleAlsoStartsAwaitingPayment() {
+        when(transactionRepository.findByIdempotencyKeyAndBusinessId(any(), eq(BIZ))).thenReturn(Optional.empty());
+
+        transactionService.bulkCreate("alice", new com.bejo.commerce.dto.BulkAddTransactionRequestDto(
+                List.of(bulkItem("k1", manualWithSource("QRIS")))));
+
+        assertThat(savedByCreate().getStatus()).isEqualTo("AWAITING_PAYMENT");
+    }
+
+    @Test
+    void summaryLeavesOutTransactionsAwaitingPaymentOrCancelled() {
+        var zero = org.mockito.Mockito.mock(com.bejo.commerce.repository.TransactionSummaryProjection.class);
+        when(zero.getTotalAmount()).thenReturn(0L);
+        when(zero.getCount()).thenReturn(0L);
+        var notIncome = List.of("AWAITING_PAYMENT", "CANCELLED");
+        when(transactionRepository.sumBetween(eq(BIZ), any(), any(), eq(notIncome))).thenReturn(zero);
+
+        transactionService.summary("alice", LocalDate.of(2026, 10, 14));
+
+        verify(transactionRepository, times(3)).sumBetween(eq(BIZ), any(), any(), eq(notIncome));
+    }
+
+    private Transaction awaiting(long id, String transactionId, long amount) {
+        Transaction t = new Transaction();
+        setId(t, id);
+        t.setTransactionId(transactionId);
+        t.setBusinessId(BIZ);
+        t.setType("MANUAL");
+        t.setSource("QRIS");
+        t.setAmount(amount);
+        t.setStatus("AWAITING_PAYMENT");
+        t.setTransactionDate(LocalDateTime.of(2026, 10, 14, 9, 0));
+        return t;
+    }
+
+    private void stubSettleOutcome(Transaction waiting, int rowsChanged, String paymentReference) {
+        when(transactionRepository.findFirstByBusinessIdAndDeletedAtIsNullAndStatusAndAmountOrderByTransactionDateAscIdAsc(
+                BIZ, "AWAITING_PAYMENT", 50_000L)).thenReturn(Optional.of(waiting));
+        when(transactionRepository.settleAwaiting(eq(waiting.getId()), eq(BIZ), eq("AWAITING_PAYMENT"), eq("SUCCESS"),
+                any(), eq(paymentReference))).thenReturn(rowsChanged);
+    }
+
+    @Test
+    void parsedPaymentOfTheSameAmountSettlesTheWaitingSaleInsteadOfAddingARow() {
+        Transaction waiting = awaiting(7L, "TXN-WAIT", 50_000L);
+        stubSettleOutcome(waiting, 1, "key-1");
+        Transaction paid = awaiting(7L, "TXN-WAIT", 50_000L);
+        paid.setStatus("SUCCESS");
+        paid.setPaidAt(LocalDateTime.now());
+        when(transactionRepository.findById(7L)).thenReturn(Optional.of(paid));
+        when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
+                .thenReturn(Optional.of(named("alice")));
+
+        TransactionCreatedResponseDto data =
+                transactionService.create("alice", "key-1", "device-1", request("PARSED", "AstraPay"));
+
+        assertThat(data.transactionId()).isEqualTo("TXN-WAIT");      // the waiting sale, not a new one
+        verify(transactionRepository, never()).save(any());          // no second row: the money is counted once
+        verify(pushNotificationService).sendToUsernames(any(), any(), eq("device-1"));   // the others still hear it
+    }
+
+    @Test
+    void parsedPaymentWithNothingWaitingIsRecordedAsANewRow() {
+        // No stubbing: the lookup finds no waiting sale of that amount
+        transactionService.create("alice", "key-1", null, request("PARSED", "AstraPay"));
+
+        Transaction saved = savedByCreate();
+        assertThat(saved.getType()).isEqualTo("PARSED");
+        assertThat(saved.getStatus()).isEqualTo("SUCCESS");
+        verify(transactionRepository, never()).settleAwaiting(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void parsedPaymentLosingTheRaceForOneSaleTriesTheNextWaitingOne() {
+        Transaction first = awaiting(7L, "TXN-FIRST", 50_000L);
+        Transaction second = awaiting(8L, "TXN-SECOND", 50_000L);
+        when(transactionRepository.findFirstByBusinessIdAndDeletedAtIsNullAndStatusAndAmountOrderByTransactionDateAscIdAsc(
+                BIZ, "AWAITING_PAYMENT", 50_000L)).thenReturn(Optional.of(first), Optional.of(second));
+        when(transactionRepository.settleAwaiting(eq(7L), any(), any(), any(), any(), any())).thenReturn(0);   // taken meanwhile
+        when(transactionRepository.settleAwaiting(eq(8L), any(), any(), any(), any(), any())).thenReturn(1);
+        when(transactionRepository.findById(8L)).thenReturn(Optional.of(second));
+        when(userRepository.findFirstByBusinessIdAndBusinessRoleAndDeletedAtIsNull(BIZ, BusinessRole.SUPER_ADMIN))
+                .thenReturn(Optional.of(named("alice")));
+
+        TransactionCreatedResponseDto data =
+                transactionService.create("alice", "key-1", null, request("PARSED", "AstraPay"));
+
+        assertThat(data.transactionId()).isEqualTo("TXN-SECOND");
+        verify(transactionRepository, never()).save(any());
+    }
+
+    @Test
+    void retriedSettlingPaymentAnswersWithTheSameSaleAndSettlesNothingElse() {
+        Transaction paid = awaiting(7L, "TXN-WAIT", 50_000L);
+        paid.setStatus("SUCCESS");
+        when(transactionRepository.findByPaymentReferenceAndBusinessId("key-1", BIZ)).thenReturn(Optional.of(paid));
+
+        TransactionCreatedResponseDto data =
+                transactionService.create("alice", "key-1", "device-1", request("PARSED", "AstraPay"));
+
+        assertThat(data.transactionId()).isEqualTo("TXN-WAIT");
+        verify(transactionRepository, never()).settleAwaiting(any(), any(), any(), any(), any(), any());
+        verify(transactionRepository, never()).save(any());
+        verify(pushNotificationService, never()).sendToUsernames(any(), any(), any());   // not announced twice
+    }
+
+    @Test
+    void parsedPaymentStillNeedsItsAcquirerWhenItWouldSettleASale() {
+        assertThatThrownBy(() -> transactionService.create("alice", "key-1", null, request("PARSED", " ")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("pembayaran");
+        verify(transactionRepository, never()).settleAwaiting(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void markPaidSettlesTheWaitingSaleAndStampsWhoDidIt() {
+        Transaction waiting = awaiting(7L, "TXN-WAIT", 50_000L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-WAIT", BIZ))
+                .thenReturn(Optional.of(waiting));
+        when(transactionRepository.settleAwaiting(eq(7L), eq(BIZ), eq("AWAITING_PAYMENT"), eq("SUCCESS"), any(), eq(null)))
+                .thenReturn(1);
+        Transaction reloaded = awaiting(7L, "TXN-WAIT", 50_000L);
+        reloaded.setStatus("SUCCESS");
+        reloaded.setPaidAt(LocalDateTime.of(2026, 10, 14, 9, 30));
+        when(transactionRepository.findById(7L)).thenReturn(Optional.of(reloaded));
+
+        TransactionResponseDto dto = transactionService.markPaid("alice", "TXN-WAIT");
+
+        assertThat(dto.status()).isEqualTo("SUCCESS");
+        assertThat(dto.paidAt()).isEqualTo(LocalDateTime.of(2026, 10, 14, 9, 30));
+        assertThat(reloaded.getUpdatedBy()).isEqualTo("alice");
+        verify(transactionRepository).save(reloaded);
+    }
+
+    @Test
+    void markPaidOnAnAlreadyPaidSaleIsANoOp() {
+        Transaction paid = awaiting(7L, "TXN-WAIT", 50_000L);
+        paid.setStatus("SUCCESS");
+        paid.setPaidAt(LocalDateTime.of(2026, 10, 14, 9, 30));
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-WAIT", BIZ))
+                .thenReturn(Optional.of(paid));
+
+        TransactionResponseDto dto = transactionService.markPaid("alice", "TXN-WAIT");
+
+        assertThat(dto.status()).isEqualTo("SUCCESS");
+        verify(transactionRepository, never()).settleAwaiting(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void markPaidOnATransactionThatWasNeverAwaitingIsRejected() {
+        Transaction cash = activeTransaction();
+        cash.setStatus("SUCCESS");
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(cash));
+
+        assertThatThrownBy(() -> transactionService.markPaid("alice", "TXN-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tidak menunggu pembayaran");
+    }
+
+    @Test
+    void markPaidOnAnUnknownTransactionIs404() {
+        assertThatThrownBy(() -> transactionService.markPaid("alice", "TXN-X"))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void markPaidLosingTheRaceToAPaymentJustReturnsTheSettledSale() {
+        Transaction waiting = awaiting(7L, "TXN-WAIT", 50_000L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-WAIT", BIZ))
+                .thenReturn(Optional.of(waiting));
+        when(transactionRepository.settleAwaiting(eq(7L), any(), any(), any(), any(), any())).thenReturn(0);
+        Transaction settledMeanwhile = awaiting(7L, "TXN-WAIT", 50_000L);
+        settledMeanwhile.setStatus("SUCCESS");
+        when(transactionRepository.findById(7L)).thenReturn(Optional.of(settledMeanwhile));
+
+        TransactionResponseDto dto = transactionService.markPaid("alice", "TXN-WAIT");
+
+        assertThat(dto.status()).isEqualTo("SUCCESS");
+        verify(transactionRepository, never()).save(any());   // the payment already stamped it
+    }
+
+    @Test
+    void editingAWaitingSaleToAnotherSourceSettlesIt() {
+        Transaction waiting = awaiting(7L, "TXN-WAIT", 50_000L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-WAIT", BIZ))
+                .thenReturn(Optional.of(waiting));
+
+        TransactionResponseDto dto = transactionService.update("alice", "TXN-WAIT",
+                new UpdateTransactionRequestDto(null, null, "Tunai", null, null, null, null, null));
+
+        assertThat(dto.status()).isEqualTo("SUCCESS");           // the customer paid cash instead
+        assertThat(dto.paidAt()).isNotNull();
+    }
+
+    @Test
+    void editingAWaitingSaleKeepingQrisLeavesItWaiting() {
+        Transaction waiting = awaiting(7L, "TXN-WAIT", 50_000L);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-WAIT", BIZ))
+                .thenReturn(Optional.of(waiting));
+
+        TransactionResponseDto dto = transactionService.update("alice", "TXN-WAIT",
+                new UpdateTransactionRequestDto(null, 60_000L, "QRIS", null, null, null, null, null));
+
+        assertThat(dto.status()).isEqualTo("AWAITING_PAYMENT");
+        assertThat(dto.amount()).isEqualTo(60_000L);
+        assertThat(dto.paidAt()).isNull();
+    }
+
+    @Test
+    void editingAPaidSaleToQrisDoesNotPutItBackToWaiting() {
+        Transaction paid = activeTransaction();
+        paid.setStatus("SUCCESS");
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(paid));
+
+        TransactionResponseDto dto = transactionService.update("alice", "TXN-1",
+                new UpdateTransactionRequestDto(null, null, "QRIS", null, null, null, null, null));
+
+        assertThat(dto.status()).isEqualTo("SUCCESS");
+    }
+    // ---------- end of day: unpaid QRIS sales are cancelled ----------
+
+    private void stubStaleSales(Long... ids) {
+        when(transactionRepository.findIdsByStatusAndTransactionDateBefore(eq("AWAITING_PAYMENT"), any(), any()))
+                .thenReturn(List.of(ids));
+    }
+
+    @Test
+    void dayEndCancelsEveryStaleAwaitingSaleAndReturnsItsStock() {
+        stubStaleSales(7L);
+        when(transactionRepository.cancelAwaiting(7L, "AWAITING_PAYMENT", "CANCELLED")).thenReturn(1);
+        Transaction stale = awaiting(7L, "TXN-STALE", 30_000L);
+        stale.setStatus("CANCELLED");
+        when(transactionRepository.findById(7L)).thenReturn(Optional.of(stale));
+        Product coffee = product(1, "Coffee", 7, 15_000L);   // 2 were taken for the sale, 7 left on the shelf
+        when(transactionItemRepository.findByTransactionIdOrderByIdAsc(7L))
+                .thenReturn(List.of(existingItem(7L, 1L, "Coffee", 2)));
+        when(productRepository.findByIdAndBusinessId(1L, BIZ)).thenReturn(Optional.of(coffee));
+
+        int cancelled = transactionService.expireStaleAwaiting();
+
+        assertThat(cancelled).isEqualTo(1);
+        assertThat(coffee.getStock()).isEqualTo(9);   // the sale did not happen: 2 go back
+        verify(stockMutationService).recordStockChange(eq(BIZ), eq("SALE"),
+                org.mockito.ArgumentMatchers.startsWith("Sale cancel TXN-STALE"), any());
+    }
+
+    @Test
+    void dayEndOnlyLooksBeforeTheStartOfToday() {
+        stubStaleSales();
+
+        transactionService.expireStaleAwaiting();
+
+        ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(transactionRepository).findIdsByStatusAndTransactionDateBefore(eq("AWAITING_PAYMENT"), cutoff.capture(), any());
+        assertThat(cutoff.getValue())
+                .isEqualTo(LocalDate.now(com.bejo.shared.util.AppTime.ZONE).atStartOfDay());   // today's own sales stay waiting
+    }
+
+    @Test
+    void dayEndLeavesASaleThatWasPaidInTheMeantime() {
+        stubStaleSales(7L);
+        when(transactionRepository.cancelAwaiting(7L, "AWAITING_PAYMENT", "CANCELLED")).thenReturn(0);
+
+        int cancelled = transactionService.expireStaleAwaiting();
+
+        assertThat(cancelled).isZero();
+        verify(stockMutationService, never()).recordStockChange(any(), any(), any(), any());   // nothing returned for a paid sale
+    }
+
+    @Test
+    void dayEndCarriesOnWhenOneSaleCannotBeCancelled() {
+        stubStaleSales(7L, 8L);
+        when(transactionRepository.cancelAwaiting(7L, "AWAITING_PAYMENT", "CANCELLED"))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db hiccup"));
+        when(transactionRepository.cancelAwaiting(8L, "AWAITING_PAYMENT", "CANCELLED")).thenReturn(1);
+        when(transactionRepository.findById(8L)).thenReturn(Optional.of(awaiting(8L, "TXN-8", 10_000L)));
+
+        assertThat(transactionService.expireStaleAwaiting()).isEqualTo(1);
+    }
+
+    @Test
+    void historySweepsStaleSalesOnlyOncePerDay() {
+        stubStaleSales();
+        when(transactionRepository.findByBusinessIdAndDeletedAtIsNullOrderByTransactionDateDesc(BIZ, PAGE))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        transactionService.getHistory("alice", null, null, PAGE);
+        transactionService.getHistory("alice", null, null, PAGE);
+        transactionService.getHistory("alice", null, null, PAGE);
+
+        verify(transactionRepository, times(1))
+                .findIdsByStatusAndTransactionDateBefore(eq("AWAITING_PAYMENT"), any(), any());
+    }
+
+    @Test
+    void aFailingSweepNeverFailsTheHistoryRequest() {
+        when(transactionRepository.findIdsByStatusAndTransactionDateBefore(any(), any(), any()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db hiccup"));
+        when(transactionRepository.findByBusinessIdAndDeletedAtIsNullOrderByTransactionDateDesc(BIZ, PAGE))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        assertThat(transactionService.getHistory("alice", null, null, PAGE).getContent()).isEmpty();
+        // ... and it is tried again on the next request, since it never completed
+        transactionService.getHistory("alice", null, null, PAGE);
+        verify(transactionRepository, times(2)).findIdsByStatusAndTransactionDateBefore(any(), any(), any());
+    }
+
+    @Test
+    void aCancelledSaleCannotBeEditedOrMarkedPaid() {
+        Transaction cancelled = awaiting(7L, "TXN-C", 50_000L);
+        cancelled.setStatus("CANCELLED");
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-C", BIZ))
+                .thenReturn(Optional.of(cancelled));
+
+        assertThatThrownBy(() -> transactionService.update("alice", "TXN-C",
+                new UpdateTransactionRequestDto(null, 1_000L, null, null, null, null, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dibatalkan");
+        assertThatThrownBy(() -> transactionService.markPaid("alice", "TXN-C"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dibatalkan");
+        verify(transactionRepository, never()).settleAwaiting(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void deletingACancelledSaleDoesNotReturnItsStockASecondTime() {
+        Transaction cancelled = awaiting(7L, "TXN-C", 50_000L);
+        cancelled.setStatus("CANCELLED");
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-C", BIZ))
+                .thenReturn(Optional.of(cancelled));
+
+        transactionService.delete("alice", "TXN-C");
+
+        assertThat(cancelled.getDeletedAt()).isNotNull();
+        verify(productRepository, never()).increaseStock(any(), any(), anyInt());
+        verify(stockMutationService, never()).recordStockChange(any(), any(), any(), any());
+    }
+    // ---------- when a waiting sale will be cancelled ----------
+
+    private LocalDateTime nextMidnight() {
+        return LocalDate.now(com.bejo.shared.util.AppTime.ZONE).plusDays(1).atStartOfDay();
+    }
+
+    private TransactionResponseDto detailOfWaitingSaleDatedOn(LocalDateTime date) {
+        Transaction waiting = awaiting(7L, "TXN-WAIT", 50_000L);
+        waiting.setTransactionDate(date);
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-WAIT", BIZ))
+                .thenReturn(Optional.of(waiting));
+        return transactionService.get("alice", "TXN-WAIT");
+    }
+
+    @Test
+    void aWaitingSaleDatedTodayIsCancelledAtTheNextMidnight() {
+        assertThat(detailOfWaitingSaleDatedOn(LocalDateTime.now()).autoCancelAt()).isEqualTo(nextMidnight());
+    }
+
+    @Test
+    void aBackDatedWaitingSaleIsOnlyPickedUpAtTheNextMidnightToo() {
+        assertThat(detailOfWaitingSaleDatedOn(LocalDateTime.now().minusDays(3)).autoCancelAt()).isEqualTo(nextMidnight());
+    }
+
+    @Test
+    void aWaitingSaleDatedAheadIsCancelledWhenItsOwnDayEnds() {
+        LocalDateTime inThreeDays = LocalDateTime.now().plusDays(3);
+        assertThat(detailOfWaitingSaleDatedOn(inThreeDays).autoCancelAt())
+                .isEqualTo(inThreeDays.toLocalDate().plusDays(1).atStartOfDay());
+    }
+
+    @Test
+    void aSaleThatIsNotWaitingHasNoCancelTime() {
+        Transaction paid = awaiting(7L, "TXN-PAID", 50_000L);
+        paid.setStatus("SUCCESS");
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-PAID", BIZ))
+                .thenReturn(Optional.of(paid));
+
+        assertThat(transactionService.get("alice", "TXN-PAID").autoCancelAt()).isNull();
     }
 }

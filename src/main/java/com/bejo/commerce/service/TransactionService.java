@@ -2,6 +2,7 @@ package com.bejo.commerce.service;
 import com.bejo.core.service.BusinessContext;
 
 import com.bejo.commerce.domain.Acquirer;
+import com.bejo.commerce.domain.FundSource;
 import com.bejo.commerce.domain.StockMutationType;
 import com.bejo.commerce.domain.TransactionStatus;
 import com.bejo.commerce.domain.TransactionType;
@@ -43,9 +44,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -59,6 +63,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -67,6 +72,15 @@ import java.util.stream.Collectors;
 public class TransactionService {
 
     private static final Logger log = LoggerFactory.getLogger(TransactionService.class);
+
+    // How many waiting transactions a payment tries before giving up (each miss is a lost race for the row)
+    private static final int SETTLE_ATTEMPTS = 3;
+
+    // Statuses that are not income: a sale still waiting for its payment, and one that never got paid
+    private static final List<String> NOT_INCOME = List.of(TransactionStatus.AWAITING_PAYMENT, TransactionStatus.CANCELLED);
+
+    // Day-end sweep: how many stale sales are cancelled per round trip to the database
+    private static final int EXPIRY_BATCH = 200;
 
     // Bulk-sync per-item result statuses
     private static final String RESULT_CREATED = "CREATED";
@@ -83,7 +97,11 @@ public class TransactionService {
     private final PushNotificationService pushNotificationService;
     private final BusinessContext businessContext;
     private final Validator validator;
+    private final TransactionTemplate transactionTemplate;
     private final Counter transactionFetchCounter;
+
+    // The day on which the day-end sweep last ran to completion on this instance (see expireStaleAwaitingOncePerDay)
+    private volatile LocalDate lastExpirySweep;
 
     public TransactionService(TransactionRepository transactionRepository,
                               TransactionItemRepository transactionItemRepository,
@@ -95,6 +113,7 @@ public class TransactionService {
                               PushNotificationService pushNotificationService,
                               BusinessContext businessContext,
                               Validator validator,
+                              PlatformTransactionManager transactionManager,
                               MeterRegistry meterRegistry) {
         this.transactionRepository = transactionRepository;
         this.transactionItemRepository = transactionItemRepository;
@@ -106,11 +125,13 @@ public class TransactionService {
         this.pushNotificationService = pushNotificationService;
         this.businessContext = businessContext;
         this.validator = validator;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionFetchCounter = Counter.builder("transactions.fetched").register(meterRegistry);
     }
 
     public Page<TransactionResponseDto> getHistory(String username, LocalDate dateStart, LocalDate dateEnd, Pageable pageable) {
         Long businessId = businessContext.requireBusinessId(username);
+        expireStaleAwaitingOncePerDay();   // so a sale left over from yesterday is never listed as still waiting
         log.info("[HISTORY] businessId={} dateStart={} dateEnd={} page={} size={}",
                 businessId, dateStart, dateEnd, pageable.getPageNumber(), pageable.getPageSize());
 
@@ -143,7 +164,8 @@ public class TransactionService {
      * Dashboard totals for {@code referenceDate} (the client's "today", or the server
      * date when null): summed amount + count for that day, the day before, and the
      * whole calendar month it falls in. Ranges are half-open [start, next) on
-     * {@code transactionDate} and exclude soft-deleted rows.
+     * {@code transactionDate} and exclude soft-deleted rows. A transaction still awaiting
+     * payment, or cancelled, is not counted — a waiting one becomes income when it is paid.
      */
     public TransactionSummaryResponseDto summary(String username, LocalDate referenceDate) {
         Long businessId = businessContext.requireBusinessId(username);
@@ -162,7 +184,7 @@ public class TransactionService {
     }
 
     private TransactionSummaryResponseDto.PeriodSummary period(Long businessId, LocalDateTime start, LocalDateTime end) {
-        var agg = transactionRepository.sumBetween(businessId, start, end);
+        var agg = transactionRepository.sumBetween(businessId, start, end, NOT_INCOME);
         return new TransactionSummaryResponseDto.PeriodSummary(agg.getTotalAmount(), agg.getCount());
     }
 
@@ -180,6 +202,26 @@ public class TransactionService {
             log.info("[TXN] Idempotent replay key={} businessId={} transactionId={}", idempotencyKey, businessId, existing.get().getTransactionId());
             return new TransactionCreatedResponseDto(existing.get().getTransactionId());
         }
+        // A PARSED payment that was merged into an awaiting transaction has no row (so no idempotency key
+        // of its own): the same request retried must answer with that transaction, not settle another one.
+        var settledBefore = transactionRepository.findByPaymentReferenceAndBusinessId(idempotencyKey, businessId);
+        if (settledBefore.isPresent()) {
+            log.info("[TXN] Idempotent replay of settling payment key={} businessId={} transactionId={}",
+                    idempotencyKey, businessId, settledBefore.get().getTransactionId());
+            return new TransactionCreatedResponseDto(settledBefore.get().getTransactionId());
+        }
+
+        // A payment the app detected for the exact amount of a QRIS sale that is waiting to be paid is
+        // that sale's payment: it settles the waiting transaction instead of being recorded a second time
+        // (which would count the money twice). Nothing waiting for that amount → recorded as a new row.
+        if (TransactionType.PARSED.equals(request.type()) && (request.items() == null || request.items().isEmpty())) {
+            requireAcquirerForParsed(request);
+            Transaction settled = settleAwaitingPayment(businessId, idempotencyKey, request.amount());
+            if (settled != null) {
+                notifyParsedTransaction(businessId, settled, username, reportingDeviceId);
+                return new TransactionCreatedResponseDto(settled.getTransactionId());
+            }
+        }
 
         Transaction t = buildTransaction(businessId, username, idempotencyKey, request);
         transactionRepository.save(t);
@@ -194,6 +236,129 @@ public class TransactionService {
             notifyParsedTransaction(businessId, t, username, reportingDeviceId);
         }
         return new TransactionCreatedResponseDto(t.getTransactionId());
+    }
+
+    /**
+     * Settles the oldest transaction awaiting payment for exactly {@code amount}: status → SUCCESS,
+     * {@code paidAt} = now, {@code paymentReference} = the payment's key. Returns it, or null when nothing is
+     * waiting for that amount. The status change is one conditional update, so two payments (or a payment and
+     * a manual "Sudah Terbayar") never settle the same row; losing that race just moves on to the next one.
+     */
+    private Transaction settleAwaitingPayment(Long businessId, String paymentReference, Long amount) {
+        for (int attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
+            Optional<Transaction> waiting = transactionRepository
+                    .findFirstByBusinessIdAndDeletedAtIsNullAndStatusAndAmountOrderByTransactionDateAscIdAsc(
+                            businessId, TransactionStatus.AWAITING_PAYMENT, amount);
+            if (waiting.isEmpty()) return null;
+            Long id = waiting.get().getId();
+            int changed = transactionRepository.settleAwaiting(id, businessId, TransactionStatus.AWAITING_PAYMENT,
+                    TransactionStatus.SUCCESS, LocalDateTime.now(), paymentReference);
+            if (changed == 1) {
+                Transaction settled = transactionRepository.findById(id).orElseThrow();
+                log.info("[TXN] Payment of {} settled awaiting transactionId={} businessId={}",
+                        amount, settled.getTransactionId(), businessId);
+                return settled;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Marks a QRIS sale that is waiting for payment as paid, by hand (the payment was not detected by the
+     * app, or came another way). Open to any user of the business, like editing. Repeating it on a
+     * transaction that was already paid this way just returns it; one that was never awaiting payment is a 400.
+     */
+    @Transactional
+    public TransactionResponseDto markPaid(String username, String transactionId) {
+        Long businessId = businessContext.requireBusinessId(username);
+        Transaction t = transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull(transactionId, businessId)
+                .orElseThrow(() -> new ResourceNotFoundException("Transaction not found: " + transactionId));
+
+        if (!TransactionStatus.AWAITING_PAYMENT.equals(t.getStatus())) {
+            if (TransactionStatus.SUCCESS.equals(t.getStatus()) && t.getPaidAt() != null) {
+                return toDto(t, merchantName(businessId), itemsOrNull(t.getId()));   // already paid: a repeated tap
+            }
+            if (TransactionStatus.CANCELLED.equals(t.getStatus())) {
+                throw new IllegalArgumentException("Transaksi ini sudah dibatalkan");
+            }
+            throw new IllegalArgumentException("Transaksi ini tidak menunggu pembayaran");
+        }
+
+        Long id = t.getId();
+        int changed = transactionRepository.settleAwaiting(id, businessId, TransactionStatus.AWAITING_PAYMENT,
+                TransactionStatus.SUCCESS, LocalDateTime.now(), null);
+        t = transactionRepository.findById(id).orElseThrow();
+        if (changed == 1) {
+            t.setUpdatedBy(username);
+            transactionRepository.save(t);
+            log.info("[TXN] Marked transactionId={} businessId={} as paid by {}", transactionId, businessId, username);
+        }   // else a payment settled it a moment ago — the reload above already shows that
+        return toDto(t, merchantName(businessId), itemsOrNull(id));
+    }
+
+    /**
+     * End of day for QRIS sales that never got paid: cancels every active transaction still
+     * {@code AWAITING_PAYMENT} that is dated before today (WIB) and returns its sold stock. Run by
+     * {@link AwaitingPaymentExpiryJob} just after midnight, and lazily by {@link #getHistory} (see
+     * {@link #expireStaleAwaitingOncePerDay}). Safe to run twice or on two instances: each sale is cancelled by
+     * a conditional update that only fires while it is still waiting, so a payment that settles it first wins.
+     * Each sale is its own database transaction, so one failure never holds up or undoes the others.
+     *
+     * @return how many sales were cancelled
+     */
+    public int expireStaleAwaiting() {
+        LocalDate today = LocalDate.now(AppTime.ZONE);
+        LocalDateTime cutoff = today.atStartOfDay();
+        int cancelled = 0;
+        while (true) {
+            List<Long> ids = transactionRepository.findIdsByStatusAndTransactionDateBefore(
+                    TransactionStatus.AWAITING_PAYMENT, cutoff, PageRequest.of(0, EXPIRY_BATCH));
+            int cancelledThisRound = 0;
+            for (Long id : ids) {
+                try {
+                    if (Boolean.TRUE.equals(transactionTemplate.execute(status -> cancelOneAwaiting(id)))) {
+                        cancelledThisRound++;
+                    }
+                } catch (RuntimeException e) {
+                    log.warn("[TXN] Could not cancel stale awaiting transaction id={}: {}", id, e.getMessage());
+                }
+            }
+            cancelled += cancelledThisRound;
+            // A short round is the end of the list; a round that cancelled nothing would only find the same rows again
+            if (ids.size() < EXPIRY_BATCH || cancelledThisRound == 0) break;
+        }
+        lastExpirySweep = today;
+        if (cancelled > 0) log.info("[TXN] Day-end: cancelled {} sale(s) that were still awaiting payment", cancelled);
+        return cancelled;
+    }
+
+    /**
+     * The same sweep, at most once a day per instance, on the first history request of the day. The scheduled
+     * job is the normal way a sale gets cancelled, but on Cloud Run the CPU is throttled between requests, so
+     * the job can fire late; this makes sure nobody is shown yesterday's sale as still waiting. Never fails the request.
+     */
+    private void expireStaleAwaitingOncePerDay() {
+        if (LocalDate.now(AppTime.ZONE).equals(lastExpirySweep)) return;
+        try {
+            expireStaleAwaiting();
+        } catch (RuntimeException e) {
+            log.warn("[TXN] Day-end sweep failed: {}", e.getMessage());
+        }
+    }
+
+    private boolean cancelOneAwaiting(Long id) {
+        int changed = transactionRepository.cancelAwaiting(id, TransactionStatus.AWAITING_PAYMENT, TransactionStatus.CANCELLED);
+        if (changed == 0) return false;   // paid, deleted or cancelled in the meantime
+        Transaction t = transactionRepository.findById(id).orElseThrow();
+        // The sale did not happen: its products go back on the shelf, like a deleted sale's
+        restoreStockFromItems(t.getBusinessId(), t, "Sale cancel ");
+        log.info("[TXN] Cancelled unpaid transactionId={} businessId={}", t.getTransactionId(), t.getBusinessId());
+        return true;
+    }
+
+    private List<TransactionItemResponseDto> itemsOrNull(Long id) {
+        List<TransactionItemResponseDto> items = itemDtos(id);
+        return items.isEmpty() ? null : items;
     }
 
     /**
@@ -354,9 +519,7 @@ public class TransactionService {
     // account/sub-account that entered it (username).
     private Transaction buildTransaction(Long businessId, String username, String idempotencyKey, AddTransactionRequestDto request) {
         boolean isParsed = TransactionType.PARSED.equals(request.type());
-        if (isParsed && (request.acquirer() == null || request.acquirer().isBlank())) {
-            throw new IllegalArgumentException("Metode pembayaran wajib diisi");
-        }
+        requireAcquirerForParsed(request);
         String acquirer = isParsed ? request.acquirer() : Acquirer.CASH;
         String transactionId = "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
 
@@ -372,10 +535,19 @@ public class TransactionService {
         t.setRrn(request.rrn());
         t.setType(request.type());
         t.setAcquirer(acquirer);
-        t.setStatus(TransactionStatus.SUCCESS);
+        // A QRIS sale is entered before the customer has paid; everything else is paid already
+        t.setStatus(!isParsed && FundSource.isQris(request.issuerName())
+                ? TransactionStatus.AWAITING_PAYMENT : TransactionStatus.SUCCESS);
         t.setScrapeDate(LocalDateTime.now());
         t.setCreatedBy(username);
         return t;
+    }
+
+    private void requireAcquirerForParsed(AddTransactionRequestDto request) {
+        if (TransactionType.PARSED.equals(request.type())
+                && (request.acquirer() == null || request.acquirer().isBlank())) {
+            throw new IllegalArgumentException("Metode pembayaran wajib diisi");
+        }
     }
 
     @Transactional
@@ -394,13 +566,26 @@ public class TransactionService {
             throw new IllegalArgumentException("Transaksi ini tidak dapat diubah");
         }
 
+        // A cancelled sale has had its stock returned; editing its items now would take that stock a second time
+        if (TransactionStatus.CANCELLED.equals(t.getStatus())) {
+            throw new IllegalArgumentException("Transaksi ini sudah dibatalkan dan tidak dapat diubah");
+        }
+
         if (request.acquirer() != null && request.acquirer().isBlank()) {
             throw new IllegalArgumentException("Metode pembayaran wajib diisi");
         }
 
         if (request.transactionDate() != null) t.setTransactionDate(request.transactionDate());
         if (request.amount() != null) t.setAmount(request.amount());
-        if (request.issuerName() != null) t.setSource(request.issuerName());
+        if (request.issuerName() != null) {
+            t.setSource(request.issuerName());
+            // A sale waiting for a QRIS payment that is now said to be paid another way (cash, transfer, ...)
+            // has been paid: settle it. The reverse is not done — a paid transaction never goes back to waiting.
+            if (TransactionStatus.AWAITING_PAYMENT.equals(t.getStatus()) && !FundSource.isQris(request.issuerName())) {
+                t.setStatus(TransactionStatus.SUCCESS);
+                t.setPaidAt(LocalDateTime.now());
+            }
+        }
         if (request.merchantPan() != null) t.setMerchantPan(request.merchantPan());
         if (request.customerPan() != null) t.setCustomerPan(request.customerPan());
         if (request.rrn() != null) t.setRrn(request.rrn());
@@ -527,7 +712,10 @@ public class TransactionService {
         // Return the sold stock to its products (a deleted sale un-sells its items). The item
         // rows are kept (soft delete) as the historical record; stock is credited back once —
         // an already-deleted transaction can't be deleted again, so there's no double-return.
-        restoreStockFromItems(businessId, t);
+        // (A cancelled sale already returned its stock when it was cancelled — not again.)
+        if (!TransactionStatus.CANCELLED.equals(t.getStatus())) {
+            restoreStockFromItems(businessId, t, "Sale delete ");
+        }
         t.setDeletedAt(LocalDateTime.now());
         transactionRepository.save(t);
         log.info("[TXN] Soft-deleted transactionId={} businessId={}", transactionId, businessId);
@@ -535,7 +723,7 @@ public class TransactionService {
 
     // Credits each line item's quantity back to its product's stock (best-effort per product —
     // a product deleted since the sale is skipped) and records one SALE reversal mutation.
-    private void restoreStockFromItems(Long businessId, Transaction t) {
+    private void restoreStockFromItems(Long businessId, Transaction t, String note) {
         List<TransactionItem> items = transactionItemRepository.findByTransactionIdOrderByIdAsc(t.getId());
         if (items.isEmpty()) return;
         List<StockMutationService.StockChangeLine> changes = new ArrayList<>();
@@ -557,8 +745,8 @@ public class TransactionService {
         });
         if (!changes.isEmpty()) {
             stockMutationService.recordStockChange(businessId, StockMutationType.SALE,
-                    "Sale delete " + t.getTransactionId(), changes);
-            log.info("[TXN] Returned stock for {} line(s) on delete of transactionId={}", changes.size(), t.getTransactionId());
+                    note + t.getTransactionId(), changes);
+            log.info("[TXN] Returned stock for {} line(s) ({}) of transactionId={}", changes.size(), note.trim(), t.getTransactionId());
         }
     }
 
@@ -663,6 +851,19 @@ public class TransactionService {
         return businessRepository.findById(businessId).map(Business::getName).orElse(null);
     }
 
+    /**
+     * When a sale still waiting for payment will be cancelled automatically, or null if it isn't waiting.
+     * The sweep cancels a sale once its day is over, at the first sweep after that: the midnight job, so
+     * never earlier than the coming midnight. For a sale dated today that is the start of tomorrow; one
+     * dated in the past is only picked up at the next midnight too; one dated ahead waits for its own day to end.
+     */
+    static LocalDateTime autoCancelAt(Transaction t) {
+        if (!TransactionStatus.AWAITING_PAYMENT.equals(t.getStatus()) || t.getTransactionDate() == null) return null;
+        LocalDateTime endOfItsDay = t.getTransactionDate().toLocalDate().plusDays(1).atStartOfDay();
+        LocalDateTime nextMidnight = LocalDate.now(AppTime.ZONE).plusDays(1).atStartOfDay();
+        return endOfItsDay.isAfter(nextMidnight) ? endOfItsDay : nextMidnight;
+    }
+
     // List/update responses omit line items (null → not serialized)
     private TransactionResponseDto toDto(Transaction t, String merchantName) {
         return toDto(t, merchantName, null);
@@ -674,6 +875,9 @@ public class TransactionService {
                 t.getTransactionDate(),
                 t.getAmount(),
                 t.getType(),
+                t.getStatus(),
+                t.getPaidAt(),
+                autoCancelAt(t),
                 t.getAcquirer(),
                 t.getSource(),
                 merchantName,

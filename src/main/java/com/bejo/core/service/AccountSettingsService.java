@@ -26,13 +26,27 @@ import java.util.Set;
  * the first update; reads for an account that has never synced return defaults.
  *
  * <p>The boolean toggles are set through one generic {@link #toggle} entry point rather than a
- * method per flag. {@code teamManagement} is <b>effective</b>: it reads true when explicitly set
- * OR the account already has more than one active user, so an existing team is never locked out.
+ * method per flag.
+ *
+ * <p><b>Product/stock management and team management are on for every business</b> (decided 2026-10-14;
+ * the app no longer has toggles for them). The stored flags and the toggle endpoint stay — older app builds
+ * still send the toggle, and the columns are kept — but they no longer change behaviour: the team features are
+ * never refused and both flags are reported as true. Flip {@link #TEAM_MANAGEMENT_ALWAYS_ON} /
+ * {@link #INVENTORY_ALWAYS_ON} to bring the per-business flags (and, for team management, the "more than one
+ * active user" rule below) back into play.
+ *
+ * <p>When it is not forced on, {@code teamManagement} is <b>effective</b>: true when explicitly set OR the
+ * account already has more than one active user, so an existing team is never locked out.
  */
 @Service
 public class AccountSettingsService {
 
     private static final Logger log = LoggerFactory.getLogger(AccountSettingsService.class);
+
+    /** Team management (employee accounts + presence) is always available. See the class doc. */
+    static final boolean TEAM_MANAGEMENT_ALWAYS_ON = true;
+    /** Product and stock management is always available. See the class doc. */
+    static final boolean INVENTORY_ALWAYS_ON = true;
 
     private static final int MAX_APPS = 500;
     private static final int MAX_KEYWORDS = 1000;
@@ -67,9 +81,10 @@ public class AccountSettingsService {
         boolean teamManagement = teamManagementEffective(businessId, null);
         return repository.findByBusinessId(businessId)
                 .map(s -> toResponse(s, teamManagement))
-                // No row yet — return defaults (blacklist ON, whitelist OFF, toggles OFF, empty lists)
+                // No row yet — return defaults (blacklist ON, whitelist OFF, the optional toggles OFF, empty lists;
+                // inventory and team management report ON because they are always available)
                 .orElseGet(() -> new AccountSettingsResponseDto(
-                        Map.of(), List.of(), List.of(), true, false, false, false, false, teamManagement));
+                        Map.of(), List.of(), List.of(), true, false, false, INVENTORY_ALWAYS_ON, false, teamManagement));
     }
 
     /**
@@ -212,6 +227,7 @@ public class AccountSettingsService {
     // teamManagement is the effective value (stored flag OR >1 active user) — see the class doc.
     // Pass the already-loaded settings when available to avoid re-reading it.
     private boolean teamManagementEffective(Long businessId, AccountSettings loaded) {
+        if (TEAM_MANAGEMENT_ALWAYS_ON) return true;   // no per-business flag, no database read
         boolean stored = loaded != null
                 ? loaded.isTeamManagementEnabled()
                 : repository.findByBusinessId(businessId).map(AccountSettings::isTeamManagementEnabled).orElse(false);
@@ -226,7 +242,7 @@ public class AccountSettingsService {
                 s.isBlacklistEnabled(),
                 s.isWhitelistEnabled(),
                 s.isQrisWithProfilePicture(),
-                s.isInventoryEnabled(),
+                INVENTORY_ALWAYS_ON || s.isInventoryEnabled(),
                 s.isReceiveAds(),
                 teamManagementEnabled);
     }

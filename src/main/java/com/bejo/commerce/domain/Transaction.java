@@ -28,6 +28,15 @@ public class Transaction {
     @Column(name = "settlement_date")
     private LocalDateTime settlementDate;
 
+    // When an awaiting-payment transaction was paid (null for one that never waited, and while it waits)
+    @Column(name = "paid_at")
+    private LocalDateTime paidAt;
+
+    // Idempotency-Key of the PARSED payment that settled this transaction, so a retry of that request
+    // is recognised (the payment is merged into this row and has no row of its own)
+    @Column(name = "payment_reference")
+    private String paymentReference;
+
     private String source;
 
     @Column(name = "customer_name")
@@ -82,6 +91,10 @@ public class Transaction {
     public void setAmount(Long amount) { this.amount = amount; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public LocalDateTime getPaidAt() { return paidAt; }
+    public void setPaidAt(LocalDateTime paidAt) { this.paidAt = paidAt; }
+    public String getPaymentReference() { return paymentReference; }
+    public void setPaymentReference(String paymentReference) { this.paymentReference = paymentReference; }
     public String getInvoiceId() { return invoiceId; }
     public void setInvoiceId(String invoiceId) { this.invoiceId = invoiceId; }
     public LocalDateTime getSettlementDate() { return settlementDate; }

@@ -563,7 +563,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"type\": \"MANUAL\",\n  \"transactionDate\": \"2026-06-29T10:00:00\",\n  \"amount\": 50000,\n  \"issuerName\": \"Cash\",\n  \"rrn\": \"000100000099\"\n}",
+              "raw": "{\n  \"type\": \"MANUAL\",\n  \"transactionDate\": \"2026-06-29T10:00:00\",\n  \"amount\": 50000,\n  \"issuerName\": \"Tunai\",\n  \"rrn\": \"000100000099\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -580,7 +580,7 @@
                 "transactions"
               ]
             },
-            "description": "Manually records a transaction. The server generates transactionId.\n\nIdempotency-Key header is required — use a UUID per request attempt. Resubmitting the same key returns the same transactionId without inserting a duplicate.\n\nFor MANUAL type, acquirer is automatically set to 'Cash'.\nMandatory: type, transactionDate, amount.\nOptional: issuerName, merchantPan, customerPan, rrn.\n\nReturns HTTP 201 with { transactionId }."
+            "description": "Manually records a transaction. The server generates transactionId.\n\nIdempotency-Key header is required — use a UUID per request attempt. Resubmitting the same key returns the same transactionId without inserting a duplicate.\n\nFor MANUAL type, acquirer is automatically set to 'Cash'.\nMandatory: type, transactionDate, amount.\nOptional: issuerName (the Sumber Dana: Tunai, Transfer, Kartu Kredit, Kartu Debit, QRIS, Lainnya), merchantPan, customerPan, rrn.\n\nissuerName \"QRIS\" records the sale as AWAITING_PAYMENT (\"Menunggu Pembayaran\"): it is listed but not counted in the summary until it is paid (Mark Transaction Paid, a matching PARSED payment of the exact amount, or an edit to another Sumber Dana). Any other value is recorded as paid.\n\nReturns HTTP 201 with { transactionId }."
           }
         },
         {
@@ -715,6 +715,42 @@
               ]
             },
             "description": "Edits the authenticated user's transaction. Partial update — only fields present in the body are changed; type cannot be changed. Only MANUAL/PARSED transactions can be edited — MANAGED ones are immutable.\n\nOptional fields (send at least one): transactionDate, amount, acquirer, issuerName, merchantPan, customerPan, rrn, items.\n\nitems = FULL REPLACEMENT of the sold-product line items (array of { productId, quantity }). It reconciles stock by the per-product delta vs. the existing items (increased/added lines draw more stock — validated; reduced/removed lines return stock), records one SALE stock mutation, and (for a non-empty list) re-derives amount from the subtotals. An empty list [] clears all items and returns their stock; omitting items leaves them unchanged. The response includes the post-edit items.\n\nReturns HTTP 200 with the updated transaction.\nErrors: 400 (no fields / MANAGED type / invalid amount / blank acquirer / insufficient stock / unknown or duplicate product), 404 Transaction not found (unknown, deleted, or another user's transaction)."
+          }
+        },
+        {
+          "name": "Mark Transaction Paid (Sudah Terbayar)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactions/:transactionId/mark-paid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transactions",
+                ":transactionId",
+                "mark-paid"
+              ],
+              "variable": [
+                {
+                  "key": "transactionId",
+                  "value": "TXN-XXXXXXXXXXXX",
+                  "description": "transactionId of a transaction whose status is AWAITING_PAYMENT"
+                }
+              ]
+            },
+            "description": "Marks a QRIS sale that is waiting for payment (status AWAITING_PAYMENT, \"Menunggu Pembayaran\") as paid (\"Sudah Terbayar\") by hand. No body. Any user of the business may do it.\n\nSets status = SUCCESS and paidAt = now, stamps updatedBy, and from then on the amount counts in GET /api/transactions/summary. Repeating it on a sale that was already paid just returns it.\n\nA sale is created AWAITING_PAYMENT by Add Transaction (Manual) with issuerName = \"QRIS\". A PARSED payment for the exact same amount settles the oldest such sale automatically (no second transaction is created).\n\nA sale still awaiting payment when its day ends (just after midnight WIB) is cancelled automatically (status CANCELLED, stock returned) and can no longer be paid or edited.\n\nReturns HTTP 200 with the updated transaction.\nErrors: 400 Transaksi ini tidak menunggu pembayaran (it was never awaiting payment), 400 Transaksi ini sudah dibatalkan (cancelled at day end), 404 Transaction not found (unknown, deleted, or another business's transaction)."
           }
         },
         {
@@ -2308,6 +2344,52 @@
               ]
             },
             "description": "Remove a user's assignment — they revert to the shared business QRIS."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voice",
+      "item": [
+        {
+          "name": "Recognise Amount (voice)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audio\": \"<base64 of raw 16-bit mono PCM, 16 kHz>\",\n  \"sampleRateHertz\": 16000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/voice/amount",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "voice",
+                "amount"
+              ]
+            },
+            "description": "\"Say the amount\": a few seconds of speech in, what was heard and the rupiah amount out. Any signed-in user.\n\naudio = base64 of raw 16-bit little-endian mono PCM (no container, no header), 0.3-10 s, default 16 kHz. End the clip with ~1 s of silence: the recogniser drops a last word that ends the audio. To make a test clip on a Mac: say -v Damayanti -o a.aiff \"dua puluh lima ribu\" && ffmpeg -i a.aiff -af apad=pad_dur=1 -ar 16000 -ac 1 -f s16le a.raw && base64 -i a.raw | tr -d '\\n'.\n\nReturns { transcript, amount, confidence }. amount is absent when no number was heard; transcript/confidence are absent when nothing was heard.\nErrors: 400 (clip too short/long/not PCM), 429 (more than 12 a minute), 503 (speech recognition unavailable)."
           }
         }
       ]

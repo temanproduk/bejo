@@ -11,6 +11,13 @@ public record TransactionResponseDto(
         LocalDateTime transactionDate,
         Long amount,
         String type,
+        // SUCCESS = paid; AWAITING_PAYMENT = a QRIS sale not paid yet (not counted as income);
+        // the rest come from the QRIS callback (PENDING, FAILED, REFUNDED, ...)
+        String status,
+        // When an awaiting-payment transaction was paid; absent for one that never waited
+        LocalDateTime paidAt,
+        // Only on a sale that is AWAITING_PAYMENT: when it will be cancelled automatically if still unpaid
+        LocalDateTime autoCancelAt,
         String acquirer,
         String issuerName,
         String merchantName,

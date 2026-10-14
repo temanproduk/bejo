@@ -477,6 +477,7 @@ Returns the authenticated user's transaction history, newest first. Soft-deleted
       "transactionDate": "2026-06-28T09:14:00",
       "amount": 25000,
       "type": "MANAGED",
+      "status": "SUCCESS",
       "acquirer": "AstraPay",
       "issuerName": "BNI",
       "merchantPan": "936009XXXXXX0001",
@@ -495,13 +496,15 @@ Returns the authenticated user's transaction history, newest first. Soft-deleted
 
 `issuerName`, `merchantPan`, `customerPan`, `rrn` are omitted when null. `count` is the number of rows in this page; `page` is the current (1-based) page, `totalPages` the number of pages, `total` the total matching rows.
 
+`status` is `SUCCESS` for a paid transaction, `AWAITING_PAYMENT` for a [QRIS sale that has not been paid yet](#awaiting-payment-qris-sales) and `CANCELLED` for one that was still unpaid when its day ended (the rest — `PENDING`, `FAILED`, `REFUNDED`, … — come from the QRIS callback). `paidAt` is present only on a sale that waited for payment and has since been paid. `autoCancelAt` is present only on a sale still `AWAITING_PAYMENT`: when it will be cancelled if nobody pays (the coming midnight WIB, or the end of its own day if it is dated ahead).
+
 `createdBy` / `updatedBy` identify **which account or sub-account** created and last edited the transaction (username). They are present on MANUAL/PARSED transactions and **omitted** on MANAGED (server-recorded callback) rows; `updatedBy` is omitted until the transaction is first edited.
 
 ---
 
 #### `GET /api/transactions/summary`
 
-Aggregated totals for the merchant dashboard — the summed `amount` and transaction `count` for **today**, **yesterday**, and the **current calendar month**. Introduced because the history endpoint is now paginated, so the client can no longer sum a full page. Soft-deleted transactions are excluded.
+Aggregated totals for the merchant dashboard — the summed `amount` and transaction `count` for **today**, **yesterday**, and the **current calendar month**. Introduced because the history endpoint is now paginated, so the client can no longer sum a full page. Soft-deleted transactions are excluded, and so are sales still [awaiting payment](#awaiting-payment-qris-sales) and `CANCELLED` ones — neither is income.
 
 **Query parameters**
 
@@ -543,7 +546,7 @@ Adds a transaction manually or from an external acquirer. The server generates `
 | `transactionDate` | yes | ISO 8601 e.g. `2026-06-28T09:14:00` |
 | `amount` | yes | Amount in IDR, must be > 0. **When `items` are present it is overridden** by the sum of line subtotals |
 | `acquirer` | PARSED only | Acquirer name; required when `type` is `PARSED` |
-| `issuerName` | no | Payment issuer name, max 255 chars |
+| `issuerName` | no | Payment issuer name, max 255 chars. For a `MANUAL` entry this is the **Sumber Dana** (the app offers `Tunai`, `Transfer`, `Kartu Kredit`, `Kartu Debit`, `QRIS`, `Lainnya`); **`QRIS` starts the sale as `AWAITING_PAYMENT`** — see [below](#awaiting-payment-qris-sales). Any other value, or none, is recorded as paid |
 | `merchantPan` | no | Max 50 chars |
 | `customerPan` | no | Max 50 chars |
 | `rrn` | no | Max 255 chars |
@@ -552,6 +555,8 @@ Adds a transaction manually or from an external acquirer. The server generates `
 When `items` are supplied the sale is atomic: an unknown product, a duplicate product line, or **insufficient stock** rejects the whole transaction (`400`, nothing changes). Each line's unit price is snapshotted from the product's current selling price. Read them back on `GET /api/transactions/{transactionId}` (the history list omits items).
 
 The creating account/sub-account is recorded as the transaction's `createdBy` (returned by the list/detail endpoints).
+
+> **A `PARSED` payment can settle a sale that is waiting for payment** instead of being recorded as a new transaction — then the response carries *that sale's* `transactionId`. See [Awaiting payment](#awaiting-payment-qris-sales).
 
 > **PARSED transactions skip the DEVICE that reported them — not the account.** A `PARSED` transaction is a real-time payment an app detected off a QRIS merchant notification. That device already announced it locally before calling the API, so pushing it back is an echo. But a merchant is often signed in on a second phone or a counter tablet, and those have heard nothing — so only the reporting device is dropped, identified by `X-Device-Id`.
 >
@@ -666,7 +671,7 @@ Edits a transaction. Partial update — only the fields present in the body are 
 | `transactionDate` | ISO 8601 e.g. `2026-06-28T09:14:00` |
 | `amount` | Amount in IDR, must be > 0 |
 | `acquirer` | Acquirer name, max 255 chars, not blank |
-| `issuerName` | Payment issuer name, max 255 chars |
+| `issuerName` | Payment issuer name (Sumber Dana), max 255 chars. On a sale that is `AWAITING_PAYMENT`, changing it to anything other than `QRIS` marks the sale **paid** (it was settled another way). A paid transaction never goes back to waiting |
 | `merchantPan` | Max 50 chars |
 | `customerPan` | Max 50 chars |
 | `rrn` | Max 255 chars |
@@ -696,6 +701,32 @@ Edits a transaction. Partial update — only the fields present in the body are 
 
 ---
 
+#### `POST /api/transactions/{transactionId}/mark-paid`
+
+Marks a sale that is **waiting for payment** as paid ("Sudah Terbayar"), by hand — for when the payment was not detected by the app or came another way. Any user of the business may do it (like editing). No body.
+
+Sets `status` to `SUCCESS` and `paidAt` to now, stamps `updatedBy`, and from then on the amount counts in the [summary](#get-apitransactionssummary). Repeating it on a sale that was already paid just returns it.
+
+**Success — HTTP 200** — the updated transaction, same shape as `GET /api/transactions/{transactionId}`.
+
+**Errors:** `400 Transaksi ini tidak menunggu pembayaran` (it was never awaiting payment), `400 Transaksi ini sudah dibatalkan` (it was cancelled at the end of its day), `404 Transaction not found` (unknown, deleted, or another business's transaction)
+
+---
+
+#### Awaiting payment (QRIS sales)
+
+A merchant often rings up a QRIS sale before the customer has scanned. Recording it as `QRIS` ("Sumber Dana") therefore makes it **`AWAITING_PAYMENT`** ("Menunggu Pembayaran") rather than income:
+
+- It appears in the history list with that status but is **left out of the [summary](#get-apitransactionssummary)** totals.
+- It becomes **`SUCCESS`** ("Sudah Terbayar") and gets a **`paidAt`** ("Tanggal Pembayaran") in one of three ways:
+  1. **A matching payment is detected.** A `PARSED` `POST /api/transactions` for the **exact same amount** settles the **oldest** waiting sale of that amount in the same business, and is **merged into it** — no second transaction is created (that would count the money twice), so the response returns the waiting sale's `transactionId`. Each payment settles at most one sale. Retrying the same request (same `Idempotency-Key`) answers with the same sale and settles nothing else. If nothing is waiting for that amount, the payment is recorded as a new `PARSED` transaction, as always.
+  2. **Someone marks it paid** — [`POST /api/transactions/{transactionId}/mark-paid`](#post-apitransactionstransactionidmark-paid).
+  3. **Its Sumber Dana is edited to something other than `QRIS`** (the customer paid cash instead).
+- **A sale still waiting when its day ends is cancelled automatically.** Just after midnight (WIB) every active `AWAITING_PAYMENT` transaction dated before the new day becomes **`CANCELLED`**, and its sold products go back to stock (a `SALE` [stock mutation](#stock-mutations) with note `Sale cancel …`). A cancelled sale is not income, is never matched to a payment, cannot be marked paid or edited (`400`), and can still be deleted by the super admin (its stock is not returned a second time). The same sweep also runs on the first history request of each day, so a late scheduler never shows yesterday's sale as still waiting.
+- Only `MANUAL` sales wait. Stock is taken when the sale is recorded, as for any sale; deleting a waiting sale returns it.
+
+---
+
 #### `DELETE /api/transactions/{transactionId}` (super admin)
 
 Soft-deletes a transaction: the row is kept in the database with a `deleted_at` timestamp and disappears from history. Deletion cannot be undone via the API.
@@ -714,6 +745,44 @@ Soft-deletes a transaction: the row is kept in the database with a `deleted_at` 
 ```
 
 **Errors:** `403 Hanya super admin yang dapat mengubah pengaturan bisnis` (a sub-account), `404 Transaction not found` (unknown, already deleted, or another business's transaction)
+
+---
+
+### Voice input
+
+#### `POST /api/voice/amount`
+
+"Say the amount": a few seconds of the merchant speaking, in; what was heard and the rupiah amount it comes to, out.
+Used by the microphone on the **Nominal** field of *Catat Transaksi Manual* and *Buat QRIS dengan Nominal*. The app
+only fills the field with the answer. Any signed-in user. See [docs/architecture/voice.md](docs/architecture/voice.md).
+
+**Request body**
+
+| Field | Required | Description |
+|---|---|---|
+| `audio` | yes | Base64 of raw **16-bit little-endian mono PCM** — no container, no header. Between 0.3 s and 10 s. **End the recording with about a second of silence**: the recogniser drops a last word that ends the audio ("dua puluh lima ribu" is heard as "25") |
+| `sampleRateHertz` | no | 8000–48000, default `16000` |
+
+**Success — HTTP 200**
+
+```json
+{
+  "status": 1,
+  "message": "Nominal terdengar",
+  "data": { "transcript": "dua puluh lima ribu", "amount": 25000, "confidence": 0.92 }
+}
+```
+
+`amount` is absent when speech was heard but held no usable number, or the recogniser's confidence was below `VOICE_MIN_CONFIDENCE` (0.5) (`message`: *Nominal tidak terdengar jelas*; the words are still returned);
+`transcript` and `confidence` are absent when nothing was heard (*Suara tidak terdengar*). Words, digits, abbreviations
+and slang are understood: `25000`, `25.000`, `2,5 juta`, `20rb`, `dua setengah juta`, `seribu lima ratus`, `goceng` (5.000),
+`ceban` (10.000), `noban` (20.000), `gocap` (50.000), `dua ceban` (20.000) … (`cepek` is not understood: it means Rp100 or Rp100.000 depending on who you ask)
+
+**Errors:** `400 Suara terlalu pendek` / `Suara terlalu panjang (maksimal 10 detik)` / `audio bukan base64 yang valid` /
+`audio harus PCM 16-bit`, `429` more than 12 requests in a minute, `503 Input suara belum tersedia. Ketik nominalnya dulu ya.`
+(speech recognition unavailable — the field can still be typed)
+
+The audio is held in memory for the call and is **not stored or logged**; neither is the transcript.
 
 ---
 
@@ -1428,9 +1497,9 @@ Returns the account's settings. When nothing has been synced yet, returns defaul
     "blacklistEnabled": true,
     "whitelistEnabled": false,
     "qrisWithProfilePicture": false,
-    "inventoryEnabled": false,
+    "inventoryEnabled": true,
     "receiveAds": false,
-    "teamManagementEnabled": false
+    "teamManagementEnabled": true
   }
 }
 ```
@@ -1438,11 +1507,11 @@ Returns the account's settings. When nothing has been synced yet, returns defaul
 | Config field | Default | Meaning |
 |---|---|---|
 | `qrisWithProfilePicture` | `false` | Whether the QRIS image should be composed onto the profile picture |
-| `inventoryEnabled` | `false` | Whether inventory management is enabled |
+| `inventoryEnabled` | `true` | Always `true`: product and stock management is on for every business (the stored flag is kept but ignored) |
 | `receiveAds` | `false` | Whether the account opted in to receive [voice ads](#voice-ads) |
-| `teamManagementEnabled` | `false` | Whether team management (employee accounts + presence) is active — **effective**: the stored flag OR the account already has >1 active user |
+| `teamManagementEnabled` | `true` | Always `true`: team management (employee accounts + presence) is on for every business (the stored flag is kept but ignored) |
 
-> **Team-management gate:** while `teamManagementEnabled` is off, the team-feature writes are rejected with **`403 Fitur manajemen tim belum diaktifkan`** — [member](#business-members) add/update/delete (listing is not gated) and [presence](#employee-presence) clock-in/out, ping, and respond. A fresh solo account must enable `teamManagement` (via the toggle above) before adding its first employee.
+> **Inventory and team management are always on.** The app has no toggles for them; the team-feature writes ([member](#business-members) add/update/delete, [presence](#employee-presence) clock-in/out, ping, respond, per-user QRIS) are never refused, and both flags are always returned as `true`. The settings and the `toggle` endpoint below still exist for older app builds, but the stored values no longer change behaviour.
 
 ---
 
@@ -1504,9 +1573,9 @@ One generic endpoint for all the on/off settings (replaces the former per-settin
 | `setting` | Meaning |
 |---|---|
 | `qrisWithProfilePicture` | Compose the QRIS image onto the profile picture |
-| `inventory` | Enable inventory management |
+| `inventory` | Inventory management — **always on**; the value is stored but ignored |
 | `receiveAds` | Opt in to receive [voice ads](#voice-ads) (default off) |
-| `teamManagement` | Activate team management (employee accounts + presence) — bundled into login/`/me` as `teamManagementEnabled`; **effective**: also reads true when the account already has >1 active user |
+| `teamManagement` | Team management (employee accounts + presence) — **always on**; the value is stored but ignored, and login/`/me` always report `teamManagementEnabled: true` |
 
 **Success — HTTP 200:** `{ "status": 1, "message": "Pengaturan disimpan", "data": { ...full settings... } }`
 

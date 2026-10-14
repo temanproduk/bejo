@@ -21,6 +21,8 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
  *   <li><b>core</b> — users, business, auth, presence, QRIS, sessions, settings. The foundation.</li>
  *   <li><b>commerce</b> — transactions, products, stock, the payment callback.</li>
  *   <li><b>ads</b> — voice-ad campaigns.</li>
+ *   <li><b>voice</b> — "say the amount": a voice clip → Google Speech-to-Text → a rupiah amount. Self-contained:
+ *       depends on shared only, and nothing depends on it.</li>
  *   <li><b>admin</b> — the admin dashboard's API: reads core and commerce; nothing depends on it.</li>
  *   <li><b>config</b> — the Spring bootstrap / composition root; may wire everything, and nothing
  *       may depend on it.</li>
@@ -82,6 +84,20 @@ class ArchitectureTest {
                             "com.bejo.notification..", "com.bejo.shared..")
                     .should().dependOnClassesThat().resideInAPackage("com.bejo.config..")
                     .because("config is the composition root — modules must not depend on it");
+
+    @ArchTest
+    static final ArchRule voice_depends_only_on_shared =
+            noClasses().that().resideInAPackage("com.bejo.voice..")
+                    .should().dependOnClassesThat().resideInAnyPackage(
+                            "com.bejo.core..", "com.bejo.commerce..", "com.bejo.ads..",
+                            "com.bejo.notification..", "com.bejo.admin..", "com.bejo.config..")
+                    .because("voice is a self-contained capability — it needs only the shared envelope and exceptions");
+
+    @ArchTest
+    static final ArchRule nothing_depends_on_voice =
+            noClasses().that().resideOutsideOfPackages("com.bejo.voice..", "com.bejo.config..")
+                    .should().dependOnClassesThat().resideInAPackage("com.bejo.voice..")
+                    .because("voice is reached over HTTP; no other module builds on it");
 
     @ArchTest
     static final ArchRule only_notification_talks_to_fcm =

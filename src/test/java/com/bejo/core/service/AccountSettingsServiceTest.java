@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
@@ -68,18 +69,26 @@ class AccountSettingsServiceTest {
         assertThat(data.blacklistEnabled()).isTrue();
         assertThat(data.whitelistEnabled()).isFalse();
         assertThat(data.qrisWithProfilePicture()).isFalse();
-        assertThat(data.inventoryEnabled()).isFalse();
-        assertThat(data.teamManagementEnabled()).isFalse();   // solo account, flag off
+        // Product/stock and team management are on for every business, with no row and no flag set
+        assertThat(data.inventoryEnabled()).isTrue();
+        assertThat(data.teamManagementEnabled()).isTrue();
     }
 
     @Test
-    void teamManagementIsEffectiveWhenAccountHasMultipleUsers() {
-        when(repository.findByBusinessId(BIZ)).thenReturn(Optional.empty());
-        // Existing team (>1 active user) → effectively enabled even though the flag is off
-        when(userRepository.countByBusinessIdAndDeletedAtIsNull(BIZ)).thenReturn(2L);
+    void teamManagementAndInventoryAreOnWhateverTheStoredFlagsSay() {
+        // A row with both stored flags OFF (the pre-2026-10-14 default, or an older app build that toggled them)
+        AccountSettings stored = existing();
+        stored.setInventoryEnabled(false);
+        stored.setTeamManagementEnabled(false);
+        when(repository.findByBusinessId(BIZ)).thenReturn(Optional.of(stored));
 
-        assertThat(service.getSettings("alice").teamManagementEnabled()).isTrue();
+        AccountSettingsResponseDto data = service.getSettings("alice");
+
+        assertThat(data.inventoryEnabled()).isTrue();
+        assertThat(data.teamManagementEnabled()).isTrue();
         assertThat(service.isTeamManagementEnabled(BIZ)).isTrue();
+        assertThatCode(() -> service.requireTeamManagementEnabled(BIZ)).doesNotThrowAnyException();   // never refused
+        assertThat(stored.isTeamManagementEnabled()).isFalse();   // the stored flag itself is untouched
     }
 
     @Test

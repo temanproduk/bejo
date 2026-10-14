@@ -260,18 +260,17 @@ class UserQrisApiIntegrationTest {
     }
 
     @Test
-    void settingUserQrisRequiresTeamManagement() throws Exception {
+    void settingUserQrisNeedsNoTeamToggle() throws Exception {
         register("uq_solo");
-        String adminToken = login("uq_solo", "d-solo");   // fresh solo account, team OFF
+        String adminToken = login("uq_solo", "d-solo");   // fresh solo account, nothing toggled
         MvcResult me = mockMvc.perform(get("/api/users/me").header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)).andReturn();
         String soloId = objectMapper.readTree(me.getResponse().getContentAsString()).at("/data/id").asText();
-        // team off → assigning a per-user QRIS (even to self) is gated
+        // team management is always on: assigning a per-user QRIS works without any toggle
         mockMvc.perform(put("/api/qris/users/" + soloId).header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken).contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("qrisCode", QR_A))))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value("Fitur manajemen tim belum diaktifkan"));
+                .andExpect(status().isOk());
     }
 
     // Register + login an admin and enable team management; returns the username.

@@ -199,7 +199,10 @@ gcloud services enable \
   storage.googleapis.com \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
-  sts.googleapis.com
+  sts.googleapis.com \
+  speech.googleapis.com
+# (speech.googleapis.com: "say the amount" in the app — see docs/architecture/voice.md. The service calls it as its
+# own service account, so no extra role is needed.)
 
 # ---------------------------------------------------------------
 # 2. Artifact Registry repository

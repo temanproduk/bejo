@@ -35,6 +35,7 @@ class ApiIntegrationTest {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private com.bejo.notification.InMemoryEmailSender email;
     @Autowired private com.bejo.commerce.repository.TransactionRepository transactionRepository;
+    @Autowired private com.bejo.commerce.service.TransactionService transactionService;
     @Autowired private com.bejo.core.repository.UserRepository userRepository;
     @Autowired private com.bejo.core.repository.BusinessRepository businessRepository;
     @Autowired private com.bejo.core.repository.SessionRepository sessionRepository;
@@ -595,6 +596,309 @@ class ApiIntegrationTest {
                 .at("/data/transactionId").asText();
     }
 
+    // ---------- awaiting payment (a QRIS sale recorded before it is paid) ----------
+
+    private String postTransaction(String token, String key, Map<String, Object> body) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", key)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString()).at("/data/transactionId").asText();
+    }
+
+    // Dated today: a QRIS sale dated before today is cancelled by the day-end sweep, which any history request may run
+    private static String today() {
+        return java.time.LocalDate.now(com.bejo.shared.util.AppTime.ZONE).toString();
+    }
+
+    private String qrisSale(String token, String key, long amount) throws Exception {
+        return qrisSaleOn(token, key, amount, today());
+    }
+
+    private String qrisSaleOn(String token, String key, long amount, String date) throws Exception {
+        return postTransaction(token, key, Map.of("type", "MANUAL", "transactionDate", date + "T09:00:00",
+                "amount", amount, "issuerName", "QRIS"));
+    }
+
+    private String detectedPayment(String token, String key, long amount) throws Exception {
+        return postTransaction(token, key, Map.of("type", "PARSED", "transactionDate", today() + "T09:05:00",
+                "amount", amount, "issuerName", "GoPay Merchant", "acquirer", "gopay"));
+    }
+
+    private void expectTransaction(String token, String transactionId, String status, boolean paidAtPresent) throws Exception {
+        var check = mockMvc.perform(get("/api/transactions/" + transactionId)
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value(status));
+        check.andExpect(paidAtPresent ? jsonPath("$.data.paidAt").exists() : jsonPath("$.data.paidAt").doesNotExist());
+    }
+
+    @Test
+    void qrisSaleWaitsForPaymentAndIsNotCountedUntilPaid() throws Exception {
+        String token = registerAndLogin("txn_await1");
+        String id = qrisSale(token, "aw-1", 40000);
+        addManualTxn(token, "aw-cash", today() + "T10:00:00", 10000);   // an ordinary cash sale
+
+        expectTransaction(token, id, "AWAITING_PAYMENT", false);
+        // ... and the detail says when it will be cancelled if nobody pays: the coming midnight
+        mockMvc.perform(get("/api/transactions/" + id)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.data.autoCancelAt").value(
+                        java.time.LocalDate.now(com.bejo.shared.util.AppTime.ZONE).plusDays(1).atStartOfDay().toString() + ":00"));
+        // Listed (so it can be settled) with its status ...
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(2))
+                .andExpect(jsonPath("$.data[?(@.transactionId=='" + id + "')].status").value("AWAITING_PAYMENT"));
+        // ... but it is not income yet: only the cash sale is in the totals
+        mockMvc.perform(get("/api/transactions/summary")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .param("date", today()))
+                .andExpect(jsonPath("$.data.today.totalAmount").value(10000))
+                .andExpect(jsonPath("$.data.today.count").value(1))
+                .andExpect(jsonPath("$.data.month.totalAmount").value(10000));
+    }
+
+    @Test
+    void aPaidSaleHasNoCancelTime() throws Exception {
+        String token = registerAndLogin("txn_await2b");
+        String id = qrisSale(token, "aw-2b", 40000);
+        mockMvc.perform(post("/api/transactions/" + id + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.autoCancelAt").doesNotExist());
+    }
+
+    @Test
+    void cashSaleIsPaidFromTheStart() throws Exception {
+        String token = registerAndLogin("txn_await2");
+        String id = postTransaction(token, "aw-2", Map.of("type", "MANUAL", "transactionDate", today() + "T09:00:00",
+                "amount", 25000, "issuerName", "Tunai"));
+
+        expectTransaction(token, id, "SUCCESS", false);
+    }
+
+    @Test
+    void markPaidMakesTheSaleIncomeAndStampsThePaymentDate() throws Exception {
+        String token = registerAndLogin("txn_await3");
+        String id = qrisSale(token, "aw-3", 40000);
+
+        mockMvc.perform(post("/api/transactions/" + id + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.paidAt").exists())
+                .andExpect(jsonPath("$.data.updatedBy").value("txn_await3"));
+        mockMvc.perform(get("/api/transactions/summary")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .param("date", today()))
+                .andExpect(jsonPath("$.data.today.totalAmount").value(40000))
+                .andExpect(jsonPath("$.data.today.count").value(1));
+        // Tapping it twice is harmless
+        mockMvc.perform(post("/api/transactions/" + id + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"));
+    }
+
+    @Test
+    void markPaidRefusesATransactionThatWasNeverWaiting() throws Exception {
+        String token = registerAndLogin("txn_await4");
+        String cash = createTransaction(token, "aw-4", 15000);
+
+        mockMvc.perform(post("/api/transactions/" + cash + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Transaksi ini tidak menunggu pembayaran"));
+        mockMvc.perform(post("/api/transactions/TXN-NOPE/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void markPaidDoesNotReachAnotherBusinesssSale() throws Exception {
+        String owner = registerAndLogin("txn_await5a");
+        String stranger = registerAndLogin("txn_await5b");
+        String id = qrisSale(owner, "aw-5", 40000);
+
+        mockMvc.perform(post("/api/transactions/" + id + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + stranger))
+                .andExpect(status().isNotFound());
+        expectTransaction(owner, id, "AWAITING_PAYMENT", false);
+    }
+
+    @Test
+    void detectedPaymentOfTheSameAmountSettlesTheWaitingSaleWithoutAddingARow() throws Exception {
+        String token = registerAndLogin("txn_await6");
+        String waiting = qrisSale(token, "aw-6", 40000);
+
+        String answered = detectedPayment(token, "pay-6", 40000);
+
+        assertThat(answered).isEqualTo(waiting);                          // the payment became that sale's payment
+        expectTransaction(token, waiting, "SUCCESS", true);
+        mockMvc.perform(get("/api/transactions")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.count").value(1));                 // no second row
+        mockMvc.perform(get("/api/transactions/summary")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .param("date", today()))
+                .andExpect(jsonPath("$.data.today.totalAmount").value(40000))   // counted once
+                .andExpect(jsonPath("$.data.today.count").value(1));
+    }
+
+    @Test
+    void retryingTheDetectedPaymentDoesNotSettleASecondSale() throws Exception {
+        String token = registerAndLogin("txn_await7");
+        String first = qrisSale(token, "aw-7a", 40000);
+        String second = qrisSale(token, "aw-7b", 40000);
+
+        String once = detectedPayment(token, "pay-7", 40000);
+        String again = detectedPayment(token, "pay-7", 40000);            // the same notification, delivered again
+
+        assertThat(once).isEqualTo(first);
+        assertThat(again).isEqualTo(first);
+        expectTransaction(token, second, "AWAITING_PAYMENT", false);      // still waiting for its own payment
+    }
+
+    @Test
+    void eachDetectedPaymentSettlesOneSaleOldestFirst() throws Exception {
+        String token = registerAndLogin("txn_await8");
+        String first = qrisSale(token, "aw-8a", 40000);
+        String second = qrisSale(token, "aw-8b", 40000);
+
+        assertThat(detectedPayment(token, "pay-8a", 40000)).isEqualTo(first);
+        assertThat(detectedPayment(token, "pay-8b", 40000)).isEqualTo(second);
+        // Nothing left waiting: a third payment is a new row, as before
+        String third = detectedPayment(token, "pay-8c", 40000);
+        assertThat(third).isNotIn(first, second);
+        expectTransaction(token, third, "SUCCESS", false);
+    }
+
+    @Test
+    void detectedPaymentOfAnotherAmountOrBusinessLeavesTheWaitingSaleAlone() throws Exception {
+        String owner = registerAndLogin("txn_await9a");
+        String stranger = registerAndLogin("txn_await9b");
+        String waiting = qrisSale(owner, "aw-9", 40000);
+
+        String otherAmount = detectedPayment(owner, "pay-9a", 41000);
+        String otherBusiness = detectedPayment(stranger, "pay-9b", 40000);
+
+        assertThat(otherAmount).isNotEqualTo(waiting);
+        assertThat(otherBusiness).isNotEqualTo(waiting);
+        expectTransaction(owner, waiting, "AWAITING_PAYMENT", false);
+    }
+
+    @Test
+    void paymentAlreadySettledByHandIsNotMatchedAgain() throws Exception {
+        String token = registerAndLogin("txn_await10");
+        String id = qrisSale(token, "aw-10", 40000);
+        mockMvc.perform(post("/api/transactions/" + id + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        // Nothing is waiting any more, so a payment of that amount is recorded as its own row
+        assertThat(detectedPayment(token, "pay-10", 40000)).isNotEqualTo(id);
+    }
+
+    @Test
+    void editingAWaitingSaleToCashSettlesIt() throws Exception {
+        String token = registerAndLogin("txn_await11");
+        String id = qrisSale(token, "aw-11", 40000);
+
+        mockMvc.perform(patch("/api/transactions/" + id)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("issuerName", "Tunai"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.paidAt").exists());
+    }
+
+    // ---------- end of day: unpaid QRIS sales are cancelled ----------
+
+    private static String yesterday() {
+        return java.time.LocalDate.now(com.bejo.shared.util.AppTime.ZONE).minusDays(1).toString();
+    }
+
+    @Test
+    void unpaidQrisSaleFromYesterdayIsCancelledAtDayEndAndNotCounted() throws Exception {
+        String token = registerAndLogin("txn_expire1");
+        String stale = qrisSaleOn(token, "ex-1", 40000, yesterday());
+        String cash = postTransaction(token, "ex-1c", Map.of("type", "MANUAL", "transactionDate", yesterday() + "T10:00:00",
+                "amount", 15000, "issuerName", "Tunai"));
+        String todays = qrisSale(token, "ex-1t", 22000);
+
+        assertThat(transactionService.expireStaleAwaiting()).isGreaterThanOrEqualTo(1);
+
+        expectTransaction(token, stale, "CANCELLED", false);
+        expectTransaction(token, cash, "SUCCESS", false);             // paid sales are untouched
+        expectTransaction(token, todays, "AWAITING_PAYMENT", false);  // today's sale still has until tonight
+        // Cancelled is not income: yesterday holds only the cash sale
+        mockMvc.perform(get("/api/transactions/summary")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .param("date", yesterday()))
+                .andExpect(jsonPath("$.data.today.totalAmount").value(15000))
+                .andExpect(jsonPath("$.data.today.count").value(1));
+        // A cancelled sale can't be paid or edited any more
+        mockMvc.perform(post("/api/transactions/" + stale + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Transaksi ini sudah dibatalkan"));
+        mockMvc.perform(patch("/api/transactions/" + stale)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("amount", 1000))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void cancellingAnUnpaidSaleReturnsItsStockAndDeletingItDoesNotReturnItAgain() throws Exception {
+        String token = registerAndLogin("txn_expire2");
+        long product = createProductPriced(token, "EXP-1", 10, 20000);
+        String stale = postTransaction(token, "ex-2", Map.of("type", "MANUAL", "transactionDate", yesterday() + "T09:00:00",
+                "amount", 1, "issuerName", "QRIS", "items", List.of(Map.of("productId", product, "quantity", 3))));
+        assertThat(stockOf(token, product)).isEqualTo(7);             // taken when the sale was recorded
+
+        transactionService.expireStaleAwaiting();
+        assertThat(stockOf(token, product)).isEqualTo(10);            // the sale never happened: back on the shelf
+
+        mockMvc.perform(delete("/api/transactions/" + stale)
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        assertThat(stockOf(token, product)).isEqualTo(10);            // not returned a second time
+    }
+
+    @Test
+    void aPaymentIsNeverMatchedToACancelledSale() throws Exception {
+        String token = registerAndLogin("txn_expire3");
+        String stale = qrisSaleOn(token, "ex-3", 40000, yesterday());
+        transactionService.expireStaleAwaiting();
+
+        String answered = detectedPayment(token, "pay-ex-3", 40000);
+
+        assertThat(answered).isNotEqualTo(stale);                     // recorded as its own payment
+        expectTransaction(token, stale, "CANCELLED", false);
+        expectTransaction(token, answered, "SUCCESS", false);
+    }
+
+    @Test
+    void aSaleAlreadyPaidIsNotCancelledAtDayEnd() throws Exception {
+        String token = registerAndLogin("txn_expire4");
+        String id = qrisSaleOn(token, "ex-4", 40000, yesterday());
+        mockMvc.perform(post("/api/transactions/" + id + "/mark-paid")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        transactionService.expireStaleAwaiting();
+
+        expectTransaction(token, id, "SUCCESS", true);
+    }
+
     @Test
     void deletedTransactionDisappearsFromHistory() throws Exception {
         String token = registerAndLogin("txn_user7");
@@ -1041,30 +1345,28 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void teamManagementGatesMemberApisUntilEnabled() throws Exception {
-        String adminToken = registerAndLogin("teamgate_admin");   // fresh solo account → team OFF
+    void teamManagementIsAvailableWithoutAnyToggle() throws Exception {
+        String adminToken = registerAndLogin("teamgate_admin");   // fresh solo account, nothing toggled
 
-        // Adding a member is blocked while team management is off (403, gate message)
+        // Team management is always on: a brand-new solo account can add a member straight away
         mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(memberBody("teamgate_member"))))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message").value("Fitur manajemen tim belum diaktifkan"));
+                .andExpect(status().isCreated());
 
-        // Reading the member list is NOT gated
-        mockMvc.perform(get("/api/users/members")
-                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk());
-
-        // Enable team management → adding a member now works
-        enableTeamManagement(adminToken);
+        // An older app build can still send the toggle, but it no longer switches the feature off
+        mockMvc.perform(put("/api/account-settings/toggle")
+                        .header("X-API-TOKEN", API_TOKEN).header("Authorization", "Bearer " + adminToken)
+                        .contentType(APPLICATION_JSON).content("{\"setting\":\"teamManagement\",\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teamManagementEnabled").value(true));
         mockMvc.perform(post("/api/users/members")
                         .header("X-API-TOKEN", API_TOKEN)
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(memberBody("teamgate_member"))))
+                        .content(objectMapper.writeValueAsString(memberBody("teamgate_member2"))))
                 .andExpect(status().isCreated());
     }
 
@@ -1396,7 +1698,7 @@ class ApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").isNumber())
                 .andExpect(jsonPath("$.data.businessRole").value("SUPER_ADMIN"))
-                .andExpect(jsonPath("$.data.accountSettings.inventoryEnabled").value(false))
+                .andExpect(jsonPath("$.data.accountSettings.inventoryEnabled").value(true))   // always on
                 .andExpect(jsonPath("$.data.accountSettings.receiveAds").value(false))
                 // no business picture set yet → omitted (null, NON_NULL)
                 .andExpect(jsonPath("$.data.profilePicture").doesNotExist())
@@ -2144,7 +2446,8 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.data.blacklistEnabled").value(true))
                 .andExpect(jsonPath("$.data.whitelistEnabled").value(false))
                 .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(false))
-                .andExpect(jsonPath("$.data.inventoryEnabled").value(false))
+                .andExpect(jsonPath("$.data.inventoryEnabled").value(true))   // always on
+                .andExpect(jsonPath("$.data.teamManagementEnabled").value(true))   // always on
                 .andExpect(jsonPath("$.data.receiveAds").value(false))
                 .andExpect(jsonPath("$.data.monitoredApps").isEmpty())
                 .andExpect(jsonPath("$.data.includeKeywords").isEmpty());
@@ -2190,7 +2493,16 @@ class ApiIntegrationTest {
                         .content("{\"setting\":\"qrisWithProfilePicture\",\"enabled\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.qrisWithProfilePicture").value(true))
-                .andExpect(jsonPath("$.data.inventoryEnabled").value(false));
+                .andExpect(jsonPath("$.data.inventoryEnabled").value(true));   // always on, even before any toggle
+
+        // The inventory toggle still exists for older app builds, but can no longer switch the feature off
+        mockMvc.perform(put("/api/account-settings/toggle")
+                        .header("X-API-TOKEN", API_TOKEN)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(APPLICATION_JSON)
+                        .content("{\"setting\":\"inventory\",\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.inventoryEnabled").value(true));
 
         // Enable inventory management
         mockMvc.perform(put("/api/account-settings/toggle")
