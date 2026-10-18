@@ -47,7 +47,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
                 || uri.startsWith("/api/admin/auth/")   // one-time sign-in codes
                 || uri.equals("/api/users/register")
                 || uri.equals("/api/users/members")   // add-member carries a password
-                || uri.startsWith("/api/users/members/");
+                || uri.startsWith("/api/users/members/")
+                || uri.startsWith("/api/voice/");   // base64 recordings of the merchant's voice, never to be logged
     }
 
     // Capture request bodies only on 4xx/5xx (default on; disable via env). Keeps normal

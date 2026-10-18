@@ -20,6 +20,11 @@ voice feature needs a home on a screen that is already too crowded. Part C is sm
 
 ## Part A — Voice cloning for sound packs
 
+> **Superseded (2026-10-16)** by [2026-10-16-voice-clone-pack-design.md](2026-10-16-voice-clone-pack-design.md): the
+> voice is now cloned **on the device** (no Google allow-list, no server, no upload of the recording), and the number
+> clips come from converting the bundled human voice, because generating word clips with a speech model did not glue
+> acceptably. The text below is kept for the quality-bar ideas (A6b) and the privacy/legal list (A7).
+
 ### A1. What we want
 
 On the sound-pack screen the user **records or uploads an intro** (a few seconds). Then:

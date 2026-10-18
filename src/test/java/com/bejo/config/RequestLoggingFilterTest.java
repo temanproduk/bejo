@@ -92,6 +92,18 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    void skipsBodyForVoicePaths() throws Exception {
+        // The body is a base64 recording of the merchant's voice (and their product list): a rejected request must not log it
+        for (String uri : new String[]{"/api/voice/amount", "/api/voice/transaction"}) {
+            MockHttpServletRequest req = post(uri, "{\"audio\":\"AAECAwQFBgcICQ==\",\"sampleRateHertz\":16000}");
+
+            filter.doFilter(req, new MockHttpServletResponse(), chainReturning(400));
+        }
+
+        assertThat(bodyLogs()).isEmpty();
+    }
+
+    @Test
     void redactsSensitiveFieldsInBody() throws Exception {
         MockHttpServletRequest req = post("/api/devices/dev-1/fcm-token", "{\"pushToken\":\"super-secret-token\"}");
 

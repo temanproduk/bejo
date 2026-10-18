@@ -187,6 +187,39 @@ app:
     min-confidence: ${VOICE_MIN_CONFIDENCE:0.5}
     # Each call is billed, so a user may make only this many in any rolling minute.
     max-requests-per-minute: ${VOICE_MAX_REQUESTS_PER_MINUTE:12}
+    # The voice-converter model files for "Suara Kamu Sendiri" (on-device cloning): a private bucket, handed to the app as
+    # short-lived signed URLs (see docs/architecture/voice.md). Blank bucket = the endpoint answers 503. Each call mints links to
+    # ~131 MB of downloads, so a user may make only this many in any rolling hour (this caps issued links, not downloaded bytes).
+    models:
+      gcs-bucket: ${VOICE_MODELS_GCS_BUCKET:}
+      signed-url-ttl-seconds: ${VOICE_MODELS_SIGNED_URL_TTL_SECONDS:3600}
+      max-requests-per-hour: ${VOICE_MODELS_MAX_REQUESTS_PER_HOUR:10}
+    # "Say the sale" (POST /api/voice/transaction): a spoken sentence → Gemini on Vertex AI → a structured manual transaction
+    # (see docs/architecture/voice.md). The Vertex AI API (aiplatform.googleapis.com) must be enabled on the GCP project and the
+    # service account needs roles/aiplatform.user; both are done by scripts/init-gcp.sh. Gemini 2.5 Flash retires 2026-10-20,
+    # so the default is a 3.x Flash model; whether it accepts audio and structured output at the chosen location is checked
+    # with scripts/smoke-voice-transaction.sh.
+    transaction:
+      model: ${VOICE_TRANSACTION_MODEL:gemini-3.5-flash}
+      location: ${VOICE_TRANSACTION_LOCATION:global}
+      # The project that hosts the model; blank = the project the credentials are billed to (the ADC quota project)
+      project-id: ${GCP_PROJECT_ID:}
+      # How long to wait for Gemini. It must stay BELOW the platform's request timeout (Cloud Run: CLOUD_RUN_TIMEOUT, default 15 s,
+      # in seconds) so the call gives up and answers 503 before the platform cuts the request; raise CLOUD_RUN_TIMEOUT first.
+      timeout-seconds: ${VOICE_TRANSACTION_TIMEOUT_SECONDS:12}
+      # generationConfig.thinkingConfig.thinkingLevel: MINIMAL, LOW, MEDIUM or HIGH (Gemini 3 thinks by default, which is slow).
+      # Blank (or NONE) = leave the field out, the fallback if a model rejects it with a 400; anything else falls back to LOW.
+      # Not combined with a thinking budget, ever. Unverified against the live API.
+      thinking-level: ${VOICE_TRANSACTION_THINKING_LEVEL:LOW}
+      # Output budget; a 20-item answer is ~900 tokens, and a thinking model spends part of this on its reasoning
+      max-output-tokens: ${VOICE_TRANSACTION_MAX_OUTPUT_TOKENS:2048}
+      # Recording length: at least 0.5 s, at most this
+      max-seconds: ${VOICE_TRANSACTION_MAX_SECONDS:30}
+      # Every call is billed: at most this many per user in any rolling minute / rolling 24 hours
+      max-requests-per-minute: ${VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE:6}
+      max-requests-per-day: ${VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY:100}
+      # An amount or price above this is dropped as a mishearing (the form allows far more, the database any positive BIGINT)
+      max-amount: ${VOICE_TRANSACTION_MAX_AMOUNT:999999999}
   ads:
     # Cloud Storage bucket holding campaign audio (created + locked down by scripts/init-gcp.sh).
     gcs-bucket: ${ADS_GCS_BUCKET:}

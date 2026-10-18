@@ -2391,6 +2391,76 @@
             },
             "description": "\"Say the amount\": a few seconds of speech in, what was heard and the rupiah amount out. Any signed-in user.\n\naudio = base64 of raw 16-bit little-endian mono PCM (no container, no header), 0.3-10 s, default 16 kHz. End the clip with ~1 s of silence: the recogniser drops a last word that ends the audio. To make a test clip on a Mac: say -v Damayanti -o a.aiff \"dua puluh lima ribu\" && ffmpeg -i a.aiff -af apad=pad_dur=1 -ar 16000 -ac 1 -f s16le a.raw && base64 -i a.raw | tr -d '\\n'.\n\nReturns { transcript, amount, confidence }. amount is absent when no number was heard; transcript/confidence are absent when nothing was heard.\nErrors: 400 (clip too short/long/not PCM), 429 (more than 12 a minute), 503 (speech recognition unavailable)."
           }
+        },
+        {
+          "name": "Understand Sale (voice, Gemini)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"audio\": \"<base64 of raw 16-bit mono PCM, 16 kHz>\",\n  \"sampleRateHertz\": 16000,\n  \"products\": [\n    { \"id\": 12, \"name\": \"Kopi Susu\", \"price\": 18000 },\n    { \"id\": 7, \"name\": \"Teh Botol\", \"price\": 5000 }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/voice/transaction",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "voice",
+                "transaction"
+              ]
+            },
+            "description": "\"Say the sale\": a spoken sentence in, what Gemini (Vertex AI) understood out, for a confirmation screen. Nothing is saved. Any signed-in user.\n\naudio = base64 of raw 16-bit little-endian mono PCM (no container, no header), 0.5-30 s, default 16 kHz. products = the merchant's catalogue as the app has it (at most 200 entries of { id, name, price }); spoken product names are matched against it. To make a test clip on a Mac: say -v Damayanti -o a.aiff \"dua kopi susu sama satu roti bakar dua belas ribu, bayar tunai\" && ffmpeg -i a.aiff -af apad=pad_dur=1 -ar 16000 -ac 1 -f s16le a.raw && base64 -i a.raw | tr -d '\\n'.\n\nReturns { understood, transcript, amount, paymentMethod, customerInfo, merchantInfo, items: [{ productId, name, quantity, unitPrice, isNew }] }; every field is present, nulls written out. paymentMethod is Tunai, Transfer, Kartu Kredit, Kartu Debit, QRIS or Lainnya (else null). A line whose productId is in the request is matched (catalogue name and price); any other line is new (isNew, productId null, the heard price or null). At most 20 items.\nErrors: 400 (bad base64, odd length, too short/long, bad sample rate, more than 200 products), 429 (more than 6 a minute or 100 a day per user), 503 (Gemini not configured, refused, no answer within 12 s, or an unreadable answer)."
+          }
+        },
+        {
+          "name": "Converter models (voice cloning)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-TOKEN",
+                "value": "{{apiToken}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/voice/models/converter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "voice",
+                "models",
+                "converter"
+              ]
+            },
+            "description": "The voice-converter model files for on-device voice cloning (\"Suara Kamu Sendiri\"), each with a short-lived signed download URL (1 h), its size and SHA-256: { revision, files: [{ name, bytes, sha256, url }] }. Any signed-in user.\n\nErrors: 429 (more than 10 calls per user in any rolling hour; only a call that returned links counts), 503 (the models have not been uploaded, the bucket is not configured, or storage/signing is unavailable). A link that has expired needs a fresh call."
+          }
         }
       ]
     },

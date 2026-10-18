@@ -104,6 +104,18 @@ jobs:
       ADS_MAX_AUDIO_SECONDS: ${{ vars.ADS_MAX_AUDIO_SECONDS }}
       # Set to false when the install has no bejo-ads-admin-token secret (default: true)
       MOUNT_ADS_ADMIN_TOKEN: ${{ vars.MOUNT_ADS_ADMIN_TOKEN }}
+      # Voice-converter models for on-device voice cloning (bucket defaults to <project>-voice-models, matching init-gcp.sh)
+      VOICE_MODELS_GCS_BUCKET: ${{ vars.VOICE_MODELS_GCS_BUCKET }}
+      # "Say the sale" (Gemini on Vertex AI): model, location and the per-user cost limits. All optional; the app's defaults
+      # (gemini-3.5-flash, global, 12 s, thinking LOW, 6 a minute, 100 a day) apply when unset. The project is GCP_PROJECT_ID above.
+      VOICE_TRANSACTION_MODEL: ${{ vars.VOICE_TRANSACTION_MODEL }}
+      VOICE_TRANSACTION_LOCATION: ${{ vars.VOICE_TRANSACTION_LOCATION }}
+      # Must stay below CLOUD_RUN_TIMEOUT (default 15 s); raise that first
+      VOICE_TRANSACTION_TIMEOUT_SECONDS: ${{ vars.VOICE_TRANSACTION_TIMEOUT_SECONDS }}
+      # MINIMAL|LOW|MEDIUM|HIGH; NONE leaves the field out (a blank variable means "unset", so it cannot say that)
+      VOICE_TRANSACTION_THINKING_LEVEL: ${{ vars.VOICE_TRANSACTION_THINKING_LEVEL }}
+      VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE: ${{ vars.VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE }}
+      VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY: ${{ vars.VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY }}
       # Set to true once bejo-callback-secret exists in Secret Manager (default: false)
       MOUNT_CALLBACK_SECRET: ${{ vars.MOUNT_CALLBACK_SECRET }}
       # Firebase/FCM: by default the service sends as its own service account in FIREBASE_PROJECT_ID (default:

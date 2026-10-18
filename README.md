@@ -1,8 +1,10 @@
-# Bejo
+# BeJo — Catat Transaksi & Suara QRIS
 
 **Real-time payment tracking for Indonesian QRIS merchants.**
 
 Bejo is the backend service behind the Bejo merchant mobile app. It turns a static QRIS code into a live point of sale: the moment a customer pays, the merchant's phone rings with a "payment received" notification, and every transaction is stored, searchable, and reconciled in one place.
+
+> **About this repository.** This is the **backend API**, its documentation and the deployment tooling. The merchant app is an Android app (Kotlin) kept in a separate repository. The product is built for **Indonesian retailers**, so the app, its prompts and its voices are in **Bahasa Indonesia** today; nothing in the design is Indonesian-only, and more languages can be added later (see [Languages](#languages)).
 
 ## The problem
 
@@ -39,6 +41,61 @@ Registration ([`POST /api/users/register`](#users)) creates a new business + its
 1. A customer scans the merchant's [QRIS](#qris) and pays from any Indonesian e-wallet or bank app.
 2. The payment gateway calls Bejo's [QRIS callback](#qris-callback), which records the [transaction](#transactions) and sends an [FCM push](#notifications) (with a ring sound) to **every device of every user in that business** — so the whole team is alerted.
 3. The transaction appears in the shared [transaction history](#transactions), available for filtering, reconciliation, and [manual correction](#transactions).
+
+## Voice features
+
+- **Say the amount.** The mic on the Nominal field sends a short clip to **Google Cloud Speech-to-Text** (Bahasa Indonesia, with hints for "ribu", "juta" and merchant slang such as "ceban" or "goceng"); the answer is turned into a rupiah amount. → [Voice input](#voice-input).
+- **Say the whole sale (Gemini).** In the manual-transaction form the merchant says, for example, *"Dua kopi susu delapan belas ribu, satu roti bakar dua belas ribu, bayar tunai."* The API sends the audio to **Gemini on Vertex AI**, which returns the amount, payment method, optional customer and merchant info, and the products (matched to the shop's catalogue, or flagged as new). The app shows what was understood and saves it only after the merchant confirms; new products are created on the spot. → [Voice input](#voice-input).
+- **Sound packs.** Payment announcements are read out with a chosen sound pack; an on-device, voice-cloned pack in the owner's own voice is in progress (it runs entirely on the phone).
+
+Audio is analysed and **not stored** by BeJo, and never written to logs.
+
+## Built with Google Cloud
+
+| Service | What BeJo uses it for |
+|---|---|
+| **Gemini on Vertex AI** | Turns one spoken sentence into a structured transaction (amount, payment method, customer, merchant, products). |
+| **Cloud Run** | Runs the API (Java 25 / Spring Boot) with one always-warm instance. |
+| **Cloud SQL for PostgreSQL** | The system of record (Flyway migrations, schema per module). |
+| **Cloud Speech-to-Text** | "Say the amount" in Bahasa Indonesia. |
+| **Firebase Cloud Messaging** (Admin SDK) | Payment-received and attendance pushes to every device of a business. |
+| **Cloud Storage** | Audio for voice-ad campaigns (private bucket, signed URLs). |
+| **Secret Manager**, **Artifact Registry** | Runtime secrets and container images. |
+| **IAM Workload Identity Federation** | Keyless CI/CD: GitHub Actions deploys to Cloud Run without a stored service-account key. |
+
+Calls to Google APIs use the service's own identity (Application Default Credentials) — there is no API key or key file in this repository.
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+  App["BeJo Android app<br/>(Kotlin, FCM, on-device ONNX voice)"] -->|HTTPS + JWT| API
+  Dash["Admin dashboard<br/>(static web)"] -->|HTTPS| API
+  PSP["QRIS payment provider"] -->|payment callback| API
+  subgraph GCP["Google Cloud"]
+    API["Cloud Run<br/>BeJo API (Spring Boot)"]
+    API --> SQL[("Cloud SQL<br/>PostgreSQL")]
+    API --> GEM["Vertex AI<br/>Gemini"]
+    API --> STT["Cloud<br/>Speech-to-Text"]
+    API --> GCS["Cloud Storage"]
+    API --> FCM["Firebase Cloud<br/>Messaging"]
+  end
+  FCM -->|push| App
+```
+
+Code is a **modular monolith** — packages `core`, `commerce`, `ads`, `notification`, `admin`, `voice`, `shared` — with the allowed dependency directions enforced by an ArchUnit test on every build.
+
+## Languages
+
+BeJo targets **Indonesian retailers first**, so the app copy, the voice prompts, the sound packs and the spoken-number parsing are in Bahasa Indonesia. The design is language-agnostic: Gemini and Speech-to-Text are multilingual, the app's strings live in resource files, and the sound-pack and voice features are data-driven — so adding another language means translations and a new language profile, not a redesign.
+
+## Security and secrets
+
+- **No secrets are committed.** Configuration comes from environment variables (see [Configuration](#configuration)); `.env`, `.env.gcp` and `.env.vm` are git-ignored and only the `*.example` templates are tracked, with placeholder values.
+- Production secrets live in **Secret Manager**; Google APIs are called with the service's own identity, and CI deploys through Workload Identity Federation (no key files).
+- Every request needs the shared `X-API-TOKEN` plus a user JWT; logins are throttled, request bodies are size-capped, and the app refuses to start in production with default secrets (see [Authentication](#authentication)).
+- Sample identifiers in this documentation (merchant PANs, NMIDs, names) are synthetic.
+- Found a vulnerability? Please do not post details in a public issue; contact the maintainers through the contact details on the [BeJo website](https://bejo.temanproduk.com/contact).
 
 <br />
 
@@ -733,6 +790,8 @@ Soft-deletes a transaction: the row is kept in the database with a `deleted_at` 
 
 **Super-admin-only** — a sub-account (`MEMBER`) gets `403`, even for a transaction it created itself. (Creating and editing transactions stay open to any member; only deletion is restricted.)
 
+**Every type can be deleted**, including a payment the server recorded from the [QRIS callback](#qris-callback) (`MANAGED`, which cannot be edited) and one read from another app's notification (`PARSED`). The amount then leaves the history and the [summary](#get-apitransactionssummary). A provider that retries a callback for a payment that was deleted is still answered as a duplicate — it does not come back, because the dedupe lookup includes deleted rows.
+
 **Stock return:** if the transaction has sold-product [line items](#post-apitransactions), deleting it **returns each item's quantity to its product's stock** and records a `SALE` reversal [stock mutation](#stock-mutations). (A product deleted since the sale is skipped.) The line-item records are kept; stock is returned exactly once.
 
 **Success — HTTP 200**
@@ -783,6 +842,71 @@ and slang are understood: `25000`, `25.000`, `2,5 juta`, `20rb`, `dua setengah j
 (speech recognition unavailable — the field can still be typed)
 
 The audio is held in memory for the call and is **not stored or logged**; neither is the transcript.
+
+#### `POST /api/voice/transaction`
+
+"Say the sale": the merchant says a whole sale in the manual-transaction form and **Gemini on Vertex AI** works out what was
+sold. The app shows the answer on a confirmation screen and saves it (through the normal transaction and product endpoints)
+only after the merchant confirms — **this endpoint saves nothing**. Any signed-in user. The catalogue travels in the request,
+so the voice module never reads the product tables. See [docs/architecture/voice.md](docs/architecture/voice.md).
+
+**Request body**
+
+| Field | Required | Description |
+|---|---|---|
+| `audio` | yes | Base64 of raw **16-bit little-endian mono PCM** — no container, no header (the server adds the WAV header for Gemini). Between 0.5 s and 30 s (`VOICE_TRANSACTION_MAX_SECONDS`) |
+| `sampleRateHertz` | no | 8000–48000, default `16000` |
+| `products` | no | The merchant's catalogue as the app has it, at most **200** entries: `[{ "id": 12, "name": "Kopi Susu", "price": 18000 }, …]` (`price` may be omitted). Spoken product names are matched against it |
+
+```json
+{
+  "audio": "<base64 of 16-bit mono PCM>",
+  "sampleRateHertz": 16000,
+  "products": [ { "id": 12, "name": "Kopi Susu", "price": 18000 }, { "id": 7, "name": "Teh Botol", "price": 5000 } ]
+}
+```
+
+**Success — HTTP 200** for a sentence like *"Dua kopi susu, satu roti bakar dua belas ribu, semuanya empat puluh delapan ribu, bayar tunai, atas nama Ibu Sari"*
+
+```json
+{
+  "status": 1,
+  "message": "Transaksi terdengar",
+  "data": {
+    "understood": true,
+    "transcript": "dua kopi susu satu roti bakar dua belas ribu semuanya empat puluh delapan ribu bayar tunai atas nama ibu sari",
+    "amount": 48000,
+    "paymentMethod": "Tunai",
+    "customerInfo": "Ibu Sari",
+    "merchantInfo": null,
+    "items": [
+      { "productId": 12,   "name": "Kopi Susu",  "quantity": 2, "unitPrice": 18000, "isNew": false },
+      { "productId": null, "name": "Roti Bakar", "quantity": 1, "unitPrice": 12000, "isNew": true }
+    ]
+  }
+}
+```
+
+Every field is always present; nulls are written out. `understood` is true when an `amount` or at least one item was found
+(`message` *Transaksi terdengar*, otherwise *Transaksi tidak terdengar jelas* and the app falls back to typing). The answer is
+checked field by field before it is returned, because what a language model makes of audio is never trusted:
+
+| Field | Rule |
+|---|---|
+| `amount` | Whole rupiah the speaker gave as **the total**, 1 to `VOICE_TRANSACTION_MAX_AMOUNT` (999 999 999), else `null` |
+| `paymentMethod` | One of `Tunai`, `Transfer`, `Kartu Kredit`, `Kartu Debit`, `QRIS`, `Lainnya`, else `null` |
+| `customerInfo`, `merchantInfo` | Free text, trimmed, control characters removed, at most 50 characters (they map to `customerPan` / `merchantPan`) |
+| `transcript` | What Gemini heard, at most 500 characters, for display only |
+| `items` | At most 20. A line whose `productId` is in the request is **matched**: its name and `unitPrice` are the catalogue's, whatever was said. Any other line is **new** (`productId` null, `isNew` true) with the name as heard and the heard price or `null` — an id the request did not contain is never believed. The same product said twice is one line with the quantities added. `quantity` is clamped to 1–9999 |
+
+**Errors:** `400` (`audio bukan base64 yang valid`, `audio harus PCM 16-bit`, `Suara terlalu pendek`,
+`Suara terlalu panjang (maksimal 30 detik)`, a sample rate outside 8000–48000, more than 200 products, a product without id or name),
+`429` more than 6 requests in a minute (`VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE`) or 100 in a day (`VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY`)
+per user — every call is billed, `503 Input suara belum tersedia. Isi manual dulu ya.` (Gemini not configured, refused, timed out or
+answered something unreadable — the form can still be filled in by hand).
+
+The audio goes to Google (Vertex AI / Gemini) for analysis and is held in memory for the call only: **not stored or logged by
+BeJo**, and neither are the transcript or the product list (only the user, the byte count and the item count are logged).
 
 ---
 
@@ -1073,7 +1197,7 @@ Super-admin-only (the business info is shared) — a plain member gets `403 Hany
 
 Upgrades a **self-service** account to **managed by Bejo**: sets the business's `merchantPan` + `nmid` (the QRIS-callback routing credentials, **both required** — a missing/blank value is `400`) and flips the account's `account_type` to `MANAGED`. Super admin only. Returns the refreshed `/me` bundle.
 
-**Request body:** `{ "merchantPan": "9360082232606290012", "nmid": "ID1026540778978" }`
+**Request body:** `{ "merchantPan": "9360000000000000001", "nmid": "ID0000000000001" }`
 
 **Errors:** `400 merchantPan wajib diisi` / `400 nmid wajib diisi`, `400 Akun sudah dikelola Bejo` (already managed), `409 NMID sudah digunakan oleh bisnis lain` / `409 Merchant PAN sudah digunakan oleh bisnis lain`.
 
@@ -1615,8 +1739,8 @@ Returns the caller's **effective** QRIS: if the main account [assigned this user
   "status": 1,
   "data": {
     "qrisCode": "00020101021126640018ID.CO.ASTRAPAY.WWW…63042C15",
-    "merchantName": "Susilo",
-    "nmid": "ID1026540778978",
+    "merchantName": "Warung Contoh",
+    "nmid": "ID0000000000001",
     "acquirer": "ID.CO.ASTRAPAY.WWW",
     "terminalId": "A001",
     "businessName": "Alice Shop",
@@ -1651,7 +1775,7 @@ The main account gives one user their own QRIS code; the **terminal id is read o
 
 **Request body:** `{ "qrisCode": "00020101021126610014COM…6304ABCD" }` (max 1024 chars). The terminal id is **parsed from the code** (EMV tag `62` → sub-tag `07`), not supplied — so it can never disagree with the QR. A code without a terminal label stores `null`.
 
-**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "qrisCode": "...", "merchantName": "Susilo", "nmid": "ID10265...", "acquirer": "ID.CO.ASTRAPAY.WWW", "terminalId": "A001", "createdAt": "...", "updatedAt": "..." } }`
+**Success — HTTP 200:** `{ "status": 1, "message": "QRIS pengguna disimpan", "data": { "userId": 7, "username": "...", "qrisCode": "...", "merchantName": "Warung Contoh", "nmid": "ID00000...", "acquirer": "ID.CO.ASTRAPAY.WWW", "terminalId": "A001", "createdAt": "...", "updatedAt": "..." } }`
 
 #### `GET /api/qris/users` · `GET /api/qris/users/{id}` · `DELETE /api/qris/users/{id}` (super admin)
 
@@ -1686,18 +1810,18 @@ This endpoint does **not** use the standard `{ status, message, data }` envelope
 
 ```json
 {
-  "originalReferenceNo": "XCBS6Z450S",
-  "originalPartnerReferenceNo": "DEV20250826422460",
+  "originalReferenceNo": "REF0000001",
+  "originalPartnerReferenceNo": "DEV00000000000001",
   "latestTransactionStatus": "00",
   "transactionStatusDesc": "SUCCESS",
-  "customerNumber": "9360082230250015792",
-  "destinationNumber": "9360082232504524231",
-  "destinationAccountName": "Asep & Testing",
+  "customerNumber": "9360000000000000003",
+  "destinationNumber": "9360000000000000002",
+  "destinationAccountName": "Warung Contoh",
   "amount": { "value": "100.00", "currency": "IDR" },
   "additionalInfo": {
     "tip": "0.00", "deviceId": "AstraPay", "terminalId": "5164",
-    "merchantPan": "9360082232504524231", "customerPan": "9360082230250015792",
-    "issuerName": "93600822", "transactionId": "INV/QRM/4542BR/250826/2G4Y6CCZ"
+    "merchantPan": "9360000000000000002", "customerPan": "9360000000000000003",
+    "issuerName": "93600000", "transactionId": "INV/QRM/000000/260101/AAAAAAAA"
   }
 }
 ```
@@ -1718,8 +1842,8 @@ All fields are optional in PoC mode; only `amount.value` (when present) and `lat
 ```json
 {
   "id": 123,
-  "billNumber": "XCBS6Z450S",
-  "referenceNumber": "DEV20250826422460",
+  "billNumber": "REF0000001",
+  "referenceNumber": "DEV00000000000001",
   "amount": 100.00,
   "tip": 0.00,
   "status": "SUCCESS",
@@ -1939,6 +2063,13 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `ADS_SIGNED_URL_TTL_SECONDS` | no | Audio download-link lifetime. Default `86400` (24h; GCS max 7d) |
 | `ADS_MAX_AUDIO_BYTES` | no | Max decoded audio size. Default `2097152` (2 MB) |
 | `ADS_MAX_AUDIO_SECONDS` | no | Max audio duration. Default `10` |
+| `GCP_PROJECT_ID` | no‡ | The Google Cloud project that hosts Gemini for [Say the sale](#post-apivoicetransaction) (`app.voice.transaction.project-id`). Blank = the project the credentials are billed to. `deploy-cloud-run.sh` sets it to the deployed project |
+| `VOICE_TRANSACTION_MODEL` | no | Gemini model for Say the sale. Default `gemini-3.5-flash` (Gemini 2.5 Flash retires 2026-10-20, so do not use it) |
+| `VOICE_TRANSACTION_LOCATION` | no | Vertex AI location. Default `global` |
+| `VOICE_TRANSACTION_TIMEOUT_SECONDS` / `VOICE_TRANSACTION_MAX_SECONDS` | no | How long to wait for Gemini / the longest recording. Defaults `12` / `30`. The first must stay **below** Cloud Run's `CLOUD_RUN_TIMEOUT` (15 s) so the call gives up and answers `503` before the platform cuts the request — raise `CLOUD_RUN_TIMEOUT` first |
+| `VOICE_TRANSACTION_THINKING_LEVEL` | no | Sent as `generationConfig.thinkingConfig.thinkingLevel`: `MINIMAL`, `LOW`, `MEDIUM` or `HIGH` (Gemini 3 thinks by default, which is slow). Default `LOW`; blank (or `NONE`) leaves the field out — the fallback if a model rejects it with a `400`; anything else falls back to `LOW` with a warning. Never combined with a thinking budget. Not verified against the live API |
+| `VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE` / `VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY` | no | Per-user limits (every call is billed), `429` above them. Defaults `6` / `100` |
+| `VOICE_TRANSACTION_MAX_AMOUNT` | no | An amount or price above this is dropped as a mishearing. Default `999999999` |
 | `SEED_PASSWORD` | no | Seed user password — seeding skipped if blank |
 | `SEED_USERNAME` | no | Default: `admin` |
 | `SEED_NAME` | no | Default: `Admin` |
@@ -1952,6 +2083,8 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 \* One of the two Firebase options is required to use push notifications.
 
 † Voice ads need a Cloud Storage bucket + Application Default Credentials, so they work only on GCP (not local Compose). Leave `ADS_ADMIN_TOKEN` blank to keep the feature off.
+
+‡ Say the sale calls Gemini on Vertex AI as the service's own Google account (Application Default Credentials; the Vertex AI API must be enabled and the account needs `roles/aiplatform.user`, both done by `scripts/init-gcp.sh`), so like voice ads it works only on GCP or with `gcloud auth application-default login` — not in local Compose. Without credentials the endpoint answers `503` and the app falls back to typing.
 
 ### GCP deployment
 
@@ -2004,6 +2137,7 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `CLOUD_RUN_MIN_INSTANCES` / `CLOUD_RUN_MAX_INSTANCES` / `CLOUD_RUN_MEMORY` / `CLOUD_RUN_CPU` | *(optional)* Cloud Run sizing — defaults `0` / `2` / `512Mi` / `1` |
 | `ADS_GCS_BUCKET` | *(optional)* Ad-audio bucket. Defaults to `<project>-ads` |
 | `ADS_SIGNED_URL_TTL_SECONDS` / `ADS_MAX_AUDIO_BYTES` / `ADS_MAX_AUDIO_SECONDS` | *(optional)* Voice-ad limits — defaults `86400` / `2097152` / `10` |
+| `VOICE_TRANSACTION_MODEL` / `VOICE_TRANSACTION_LOCATION` / `VOICE_TRANSACTION_TIMEOUT_SECONDS` / `VOICE_TRANSACTION_THINKING_LEVEL` / `VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE` / `VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY` | *(optional)* [Say the sale](#post-apivoicetransaction) (Gemini on Vertex AI) — defaults `gemini-3.5-flash` / `global` / `12` / `LOW` / `6` / `100`. The timeout must stay below `CLOUD_RUN_TIMEOUT` (raise that first); `NONE` leaves the thinking level out (an empty value cannot be deployed). The project is `GCP_PROJECT_ID`. Check a new model, location or thinking level with `scripts/smoke-voice-transaction.sh` first |
 | `MOUNT_ADS_ADMIN_TOKEN` | *(optional)* Set to `false` if `ADS_ADMIN_TOKEN` was left blank in `.env.gcp` (so `bejo-ads-admin-token` doesn't exist) — otherwise CI deploys fail mounting the missing secret. Default `true` |
 | `MAIL_HOST` / `MAIL_USERNAME` / `MAIL_FROM` / `MAIL_FROM_NAME` / `MAIL_PORT` / `MAIL_STARTTLS` / `MAIL_SSL` | *(optional)* Outgoing email settings (non-secret) — see the env table; unset keeps password reset off |
 | `MOUNT_MAIL_PASSWORD` | *(optional)* Set to `true` once `bejo-mail-password` exists in Secret Manager **and** keep it set: without it a release unmounts the SMTP password and silently switches password reset off. Default `false` |

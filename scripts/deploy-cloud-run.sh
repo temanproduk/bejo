@@ -29,6 +29,7 @@ done
 
 CLOUD_RUN_SA_EMAIL="$CLOUD_RUN_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
 ADS_GCS_BUCKET="${ADS_GCS_BUCKET:-$GCP_PROJECT_ID-ads}"
+VOICE_MODELS_GCS_BUCKET="${VOICE_MODELS_GCS_BUCKET:-$GCP_PROJECT_ID-voice-models}"
 DB_URL="jdbc:postgresql:///$CLOUD_SQL_DB_NAME?cloudSqlInstance=$INSTANCE_CONNECTION_NAME&socketFactory=com.google.cloud.sql.postgres.SocketFactory"
 
 # ---------------------------------------------------------------
@@ -56,10 +57,14 @@ set_env DB_USERNAME           "$CLOUD_SQL_DB_USER"
 set_env SPRING_PROFILES_ACTIVE prod
 set_env TZ                    Asia/Jakarta
 set_env ADS_GCS_BUCKET        "$ADS_GCS_BUCKET"
+set_env VOICE_MODELS_GCS_BUCKET "$VOICE_MODELS_GCS_BUCKET"
 # The Firebase project that owns the app's FCM tokens. The service authenticates to it as its own service
 # account (application-default credentials), so there is no key to store: the org may forbid creating one,
 # and the account needs roles/firebasecloudmessaging.admin (init-gcp.sh grants it). Defaults to this project.
 set_env FIREBASE_PROJECT_ID   "${FIREBASE_PROJECT_ID:-$GCP_PROJECT_ID}"
+# The project that hosts Gemini on Vertex AI ("say the sale", app.voice.transaction.project-id). Always this project:
+# the service calls it as its own service account (roles/aiplatform.user, granted by init-gcp.sh).
+set_env GCP_PROJECT_ID        "$GCP_PROJECT_ID"
 set_env SEED_USERNAME         "${SEED_USERNAME:-admin}"
 set_env SEED_NAME             "${SEED_NAME:-Admin User}"
 set_env SEED_BUSINESS_NAME    "${SEED_BUSINESS_NAME:-My Business}"
@@ -74,6 +79,8 @@ for name in \
   PUSH_QUEUE_THREADS PUSH_QUEUE_CAPACITY \
   MAIL_HOST MAIL_PORT MAIL_USERNAME MAIL_FROM MAIL_FROM_NAME MAIL_STARTTLS MAIL_SSL \
   ADMIN_EMAILS ADMIN_DASHBOARD_ORIGINS \
+  VOICE_TRANSACTION_MODEL VOICE_TRANSACTION_LOCATION VOICE_TRANSACTION_TIMEOUT_SECONDS VOICE_TRANSACTION_THINKING_LEVEL \
+  VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY \
   REQUEST_LOG_BODY_ON_ERROR REQUEST_LOG_MAX_BODY_LENGTH; do
   set_env_if_present "$name"
 done
@@ -136,6 +143,12 @@ fi
 # Deploy
 # ---------------------------------------------------------------
 echo "==> Deploying $IMAGE to Cloud Run service $GCP_SERVICE_NAME ($GCP_REGION)..."
+# NOTE: --timeout (CLOUD_RUN_TIMEOUT, default 15 s) is the budget the Android app's HTTP client is built around:
+# RetrofitInstances.SERVER_REQUEST_TIMEOUT_S mirrors it and the app waits that long plus a few seconds. Change
+# this and that constant together. Likewise --min-instances: with 0, the first request after a quiet spell also
+# waits 30+ s for a container, which the app's tighter timeouts no longer cover — production keeps one warm.
+# VOICE_TRANSACTION_TIMEOUT_SECONDS (the Gemini call, default 12) must stay BELOW this, so that call gives up and answers
+# 503 before the platform cuts the request: raise this first if that is ever raised.
 gcloud run deploy "$GCP_SERVICE_NAME" \
   --project="$GCP_PROJECT_ID" \
   --image="$IMAGE" \

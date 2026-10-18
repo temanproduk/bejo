@@ -78,6 +78,8 @@ CLOUD_RUN_SA_EMAIL="$CLOUD_RUN_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
 GITHUB_ACTIONS_SA_EMAIL="$GITHUB_ACTIONS_SA@$GCP_PROJECT_ID.iam.gserviceaccount.com"
 ADS_GCS_BUCKET="${ADS_GCS_BUCKET:-$GCP_PROJECT_ID-ads}"
 export ADS_GCS_BUCKET
+VOICE_MODELS_GCS_BUCKET="${VOICE_MODELS_GCS_BUCKET:-$GCP_PROJECT_ID-voice-models}"
+export VOICE_MODELS_GCS_BUCKET
 # Daily automated backup window, UTC (19:00 UTC = 02:00 WIB, the quietest hour).
 CLOUD_SQL_BACKUP_START_TIME="${CLOUD_SQL_BACKUP_START_TIME:-19:00}"
 
@@ -200,9 +202,13 @@ gcloud services enable \
   iam.googleapis.com \
   iamcredentials.googleapis.com \
   sts.googleapis.com \
-  speech.googleapis.com
+  speech.googleapis.com \
+  aiplatform.googleapis.com
 # (speech.googleapis.com: "say the amount" in the app — see docs/architecture/voice.md. The service calls it as its
-# own service account, so no extra role is needed.)
+# own service account, so no extra role is needed.
+# aiplatform.googleapis.com: Vertex AI, where Gemini turns a spoken sale into a transaction proposal
+# (POST /api/voice/transaction). It was disabled in the production project; the service account also needs
+# roles/aiplatform.user, granted in step 4 below.)
 
 # ---------------------------------------------------------------
 # 2. Artifact Registry repository
@@ -292,10 +298,12 @@ fi
 echo "==> Creating Cloud Run service account..."
 ensure_service_account "$CLOUD_RUN_SA" "Bejo Cloud Run"
 # roles/firebasecloudmessaging.admin lets the service send push messages as itself (no key file).
+# roles/aiplatform.user lets it call Gemini on Vertex AI as itself ("say the sale", POST /api/voice/transaction).
 grant_project_roles "$CLOUD_RUN_SA_EMAIL" \
   roles/cloudsql.client \
   roles/secretmanager.secretAccessor \
-  roles/firebasecloudmessaging.admin
+  roles/firebasecloudmessaging.admin \
+  roles/aiplatform.user
 
 # ---------------------------------------------------------------
 # 5. Cloud Storage bucket for ad-campaign audio
@@ -325,6 +333,28 @@ gcloud iam service-accounts add-iam-policy-binding "$CLOUD_RUN_SA_EMAIL" \
   --member="serviceAccount:$CLOUD_RUN_SA_EMAIL" \
   --role="roles/iam.serviceAccountTokenCreator" \
   --project="$GCP_PROJECT_ID" \
+  --quiet >/dev/null
+
+# ---------------------------------------------------------------
+# 5b. Cloud Storage bucket for the voice-converter models ("Suara Kamu Sendiri")
+# ---------------------------------------------------------------
+# Holds convert.onnx / ref_enc.onnx (~131 MB) the app downloads once to clone a voice on the phone. Same lock-down as the ads
+# bucket: uniform access + public-access-prevention, reachable only through short-lived V4 signed URLs. The Cloud Run SA reads
+# the manifest and is the identity the URLs are signed as (objectViewer here; serviceAccountTokenCreator on itself was granted above).
+echo "==> Creating voice-models bucket gs://$VOICE_MODELS_GCS_BUCKET ..."
+create_unless_exists \
+  gcloud storage buckets describe "gs://$VOICE_MODELS_GCS_BUCKET" \
+  -- \
+  gcloud storage buckets create "gs://$VOICE_MODELS_GCS_BUCKET" \
+    --project="$GCP_PROJECT_ID" \
+    --location="$GCP_REGION" \
+    --uniform-bucket-level-access \
+    --public-access-prevention \
+    --quiet
+
+gcloud storage buckets add-iam-policy-binding "gs://$VOICE_MODELS_GCS_BUCKET" \
+  --member="serviceAccount:$CLOUD_RUN_SA_EMAIL" \
+  --role="roles/storage.objectViewer" \
   --quiet >/dev/null
 
 # ---------------------------------------------------------------

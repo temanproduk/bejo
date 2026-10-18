@@ -82,7 +82,8 @@ public class GoogleSpeechToText implements SpeechToText {
     // Resolved on each call; the library caches the token and refreshes it only when it is about to expire
     private static volatile GoogleCredentials credentials;
 
-    private static Auth applicationDefaultAuth() {
+    // Package-private: GeminiTransactionUnderstanding authenticates the same way (same scope, same cached credentials)
+    static Auth applicationDefaultAuth() {
         try {
             GoogleCredentials c = credentials;
             if (c == null) {
@@ -92,7 +93,7 @@ public class GoogleSpeechToText implements SpeechToText {
             c.refreshIfExpired();
             return new Auth(c.getAccessToken().getTokenValue(), c.getQuotaProjectId());
         } catch (IOException e) {
-            throw new IllegalStateException("No Google credentials for speech-to-text: " + e.getMessage(), e);
+            throw new IllegalStateException("No Google application-default credentials: " + e.getMessage(), e);
         }
     }
 

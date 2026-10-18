@@ -44,3 +44,7 @@ app:
     signed-url-ttl-seconds: 86400
     max-audio-bytes: 2097152
     max-audio-seconds: 10
+  voice:
+    models:
+      # Low so the integration tests reach the per-user hourly limit in a few calls (production default is 10)
+      max-requests-per-hour: 3

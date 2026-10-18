@@ -1232,4 +1232,31 @@ class TransactionServiceTest {
 
         assertThat(transactionService.get("alice", "TXN-PAID").autoCancelAt()).isNull();
     }
+    @Test
+    void aPaymentRecordedFromTheQrisCallbackCanBeDeletedByTheSuperAdmin() {
+        // MANAGED rows can't be edited, but they can be deleted like any other
+        Transaction managed = activeTransaction();
+        managed.setType("MANAGED");
+        managed.setStatus("SUCCESS");
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(managed));
+
+        transactionService.delete("alice", "TXN-1");
+
+        assertThat(managed.getDeletedAt()).isNotNull();
+        verify(transactionRepository).save(managed);
+    }
+
+    @Test
+    void aPaymentReadFromAnotherAppCanBeDeletedToo() {
+        Transaction parsed = activeTransaction();
+        parsed.setType("PARSED");
+        parsed.setStatus("SUCCESS");
+        when(transactionRepository.findByTransactionIdAndBusinessIdAndDeletedAtIsNull("TXN-1", BIZ))
+                .thenReturn(Optional.of(parsed));
+
+        transactionService.delete("alice", "TXN-1");
+
+        assertThat(parsed.getDeletedAt()).isNotNull();
+    }
 }

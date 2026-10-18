@@ -26,3 +26,6 @@ logs/
 
 # Local launcher scripts (machine/session specific, not shared)
 start-claude.sh
+
+# Local Cloudflare CLI cache (account id) — never commit
+.cloudflare/
