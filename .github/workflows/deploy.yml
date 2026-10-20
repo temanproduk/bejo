@@ -157,13 +157,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Keyless by default: GitHub's OIDC token is exchanged for short-lived credentials (set up by
       # scripts/init-gcp.sh). Required on organizations that forbid downloadable service-account keys.
       - name: Authenticate to Google Cloud (Workload Identity Federation)
         if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
@@ -171,7 +171,7 @@ jobs:
       # Fallback for a project that still allows keys: the GCP_SA_KEY secret (init-gcp.sh --sa-key).
       - name: Authenticate to Google Cloud (service-account key)
         if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER == '' }}
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
@@ -183,14 +183,14 @@ jobs:
         run: echo "image=$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPO/$GCP_SERVICE_NAME:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # The Dockerfile compiles the app itself (multi-stage Maven build), so the runner needs no JDK.
       # Layers are cached in the GitHub Actions cache: the Maven dependency layer is rebuilt only when
       # pom.xml changes, instead of re-downloading every dependency on every deploy. provenance: false
       # keeps the pushed image a plain single manifest, which is what Cloud Run expects.
       - name: Build and push Docker image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: true
@@ -230,7 +230,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up SSH
         env:
