@@ -19,8 +19,8 @@
 
     <properties>
         <java.version>25</java.version>
-        <firebase-admin.version>9.4.0</firebase-admin.version>
-        <jjwt.version>0.12.6</jjwt.version>
+        <firebase-admin.version>9.11.0</firebase-admin.version>
+        <jjwt.version>0.13.0</jjwt.version>
     </properties>
 
     <dependencies>
@@ -89,7 +89,7 @@
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-storage</artifactId>
-            <version>2.43.1</version>
+            <version>2.75.0</version>
         </dependency>
         <!-- Reads audio duration (header only) to enforce the ≤10s ad limit. Handles MP3, MP4/M4A,
              OGG, WAV. LGPL — used unmodified as a library dependency. -->
@@ -105,7 +105,7 @@
         <dependency>
             <groupId>com.google.cloud.sql</groupId>
             <artifactId>postgres-socket-factory</artifactId>
-            <version>1.21.0</version>
+            <version>1.30.1</version>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -128,7 +128,7 @@
         <dependency>
             <groupId>com.tngtech.archunit</groupId>
             <artifactId>archunit-junit5</artifactId>
-            <version>1.4.1</version>
+            <version>1.5.1</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
