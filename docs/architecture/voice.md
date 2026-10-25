@@ -1,4 +1,4 @@
-# Voice input ("say the amount", "say the sale") and the voice-cloning model listing
+# Voice input ("say the amount", "say the sale", "say the sale live") and the voice-cloning model listing
 
 > The first half of this page is "say the amount"; **Say the sale (Gemini)** covers `POST /api/voice/transaction`, and the section
 > **Converter models for voice cloning** further down covers the model-download endpoint used by the Android app's "Suara Kamu Sendiri" feature.
@@ -223,8 +223,87 @@ how the table groups them:
    never sent to the live API. If a model answers 400 to it, set `VOICE_TRANSACTION_THINKING_LEVEL` to blank (local) or `NONE` (Cloud Run, where an empty value is
    not forwarded) and the field is left out; the smoke script's `--thinking-level ''` tries the same.
 3. Whether the Cloud Run service account can call Gemini with just `roles/aiplatform.user` (expected, not tried).
-4. Latency (against the 12 s Gemini timeout and the 15 s platform timeout above), cost, and accuracy on real merchants' voices in a real shop — only synthetic phrases have been
+4. Latency (against the 12 s Gemini timeout and the 45 s platform timeout above), cost, and accuracy on real merchants' voices in a real shop — only synthetic phrases have been
    considered, and the prompt was never run against the model.
+
+## Say the sale, live (Gemini Live)
+
+`WebSocket /api/voice/transaction/live` is "say the sale" without the wait: the app streams the microphone while the merchant talks, and each product
+appears on the confirmation sheet about a second after it is said, instead of everything appearing after "Selesai". The one-shot endpoint above stays:
+the app falls back to it (sending the recording it kept) whenever a live session cannot be had or breaks.
+
+```
+app ──start{products}, PCM frames, end──▶ VoiceLiveWebSocketHandler ─▶ LiveSale ─▶ GeminiLiveUpstream ══wss══▶ Vertex AI (Gemini Live)
+app ◀──ready, draft…, done | error──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Protocol
+
+The upgrade request is an ordinary authenticated HTTP request: `X-API-TOKEN` and `Authorization: Bearer <JWT>` go through the same filters as every other
+call (a missing or bad one is a `401` before any WebSocket exists). The user is whoever the JWT says.
+
+| Direction | Frame | Meaning |
+|---|---|---|
+| app → server | text `{"type":"start","products":[{"id","name","price"}…]}` | The product list (at most 200), as in the one-shot request. Must come within 5 s of connecting. Takes one place in the user's request budget |
+| app → server | binary | Raw 16 kHz mono 16-bit little-endian PCM as it is recorded, any size up to 64 KB (100 ms is 3.2 KB). May start before `ready`; it is held |
+| app → server | text `{"type":"end"}` | "Selesai" |
+| server → app | `{"type":"ready"}` | The model can take audio (about 2 s after `start`) |
+| server → app | `{"type":"draft", …}` | **The whole sale understood so far**, validated — never a delta, so a lost or repeated model call cannot leave the app out of step. The fields are exactly those of the one-shot answer (`understood`, `transcript`, `amount`, `paymentMethod`, `customerInfo`, `merchantInfo`, `items`), nulls written out |
+| server → app | `{"type":"done", …}` | The final sale, same fields; the server then closes the connection normally (1000) |
+| server → app | `{"type":"error","code","message"}` | The session cannot go on, then closed. `code`: `bad_request` (unreadable frame, a second `start`, audio before `start`, odd-length audio, a bad product list), `rate_limited` (a session already running, or over 6 a minute / 100 a day), `unavailable` (switched off, instance full, the model did not come up in 8 s, no credentials), `upstream` (Google hung up mid-sale), `timeout` (no `start` in 5 s). The app should send what it recorded the one-shot way |
+
+A tap shorter than 0.5 s is answered with `done` and `understood: false` at once. More than 30 s of audio ends the sale at 30 s.
+
+### How the model is used
+
+`GeminiLiveUpstream` opens `wss://<location>-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent` as the service's
+own account (ADC, no key, the JDK's WebSocket client, no SDK). The first frame is `setup`: the model, `TransactionPrompt.LIVE_SYSTEM_INSTRUCTION` plus the
+fenced product list, five functions — `add_item`, `set_total`, `set_payment`, `set_customer`, `set_merchant` — and a request for a transcript of what it hears.
+The model calls a function as soon as it has heard the fact; `LiveSale` applies it and sends a new draft. Things the recorded sessions showed, which the code
+relies on:
+
+- Vertex sends its JSON in **binary** WebSocket frames (a few as text, and a message can come in fragments); the client reads all of them.
+- Every function call must be answered (`tool_response`) or the model waits; `GeminiLiveUpstream` answers `ok` itself.
+- The Live models answer only in audio. The instruction asks for silence and the voice that comes anyway (about half a second per session) is dropped.
+- The model decides where a phrase ends from silence, so products appear after the merchant pauses; run together without a pause, they all appear after "Selesai".
+- It sometimes lets a phrase pass without any call (a price it was waiting for, say), and then no "turn complete" follows.
+- The context is re-read for each turn, so the instruction and the product list are paid for again at every pause (see Cost).
+
+### Finishing
+
+After "Selesai" `LiveSale` appends 0.8 s of silence (so the model closes the last phrase), ends the audio, and then must decide when the sale is complete. "Nothing
+has happened for a moment" is not enough: audio that arrived in a burst (the connection takes ~2 s to come up while the merchant is already talking) keeps the
+model busy for seconds afterwards. So it waits for all of these, then for a short quiet (0.7 s; 0.3 s once the model has said anything since "Selesai"):
+the model is not hearing speech; it is not answering the phrase that just ended (it either says "turn complete" or, after 1.5 s of nothing, is taken to have
+passed); and it has reported hearing past where the last speech in the recording ends (`SpeechEnd`, a plain loudness test, against the `audioOffset` of the model's
+own voice-activity events). `VOICE_LIVE_SETTLE_SECONDS` (6 s, counted from the moment the model is up) caps the wait, and what the model has by then is the answer.
+The session as a whole ends at `VOICE_LIVE_MAX_SESSION_SECONDS` (40 s) with whatever it has.
+
+### Limits, cost, privacy
+
+- **Per user:** one session at a time, and each session is one request against the same minute/day budget as the one-shot endpoint
+  (`VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE` / `_PER_DAY`). **Per instance:** `VOICE_LIVE_MAX_SESSIONS` (40) at once, each holding a connection to Google.
+- **Timeout:** the platform cuts a WebSocket like any request, so `CLOUD_RUN_TIMEOUT` is 45 s for the whole service (Cloud Run cannot set it per endpoint) and the
+  session ends itself at 40 s. The app's HTTP client for every other call still gives up at about 20 s on its own, so it does not notice. The GitHub variable
+  `CLOUD_RUN_TIMEOUT` was set to `15`; it must be changed to `45` (or deleted) for a deploy to carry this.
+- **Cost:** billed by tokens, and the model re-reads the whole context for each turn. A recorded 4-product sale with a 3-product list measured 1,396 → 1,564 →
+  1,680 prompt tokens over its turns, so a 200-product list (several thousand tokens) is paid for at every pause. The log line `[VOICE] live … tokens=<prompt>+<response>`
+  adds them up per session so the real cost can be read from production; prices were not checked.
+- **Privacy** is as for the one-shot endpoint: the audio goes to Google and is held in memory only; nothing the merchant said or the model understood is logged
+  (the log holds the user, byte and item counts, token totals and how the session ended), and `RequestLoggingFilter` skips `/api/voice/` bodies.
+
+### What was verified, and what was not
+
+Against the real Live API (`gemini-3.8-live`, `us-central1`), with `VoiceLiveSmokeTest` (opt-in: it is skipped unless `LIVE_SMOKE_WAV` is set) and synthetic
+Indonesian speech (macOS `say -v Damayanti`; "dua kopi susu, satu teh botol lima ribu, sama tiga roti bakar, pelanggan Budi, bayar tunai" with and without pauses):
+all four runs gave the right sale; with pauses each product appeared about 1–2 s after it was said (the model also needs ~2 s to come up, so the first one
+is later), the final sale 1.2 s after "Selesai"; run together, about 1.7 s after; with all the audio sent at once before the model was up, the sale was complete
+after ~6 s (the model works through a burst at about twice real time).
+
+**Not verified:** real voices and a noisy shop (only clean synthetic speech was used), other accents and product names, `global` as the location, whether
+`gemini-3.8-live` stays a preview (another Live model can be set with `VOICE_LIVE_MODEL`), a long catalogue, the price per session, and the connection from a phone
+on a mobile network. `gemini-live-2.5-flash-native-audio` also worked but called `set_customer` and `set_payment` repeatedly; `gemini-3.1-flash-live-preview` is
+not served to this project.
 
 ## Converter models for voice cloning
 
@@ -287,6 +366,11 @@ blank or `NONE` = field omitted, anything else = `LOW` with a warning), `max-out
 (`VOICE_TRANSACTION_MAX_OUTPUT_TOKENS`, 2048), `max-seconds` (`VOICE_TRANSACTION_MAX_SECONDS`, 30), `max-requests-per-minute`
 (`VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE`, 6), `max-requests-per-day` (`VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY`, 100), `max-amount`
 (`VOICE_TRANSACTION_MAX_AMOUNT`, 999999999). On Cloud Run only the project, model, location, timeout, thinking level and the two limits are forwarded (an empty value is never forwarded, which is why `NONE` exists).
+
+`app.voice.live.*` (say the sale, live) — `enabled` (`VOICE_LIVE_ENABLED`, true), `model` (`VOICE_LIVE_MODEL`, `gemini-3.8-live`), `location` (`VOICE_LIVE_LOCATION`, `us-central1`),
+`max-audio-seconds` (30), `max-session-seconds` (`VOICE_LIVE_MAX_SESSION_SECONDS`, 40 — below `CLOUD_RUN_TIMEOUT`), `start-timeout-seconds` (5), `ready-timeout-seconds` (8),
+`settle-seconds` (6), `quiet-millis` (700), `end-silence-millis` (800), `max-sessions` (`VOICE_LIVE_MAX_SESSIONS`, 40). The project is `app.voice.transaction.project-id`. On Cloud Run only
+`ENABLED`, `MODEL`, `LOCATION`, `MAX_SESSION_SECONDS` and `MAX_SESSIONS` are forwarded.
 
 `app.voice.models.*` (the converter models) — `gcs-bucket` (`VOICE_MODELS_GCS_BUCKET`, blank = the endpoint answers 503; Cloud Run
 gets `<project>-voice-models` from `deploy-cloud-run.sh`), `signed-url-ttl-seconds` (`VOICE_MODELS_SIGNED_URL_TTL_SECONDS`, 3600) and

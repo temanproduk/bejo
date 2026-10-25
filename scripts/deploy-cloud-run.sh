@@ -81,6 +81,7 @@ for name in \
   ADMIN_EMAILS ADMIN_DASHBOARD_ORIGINS \
   VOICE_TRANSACTION_MODEL VOICE_TRANSACTION_LOCATION VOICE_TRANSACTION_TIMEOUT_SECONDS VOICE_TRANSACTION_THINKING_LEVEL \
   VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY \
+  VOICE_LIVE_ENABLED VOICE_LIVE_MODEL VOICE_LIVE_LOCATION VOICE_LIVE_MAX_SESSION_SECONDS VOICE_LIVE_MAX_SESSIONS \
   REQUEST_LOG_BODY_ON_ERROR REQUEST_LOG_MAX_BODY_LENGTH; do
   set_env_if_present "$name"
 done
@@ -143,12 +144,14 @@ fi
 # Deploy
 # ---------------------------------------------------------------
 echo "==> Deploying $IMAGE to Cloud Run service $GCP_SERVICE_NAME ($GCP_REGION)..."
-# NOTE: --timeout (CLOUD_RUN_TIMEOUT, default 15 s) is the budget the Android app's HTTP client is built around:
-# RetrofitInstances.SERVER_REQUEST_TIMEOUT_S mirrors it and the app waits that long plus a few seconds. Change
-# this and that constant together. Likewise --min-instances: with 0, the first request after a quiet spell also
-# waits 30+ s for a container, which the app's tighter timeouts no longer cover — production keeps one warm.
-# VOICE_TRANSACTION_TIMEOUT_SECONDS (the Gemini call, default 12) must stay BELOW this, so that call gives up and answers
-# 503 before the platform cuts the request: raise this first if that is ever raised.
+# NOTE: --timeout (CLOUD_RUN_TIMEOUT, default 45 s) is one limit for the whole SERVICE: Cloud Run cannot set it per endpoint. It is 45
+# because the live "say the sale" WebSocket (/api/voice/transaction/live) is cut by it like any request, and a sale can take 30 s to
+# say. The Android app's HTTP client for every OTHER call is still built around 15 s (RetrofitInstances.SERVER_REQUEST_TIMEOUT_S plus
+# a margin): it gives up on its own, so an ordinary request that stalls is abandoned by the app long before the platform cuts it.
+# (These two used to be one number that had to move together; they no longer are.) Likewise --min-instances: with 0, the first
+# request after a quiet spell also waits 30+ s for a container, which the app's tighter timeouts do not cover — production keeps one
+# warm. VOICE_TRANSACTION_TIMEOUT_SECONDS (the Gemini call, default 12) and VOICE_LIVE_MAX_SESSION_SECONDS (the live session,
+# default 40) must stay BELOW this, so they end the call themselves before the platform cuts it: raise this first if either is raised.
 gcloud run deploy "$GCP_SERVICE_NAME" \
   --project="$GCP_PROJECT_ID" \
   --image="$IMAGE" \
@@ -162,7 +165,7 @@ gcloud run deploy "$GCP_SERVICE_NAME" \
   --max-instances="${CLOUD_RUN_MAX_INSTANCES:-2}" \
   --memory="${CLOUD_RUN_MEMORY:-512Mi}" \
   --cpu="${CLOUD_RUN_CPU:-1}" \
-  --timeout="${CLOUD_RUN_TIMEOUT:-15}" \
+  --timeout="${CLOUD_RUN_TIMEOUT:-45}" \
   --concurrency=80 \
   "$CPU_THROTTLING_ARG" \
   --cpu-boost \

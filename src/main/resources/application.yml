@@ -204,7 +204,7 @@ app:
       location: ${VOICE_TRANSACTION_LOCATION:global}
       # The project that hosts the model; blank = the project the credentials are billed to (the ADC quota project)
       project-id: ${GCP_PROJECT_ID:}
-      # How long to wait for Gemini. It must stay BELOW the platform's request timeout (Cloud Run: CLOUD_RUN_TIMEOUT, default 15 s,
+      # How long to wait for Gemini. It must stay BELOW the platform's request timeout (Cloud Run: CLOUD_RUN_TIMEOUT, default 45 s,
       # in seconds) so the call gives up and answers 503 before the platform cuts the request; raise CLOUD_RUN_TIMEOUT first.
       timeout-seconds: ${VOICE_TRANSACTION_TIMEOUT_SECONDS:12}
       # generationConfig.thinkingConfig.thinkingLevel: MINIMAL, LOW, MEDIUM or HIGH (Gemini 3 thinks by default, which is slow).
@@ -220,6 +220,29 @@ app:
       max-requests-per-day: ${VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY:100}
       # An amount or price above this is dropped as a mishearing (the form allows far more, the database any positive BIGINT)
       max-amount: ${VOICE_TRANSACTION_MAX_AMOUNT:999999999}
+    # "Say the sale" while still talking (WebSocket /api/voice/transaction/live): the app streams the microphone to Gemini Live on
+    # Vertex AI and gets each product back as it is said (see docs/architecture/voice.md). Same project, same per-user request budget
+    # as above (one session is one request). The Live models are served in regions, not at "global".
+    live:
+      enabled: ${VOICE_LIVE_ENABLED:true}
+      model: ${VOICE_LIVE_MODEL:gemini-3.8-live}
+      location: ${VOICE_LIVE_LOCATION:us-central1}
+      # The sale is as long as this (seconds of audio); more ends it
+      max-audio-seconds: ${VOICE_LIVE_MAX_AUDIO_SECONDS:30}
+      # The whole session, from connecting. It must stay BELOW the platform's request timeout (Cloud Run: CLOUD_RUN_TIMEOUT, 45 s),
+      # which cuts a WebSocket like any other request; raise CLOUD_RUN_TIMEOUT first.
+      max-session-seconds: ${VOICE_LIVE_MAX_SESSION_SECONDS:40}
+      # How long the app has to say what it wants, and the model to come up
+      start-timeout-seconds: ${VOICE_LIVE_START_TIMEOUT_SECONDS:5}
+      ready-timeout-seconds: ${VOICE_LIVE_READY_TIMEOUT_SECONDS:8}
+      # After "Selesai" (and once the model is up): it has at most settle-seconds to finish what it is on, and once it has heard the
+      # end of the recording, quiet-millis of nothing means it has finished
+      settle-seconds: ${VOICE_LIVE_SETTLE_SECONDS:6}
+      quiet-millis: ${VOICE_LIVE_QUIET_MILLIS:700}
+      # Silence appended after the last word so the model's voice detection closes the final phrase
+      end-silence-millis: ${VOICE_LIVE_END_SILENCE_MILLIS:800}
+      # Sessions at once on one instance (each holds a connection to Google), on top of one per user
+      max-sessions: ${VOICE_LIVE_MAX_SESSIONS:40}
   ads:
     # Cloud Storage bucket holding campaign audio (created + locked down by scripts/init-gcp.sh).
     gcs-bucket: ${ADS_GCS_BUCKET:}

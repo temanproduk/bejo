@@ -57,12 +57,40 @@ class VoiceTransactionDefaultsTest {
         int gemini = Integer.parseInt(property("timeout-seconds"));
         assertThat(gemini).isEqualTo(12);
 
-        // CLOUD_RUN_TIMEOUT is in seconds: `--timeout="${CLOUD_RUN_TIMEOUT:-15}"`
+        // CLOUD_RUN_TIMEOUT is in seconds: `--timeout="${CLOUD_RUN_TIMEOUT:-45}"`
         String script = Files.readString(Path.of("scripts/deploy-cloud-run.sh"));
         Matcher m = Pattern.compile("--timeout=\"\\$\\{CLOUD_RUN_TIMEOUT:-(\\d+)}\"").matcher(script);
         assertThat(m.find()).as("the deploy script's request timeout default").isTrue();
         int platform = Integer.parseInt(m.group(1));
 
         assertThat(gemini).as("Gemini timeout must stay below the Cloud Run request timeout (%s s)", platform).isLessThan(platform);
+    }
+
+    private String live(String name) {
+        return env.getProperty("app.voice.live." + name);
+    }
+
+    @Test
+    void theLiveDefaultsAreTheDocumentedOnes() {
+        assertThat(live("enabled")).isEqualTo("true");
+        assertThat(live("model")).isEqualTo("gemini-3.8-live");
+        assertThat(live("location")).isEqualTo("us-central1");   // the Live models are served in regions, not at "global"
+        assertThat(live("max-audio-seconds")).isEqualTo("30");   // the same sale length as the one-shot endpoint
+        assertThat(live("max-session-seconds")).isEqualTo("40");
+        assertThat(live("settle-seconds")).isEqualTo("6");
+        assertThat(live("max-sessions")).isEqualTo("40");
+    }
+
+    @Test
+    void aLiveSessionEndsItselfBeforeCloudRunCutsTheConnection() throws Exception {
+        String script = Files.readString(Path.of("scripts/deploy-cloud-run.sh"));
+        Matcher m = Pattern.compile("--timeout=\"\\$\\{CLOUD_RUN_TIMEOUT:-(\\d+)}\"").matcher(script);
+        assertThat(m.find()).as("the deploy script's request timeout default").isTrue();
+        int platform = Integer.parseInt(m.group(1));
+
+        int session = Integer.parseInt(live("max-session-seconds"));
+        assertThat(session).as("a live session must end itself below the Cloud Run request timeout (%s s)", platform).isLessThan(platform);
+        // ...and long enough for the longest sale (30 s of audio) plus the model's time to finish it
+        assertThat(session).isGreaterThan(Integer.parseInt(live("max-audio-seconds")) + 5);
     }
 }

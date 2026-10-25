@@ -18,11 +18,11 @@ Bejo closes that gap.
 
 - **Instant payment alerts** — a push notification with an audible chime the moment money lands, so staff never have to trust a customer's screenshot. It's delivered to **every device of every user** in the business. → triggered by the [QRIS callback](#qris-callback); see the [notification APIs](#notifications).
 - **Transaction history** — every payment recorded and filterable by date, plus dashboard totals for today / yesterday / this month. → [Transactions](#transactions).
-- **Manual & external entries** — record cash sales or log transactions from another acquirer alongside QRIS payments; entries can be edited or removed, and pushed in bulk after offline entry. → [adding & editing transactions](#transactions).
+- **Manual & external entries** — record cash sales or log transactions from another acquirer alongside QRIS payments; entries can be edited or removed, and pushed in bulk after offline entry. A QRIS sale entered by hand waits as *awaiting payment* (not income) until the matching payment arrives, and is cancelled at the end of the day if it never does. → [adding & editing transactions](#transactions).
 - **Inventory & catalog** — a per-business product catalog with categories, stock levels, restocks and stock-opname; a sale can carry **line items** that draw the sold products' stock down automatically. → [Products & categories](#products--categories) and the [stock-change history](#stock-mutations).
 - **QRIS management** — display the merchant's managed QRIS or upload their own image (no image is synthesized; accounts without one return `null`). → [QRIS](#qris).
 - **Business & bank profile** — keep the business name, address and payout bank details up to date. NMID belongs to the QRIS and is read from `GET /api/qris`. → [User profile](#user-profile).
-- **Team access** — a business can have several staff users sharing the same data; the creator is the **super admin** who manages access, up to a configurable cap (default 5). → [Businesses & users](#businesses--users) below, and the [member APIs](#business-members).
+- **Team access** — a business can have several staff users sharing the same data; the creator is the **super admin** who manages access, up to a configurable cap (default 10, `BUSINESS_MAX_USERS`). → [Businesses & users](#businesses--users) below, and the [member APIs](#business-members).
 - **Staff attendance** — staff clock in and out from the app with their GPS location, and the owner's phone rings each time ("Budi telah absen masuk!"). The owner can also ping the team for a spot-check, which staff acknowledge with one tap, and review everyone's attendance by member and by month. → [Employee presence](#employee-presence).
 
 ## Businesses & users
@@ -45,8 +45,8 @@ Registration ([`POST /api/users/register`](#users)) creates a new business + its
 ## Voice features
 
 - **Say the amount.** The mic on the Nominal field sends a short clip to **Google Cloud Speech-to-Text** (Bahasa Indonesia, with hints for "ribu", "juta" and merchant slang such as "ceban" or "goceng"); the answer is turned into a rupiah amount. → [Voice input](#voice-input).
-- **Say the whole sale (Gemini).** In the manual-transaction form the merchant says, for example, *"Dua kopi susu delapan belas ribu, satu roti bakar dua belas ribu, bayar tunai."* The API sends the audio to **Gemini on Vertex AI**, which returns the amount, payment method, optional customer and merchant info, and the products (matched to the shop's catalogue, or flagged as new). The app shows what was understood and saves it only after the merchant confirms; new products are created on the spot. → [Voice input](#voice-input).
-- **Sound packs.** Payment announcements are read out with a chosen sound pack; an on-device, voice-cloned pack in the owner's own voice is in progress (it runs entirely on the phone).
+- **Say the whole sale (Gemini).** In the manual-transaction form the merchant says, for example, *"Dua kopi susu delapan belas ribu, satu roti bakar dua belas ribu, bayar tunai."* The API sends the audio to **Gemini on Vertex AI**, which returns the amount, payment method, optional customer and merchant info, and the products (matched to the shop's catalogue, or flagged as new). The app shows what was understood and saves it only after the merchant confirms; new products are created on the spot with stock equal to the quantity ordered, and an existing product with too little stock is topped up first. → [Voice input](#voice-input).
+- **Sound packs.** Payment announcements are read out with a chosen sound pack. A voice-cloned pack in the owner's own voice is built entirely on the phone (hidden in the current release); the API only hands out signed download links for the model files (`GET /api/voice/models/converter`, needs `VOICE_MODELS_GCS_BUCKET`, otherwise `503`).
 
 Audio is analysed and **not stored** by BeJo, and never written to logs.
 
@@ -55,7 +55,7 @@ Audio is analysed and **not stored** by BeJo, and never written to logs.
 | Service | What BeJo uses it for |
 |---|---|
 | **Gemini on Vertex AI** | Turns one spoken sentence into a structured transaction (amount, payment method, customer, merchant, products). |
-| **Cloud Run** | Runs the API (Java 25 / Spring Boot) with one always-warm instance. |
+| **Cloud Run** | Runs the API (Java 25 / Spring Boot); production keeps one instance always warm. |
 | **Cloud SQL for PostgreSQL** | The system of record (Flyway migrations, schema per module). |
 | **Cloud Speech-to-Text** | "Say the amount" in Bahasa Indonesia. |
 | **Firebase Cloud Messaging** (Admin SDK) | Payment-received and attendance pushes to every device of a business. |
@@ -131,6 +131,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [Auth](#auth)
   - [Users](#users)
   - [Transactions](#transactions)
+  - [Voice input](#voice-input)
   - [Notifications](#notifications)
     - [Push payloads](#push-payloads)
   - [Devices](#devices)
@@ -142,6 +143,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
   - [QRIS](#qris)
   - [QRIS callback](#qris-callback)
   - [Voice ads](#voice-ads)
+  - [Admin dashboard](#admin-dashboard)
 - [Error reference](#error-reference)
 - [Observability](#observability)
 - [Configuration](#configuration)
@@ -156,6 +158,7 @@ REST API built with **Java 25 + Spring Boot 3.5**: local-DB authentication (JWT)
 | **Database** | PostgreSQL 17 via Cloud SQL (prod) / Docker (local) |
 | **Auth** | JWT (JJWT) + shared API token |
 | **Push** | Firebase Admin SDK (FCM) |
+| **Voice** | Google Cloud Speech-to-Text (amounts), Gemini on Vertex AI (whole sales) |
 | **Migrations** | Flyway |
 | **Metrics** | Micrometer + Prometheus |
 | **Tests** | JUnit 5 + Mockito + MockMvc with in-memory H2 |
@@ -182,7 +185,7 @@ Provisions Cloud SQL, Artifact Registry, Secret Manager, service accounts, and m
 
 **Image & build:** on a project that has never used Cloud Build, `init-gcp.sh` first grants the builder role to the service account Cloud Build runs as (the Compute Engine default one on projects created since April 2024) — otherwise the first build fails with `… does not have storage.objects.get access`. The Dockerfile is a pinned (by digest), multi-stage build that produces a *layered* image, so a normal deploy pushes only the small application layer; CI builds with Buildx and the GitHub Actions layer cache. Pinned images and Actions are kept current by Dependabot (`.github/dependabot.yml`). Request/abuse protection is deliberately **not** done in the app: a per-IP limiter needs the real client IP, which behind Cloud Run's proxy can't be determined reliably without testing against it, and a wrong guess would throttle all users together — put rate limits at the edge (Cloud Armor in front of Cloud Run; a Caddy rate-limit module on the VM). The app's own login throttle is per username.
 
-**Runtime scaling (Cloud Run, us-central1):** 1 vCPU / 512 MiB, **0–2 instances** — scales to **zero** when idle so there's no cost between requests, up to 2 under load. CPU is throttled to request time (request-based billing). `spring.main.lazy-initialization` is enabled to keep cold starts (from scale-to-zero) fast. Old images are pruned by an Artifact Registry cleanup policy (keep 5 most recent / delete >30 days).
+**Runtime scaling (Cloud Run, us-central1):** 1 vCPU / 512 MiB, up to 2 instances. The script default is **0–2** (scale to zero when idle), but **production sets `CLOUD_RUN_MIN_INSTANCES=1`** (about $10/month): with scale-to-zero the first request after a quiet spell waited ~30 s for a container. CPU is throttled to request time (request-based billing). `spring.main.lazy-initialization` is enabled to keep cold starts fast. Old images are pruned by an Artifact Registry cleanup policy (keep 5 most recent / delete >30 days).
 
 ### Production — single VM (Docker Compose)
 
@@ -266,8 +269,9 @@ No database or other services needed — tests are self-contained:
 
 | Suite | Location | Approach |
 |---|---|---|
-| Unit tests | `src/test/java/com/bejo/service/` | Mockito, no Spring context — service logic in isolation |
-| Functional tests | `src/test/java/com/bejo/web/ApiIntegrationTest.java` | `@SpringBootTest` + MockMvc through the full HTTP stack (API token filter, Spring Security, JWT filter, controllers, JPA) against in-memory H2 in PostgreSQL mode |
+| Unit tests | `src/test/java/com/bejo/<module>/` | Mockito, no Spring context — service logic in isolation |
+| Functional tests | `src/test/java/com/bejo/web/*ApiIntegrationTest.java` | `@SpringBootTest` + MockMvc through the full HTTP stack (API token filter, Spring Security, JWT filter, controllers, JPA) against in-memory H2 in PostgreSQL mode |
+| Architecture | `ArchitectureTest`, `OrphanDetectionTest` | ArchUnit module-dependency rules; the commerce→core soft-reference check |
 
 Test configuration lives in `src/test/resources/application-test.yml` (profile `test`): Flyway disabled, schema generated from the JPA entities via `ddl-auto: create-drop`.
 
@@ -907,6 +911,27 @@ answered something unreadable — the form can still be filled in by hand).
 
 The audio goes to Google (Vertex AI / Gemini) for analysis and is held in memory for the call only: **not stored or logged by
 BeJo**, and neither are the transcript or the product list (only the user, the byte count and the item count are logged).
+
+#### `WS /api/voice/transaction/live`
+
+"Say the sale" **while the merchant is still talking**: the same job as `POST /api/voice/transaction`, over a WebSocket, so each product shows on
+the confirmation sheet about a second after it is said instead of everything appearing after "Selesai". Streaming audio to **Gemini Live on
+Vertex AI**; nothing is saved. Any signed-in user. The upgrade request needs `X-API-TOKEN` and `Authorization: Bearer <JWT>` like any other call
+(without them it is a `401`, and no WebSocket is opened). The app falls back to the one-shot endpoint whenever a live session breaks. Details and what
+was verified: [docs/architecture/voice.md](docs/architecture/voice.md).
+
+| Direction | Frame | |
+|---|---|---|
+| app → server | text `{"type":"start","products":[{"id":12,"name":"Kopi Susu","price":18000}]}` | The product list (at most 200), within 5 s of connecting |
+| app → server | binary | 16 kHz mono 16-bit little-endian PCM as it is recorded, up to 64 KB a frame; may start before `ready` |
+| app → server | text `{"type":"end"}` | "Selesai" |
+| server → app | `{"type":"ready"}` | The model can take audio |
+| server → app | `{"type":"draft", "understood", "transcript", "amount", "paymentMethod", "customerInfo", "merchantInfo", "items":[…]}` | The **whole** sale understood so far, validated exactly like the one-shot answer (never a delta); nulls are written out |
+| server → app | `{"type":"done", …same fields}` | The final sale; the server then closes normally (1000) |
+| server → app | `{"type":"error","code","message"}` | `bad_request`, `rate_limited` (a session already running, or 6 a minute / 100 a day — a session is one request), `unavailable`, `upstream`, `timeout`; then closed |
+
+At most 30 s of audio and 40 s per session (`VOICE_LIVE_MAX_SESSION_SECONDS`), which must stay below `CLOUD_RUN_TIMEOUT` (45 s — one limit for the whole service,
+Cloud Run cannot set it per endpoint). Audio goes to Google and is held in memory only; nothing said or understood is logged.
 
 ---
 
@@ -1977,6 +2002,20 @@ The play location the `played` report couldn't include (the app only reads locat
 
 ---
 
+### Admin dashboard
+
+Backs the static dashboard at `https://dashboard.bejo.temanproduk.com` (repository `bejo-dashboard`). Read-only: every user and every transaction across all businesses, behind a passwordless sign-in. Admins are the addresses in `ADMIN_EMAILS` (no password, no user row); they sign in with an emailed 8-digit code (needs `MAIL_*`) and get a 12-hour opaque session token — not a user JWT. Every call still needs `X-API-TOKEN`; CORS is open for these paths only, and only to `ADMIN_DASHBOARD_ORIGINS`. Full detail: [docs/architecture/admin.md](docs/architecture/admin.md).
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| `POST` | `/api/admin/auth/otp/request` | API token | `{email}`. Always succeeds, admin or not |
+| `POST` | `/api/admin/auth/otp/verify` | API token | `{email, code}` → `{token, tokenType, expiresIn, email}` |
+| `POST` | `/api/admin/auth/logout` | Bearer | Revokes the session |
+| `GET` | `/api/admin/users` | Bearer | Filters `q`, `role`, `status`; paginated |
+| `GET` | `/api/admin/transactions` | Bearer | Filters `q`, `dateStart`, `dateEnd`, `type`, `status`; paginated |
+
+---
+
 ## Error reference
 
 Errors shared across all endpoints:
@@ -2066,10 +2105,14 @@ Used locally via `.env` (Docker Compose) or exported directly (Maven).
 | `GCP_PROJECT_ID` | no‡ | The Google Cloud project that hosts Gemini for [Say the sale](#post-apivoicetransaction) (`app.voice.transaction.project-id`). Blank = the project the credentials are billed to. `deploy-cloud-run.sh` sets it to the deployed project |
 | `VOICE_TRANSACTION_MODEL` | no | Gemini model for Say the sale. Default `gemini-3.5-flash` (Gemini 2.5 Flash retires 2026-10-20, so do not use it) |
 | `VOICE_TRANSACTION_LOCATION` | no | Vertex AI location. Default `global` |
-| `VOICE_TRANSACTION_TIMEOUT_SECONDS` / `VOICE_TRANSACTION_MAX_SECONDS` | no | How long to wait for Gemini / the longest recording. Defaults `12` / `30`. The first must stay **below** Cloud Run's `CLOUD_RUN_TIMEOUT` (15 s) so the call gives up and answers `503` before the platform cuts the request — raise `CLOUD_RUN_TIMEOUT` first |
+| `VOICE_TRANSACTION_TIMEOUT_SECONDS` / `VOICE_TRANSACTION_MAX_SECONDS` | no | How long to wait for Gemini / the longest recording. Defaults `12` / `30`. The first must stay **below** Cloud Run's `CLOUD_RUN_TIMEOUT` (45 s) so the call gives up and answers `503` before the platform cuts the request — raise `CLOUD_RUN_TIMEOUT` first |
 | `VOICE_TRANSACTION_THINKING_LEVEL` | no | Sent as `generationConfig.thinkingConfig.thinkingLevel`: `MINIMAL`, `LOW`, `MEDIUM` or `HIGH` (Gemini 3 thinks by default, which is slow). Default `LOW`; blank (or `NONE`) leaves the field out — the fallback if a model rejects it with a `400`; anything else falls back to `LOW` with a warning. Never combined with a thinking budget. Not verified against the live API |
 | `VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE` / `VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY` | no | Per-user limits (every call is billed), `429` above them. Defaults `6` / `100` |
 | `VOICE_TRANSACTION_MAX_AMOUNT` | no | An amount or price above this is dropped as a mishearing. Default `999999999` |
+| `VOICE_MODELS_GCS_BUCKET` | no | Bucket holding the voice-clone model files; blank ⇒ `GET /api/voice/models/converter` answers `503`. `VOICE_MODELS_MAX_REQUESTS_PER_HOUR` (default `10` per user) and `VOICE_MODELS_SIGNED_URL_TTL_SECONDS` (default `3600`) tune it |
+| `ADMIN_EMAILS` | no | Comma-separated addresses allowed to sign in to the [admin dashboard](#admin-dashboard). Blank ⇒ nobody. Needs `MAIL_*` |
+| `ADMIN_DASHBOARD_ORIGINS` | no | Browser origins allowed to call `/api/admin/**` (CORS). Default `https://dashboard.bejo.temanproduk.com` |
+| `SEED_EMAIL` | no | The seed user's email, created verified so the seed account can log in |
 | `SEED_PASSWORD` | no | Seed user password — seeding skipped if blank |
 | `SEED_USERNAME` | no | Default: `admin` |
 | `SEED_NAME` | no | Default: `Admin` |
@@ -2133,11 +2176,12 @@ Config is split across **three layers**, by who consumes it and how sensitive it
 | `JWT_EXPIRATION_MS` / `CALLBACK_DEFAULT_USERNAME` / `CALLBACK_FALLBACK_TO_DEFAULT` / `REQUEST_LOG_BODY_ON_ERROR` / `REQUEST_LOG_MAX_BODY_LENGTH` | *(optional)* Other overrides — defaults apply if unset |
 | `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_MINUTES` / `MAX_REQUEST_BYTES` / `PUSH_QUEUE_THREADS` / `PUSH_QUEUE_CAPACITY` | *(optional)* Login throttle, request-size cap and FCM queue tuning — defaults `10` / `15` / `8388608` / `4` / `1000` |
 | `DB_POOL_SIZE` / `JAVA_OPTS` | *(optional)* JDBC pool size per instance (default `10`) and JVM flags (replaces the default `-XX:MaxRAMPercentage=75`) |
-| `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds. Default `15` (max `3600`) |
-| `CLOUD_RUN_MIN_INSTANCES` / `CLOUD_RUN_MAX_INSTANCES` / `CLOUD_RUN_MEMORY` / `CLOUD_RUN_CPU` | *(optional)* Cloud Run sizing — defaults `0` / `2` / `512Mi` / `1` |
+| `CLOUD_RUN_TIMEOUT` | *(optional)* Cloud Run request timeout in seconds, for the **whole service** (Cloud Run has no per-endpoint timeout). Default `45` (max `3600`): the [live-voice WebSocket](#ws-apivoicetransactionlive) is cut by it like any request. The Android app's other calls still give up on their own at about 20 s. **If the repo variable `CLOUD_RUN_TIMEOUT` is set (it was `15`), it overrides this default** |
+| `CLOUD_RUN_MIN_INSTANCES` / `CLOUD_RUN_MAX_INSTANCES` / `CLOUD_RUN_MEMORY` / `CLOUD_RUN_CPU` | *(optional)* Cloud Run sizing — script defaults `0` / `2` / `512Mi` / `1`; production sets `CLOUD_RUN_MIN_INSTANCES=1` |
 | `ADS_GCS_BUCKET` | *(optional)* Ad-audio bucket. Defaults to `<project>-ads` |
 | `ADS_SIGNED_URL_TTL_SECONDS` / `ADS_MAX_AUDIO_BYTES` / `ADS_MAX_AUDIO_SECONDS` | *(optional)* Voice-ad limits — defaults `86400` / `2097152` / `10` |
 | `VOICE_TRANSACTION_MODEL` / `VOICE_TRANSACTION_LOCATION` / `VOICE_TRANSACTION_TIMEOUT_SECONDS` / `VOICE_TRANSACTION_THINKING_LEVEL` / `VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE` / `VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY` | *(optional)* [Say the sale](#post-apivoicetransaction) (Gemini on Vertex AI) — defaults `gemini-3.5-flash` / `global` / `12` / `LOW` / `6` / `100`. The timeout must stay below `CLOUD_RUN_TIMEOUT` (raise that first); `NONE` leaves the thinking level out (an empty value cannot be deployed). The project is `GCP_PROJECT_ID`. Check a new model, location or thinking level with `scripts/smoke-voice-transaction.sh` first |
+| `VOICE_LIVE_ENABLED` / `VOICE_LIVE_MODEL` / `VOICE_LIVE_LOCATION` / `VOICE_LIVE_MAX_SESSION_SECONDS` / `VOICE_LIVE_MAX_SESSIONS` | *(optional)* [Say the sale, live](#ws-apivoicetransactionlive) (Gemini Live on Vertex AI) — defaults `true` / `gemini-3.8-live` / `us-central1` / `40` / `40`. `VOICE_LIVE_ENABLED=false` makes the app fall back to the one-shot endpoint. The session length must stay below `CLOUD_RUN_TIMEOUT`. The Live models are served in regions, not at `global`; other settings (`VOICE_LIVE_SETTLE_SECONDS`, `_QUIET_MILLIS`, …) are in `application.yml` and not forwarded |
 | `MOUNT_ADS_ADMIN_TOKEN` | *(optional)* Set to `false` if `ADS_ADMIN_TOKEN` was left blank in `.env.gcp` (so `bejo-ads-admin-token` doesn't exist) — otherwise CI deploys fail mounting the missing secret. Default `true` |
 | `MAIL_HOST` / `MAIL_USERNAME` / `MAIL_FROM` / `MAIL_FROM_NAME` / `MAIL_PORT` / `MAIL_STARTTLS` / `MAIL_SSL` | *(optional)* Outgoing email settings (non-secret) — see the env table; unset keeps password reset off |
 | `MOUNT_MAIL_PASSWORD` | *(optional)* Set to `true` once `bejo-mail-password` exists in Secret Manager **and** keep it set: without it a release unmounts the SMTP password and silently switches password reset off. Default `false` |

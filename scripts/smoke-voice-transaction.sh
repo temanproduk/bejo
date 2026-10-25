@@ -11,7 +11,7 @@
 #      verified from a live call when the feature was written — AND accepts generationConfig.thinkingConfig.thinkingLevel
 #      (Gemini 3 thinks by default, which is slow; the level is unverified against the live API);
 #   4. a rough latency and token count for one clip. The backend gives up on Gemini after 12 s
-#      (VOICE_TRANSACTION_TIMEOUT_SECONDS), which has to stay below Cloud Run's request timeout (CLOUD_RUN_TIMEOUT, 15 s):
+#      (VOICE_TRANSACTION_TIMEOUT_SECONDS), which has to stay below Cloud Run's request timeout (CLOUD_RUN_TIMEOUT, 45 s):
 #      the script warns when the call was slower than 12 s.
 # Like the backend it sends NO temperature (Gemini 3: keep the default) and never a thinking budget next to the level.
 # What it does NOT prove: that the Cloud Run service account may call Gemini (that needs roles/aiplatform.user, granted by

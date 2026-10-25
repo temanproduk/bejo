@@ -3,6 +3,7 @@ package com.bejo.config;
 import com.bejo.core.repository.UserRepository;
 import com.bejo.core.service.JwtService;
 import com.bejo.core.service.TokenBlacklistService;
+import com.bejo.voice.web.VoiceLiveWebSocketConfig;
 import jakarta.servlet.http.HttpServletResponse;
 import static org.springframework.security.config.Customizer.withDefaults;
 import org.springframework.beans.factory.ObjectProvider;
@@ -96,7 +97,9 @@ public class SecurityConfig {
                         if (!ServletRequestPathUtils.hasParsedRequestPath(req)) {
                             ServletRequestPathUtils.parseAndCache(req);
                         }
-                        if (mapping == null || mapping.getHandler(req) == null) {
+                        // The live-voice WebSocket is not a request mapping, so the lookup cannot know it; it exists and needs a login
+                        boolean webSocket = VoiceLiveWebSocketConfig.PATH.equals(req.getRequestURI());
+                        if (mapping == null || (mapping.getHandler(req) == null && !webSocket)) {
                             res.setStatus(HttpServletResponse.SC_NOT_FOUND);
                             res.getWriter().write("{\"status\":0,\"message\":\"Route not found\"}");
                             return;

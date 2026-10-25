@@ -57,7 +57,7 @@ public class GeminiTransactionUnderstanding implements TransactionUnderstanding 
     static final String UNAVAILABLE = "Input suara belum tersedia. Isi manual dulu ya.";
 
     // Model ids, locations and project ids are all of this shape; anything else would change the URL's meaning
-    private static final Pattern SAFE_SEGMENT = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,99}");
+    static final Pattern SAFE_SEGMENT = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,99}");
 
     // A model that ignores "JSON only" sometimes wraps the answer in a markdown fence
     private static final Pattern FENCED = Pattern.compile("```[A-Za-z]*\\s*(.*?)```", Pattern.DOTALL);
@@ -251,12 +251,12 @@ public class GeminiTransactionUnderstanding implements TransactionUnderstanding 
                 text(root.get("customerInfo")), text(root.get("merchantInfo")), items);
     }
 
-    private static String text(JsonNode n) {
+    static String text(JsonNode n) {
         return n != null && n.isTextual() ? n.asText() : null;
     }
 
     /** A whole number: a JSON integer, a float with no fraction, or digits in a string; anything else is null. */
-    private static Long whole(JsonNode n) {
+    static Long whole(JsonNode n) {
         if (n == null || n.isNull()) return null;
         if (n.isIntegralNumber()) return n.canConvertToLong() ? n.longValue() : null;
         if (n.isFloatingPointNumber()) {

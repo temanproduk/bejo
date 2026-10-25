@@ -110,12 +110,19 @@ jobs:
       # (gemini-3.5-flash, global, 12 s, thinking LOW, 6 a minute, 100 a day) apply when unset. The project is GCP_PROJECT_ID above.
       VOICE_TRANSACTION_MODEL: ${{ vars.VOICE_TRANSACTION_MODEL }}
       VOICE_TRANSACTION_LOCATION: ${{ vars.VOICE_TRANSACTION_LOCATION }}
-      # Must stay below CLOUD_RUN_TIMEOUT (default 15 s); raise that first
+      # Must stay below CLOUD_RUN_TIMEOUT (default 45 s); raise that first
       VOICE_TRANSACTION_TIMEOUT_SECONDS: ${{ vars.VOICE_TRANSACTION_TIMEOUT_SECONDS }}
       # MINIMAL|LOW|MEDIUM|HIGH; NONE leaves the field out (a blank variable means "unset", so it cannot say that)
       VOICE_TRANSACTION_THINKING_LEVEL: ${{ vars.VOICE_TRANSACTION_THINKING_LEVEL }}
       VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE: ${{ vars.VOICE_TRANSACTION_MAX_REQUESTS_PER_MINUTE }}
       VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY: ${{ vars.VOICE_TRANSACTION_MAX_REQUESTS_PER_DAY }}
+      # "Say the sale" while still talking (Gemini Live over a WebSocket). All optional; the app's defaults (gemini-3.8-live,
+      # us-central1, a 40 s session, 40 sessions at once) apply when unset. The session length must stay below CLOUD_RUN_TIMEOUT.
+      VOICE_LIVE_ENABLED: ${{ vars.VOICE_LIVE_ENABLED }}
+      VOICE_LIVE_MODEL: ${{ vars.VOICE_LIVE_MODEL }}
+      VOICE_LIVE_LOCATION: ${{ vars.VOICE_LIVE_LOCATION }}
+      VOICE_LIVE_MAX_SESSION_SECONDS: ${{ vars.VOICE_LIVE_MAX_SESSION_SECONDS }}
+      VOICE_LIVE_MAX_SESSIONS: ${{ vars.VOICE_LIVE_MAX_SESSIONS }}
       # Set to true once bejo-callback-secret exists in Secret Manager (default: false)
       MOUNT_CALLBACK_SECRET: ${{ vars.MOUNT_CALLBACK_SECRET }}
       # Firebase/FCM: by default the service sends as its own service account in FIREBASE_PROJECT_ID (default:
